@@ -1,0 +1,19 @@
+# TODO: replace <your-function-id> with your real function id.
+id: <your-function-id>
+runtime: native/v1
+protocol: http
+function_type: aifunc
+description: "native/v1 A2A sample for Hertz: https://bytedance.feishu.cn/wiki/wikcn5G6W2cX7vtj5uSQHrtDGHf"
+template_author: zhuangjie.1125@bytedance.com
+language: golang
+support_a2a: true
+support_runtime: faas,tce
+type: a2a
+display_name: Eino ADK DeepAgent (A2A)
+provider: AI PaaS
+tags:
+  - A2A
+  - Go >= 1.18
+document: "https://bytedance.larkoffice.com/wiki/JtLwwycZriMdhVkhOpAcDgf4nKO"
+description_en: "Agent Template Based on Eino ADKDeepAgent and Hertz, Supporting Google Agent-to-Agent (A2A) Protocol"
+description_cn: "基于 Eino ADK DeepAgent 实现的 Hertz AI PaaS Agent 模板，支持 Google Agent2Agent(A2A) 协议"

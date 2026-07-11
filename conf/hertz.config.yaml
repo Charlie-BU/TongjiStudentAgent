@@ -1,0 +1,23 @@
+Develop:
+  ServicePort: "6789"
+  DebugPort: "6790"
+  EnablePprof: false
+  LogLevel: "debug"
+  LogInterval: "hour"
+  EnableMetrics: false
+  ConsoleLog: true
+  AgentLog: true
+  FileLog: true
+  DisableStress: true
+
+Product:
+  ServicePort: "6789"
+  DebugPort: "6790"
+  EnablePprof: false
+  LogLevel: "info"
+  LogInterval: "hour"
+  EnableMetrics: true
+  ConsoleLog: true
+  AgentLog: true
+  FileLog: true
+  DisableStress: true
