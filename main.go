@@ -42,6 +42,7 @@ func main() {
 	hz.Spin()
 }
 
+// 请求日志中间件，用于记录请求信息和响应信息
 func requestLoggingMiddleware(c context.Context, ctx *app.RequestContext) {
 	startTime := time.Now()
 	reqInfo := fmt.Sprintf("REQ: [Method = %s] [Path = %s] [Header = %s, Body = %s]", string(ctx.Request.Method()), string(ctx.Request.Path()), string(ctx.Request.Header.Header()), string(ctx.Request.Body()))
@@ -53,11 +54,13 @@ func requestLoggingMiddleware(c context.Context, ctx *app.RequestContext) {
 	logs.CtxInfo(c, respInfo)
 }
 
+// 流式响应头中间件，用于设置流式响应头
 func streamHeaderMiddleware(c context.Context, ctx *app.RequestContext) {
 	ctx.Response.Header.Set("X-Bytefaas-Enable-Stream", "true")
 	ctx.Next(c)
 }
 
+// JWT转发中间件，用于将JWT令牌转发给后端服务
 func jwtForwardMiddleware(c context.Context, ctx *app.RequestContext) {
 	if token := ctx.GetHeader("X-Jwt-Token"); token != nil {
 		c = bytedclient.WithIdentityToken(c, string(token))

@@ -42,3 +42,7 @@ output/*
 
 .DS_Store
 log/
+
+# Environment variables
+.env
+.env.test
