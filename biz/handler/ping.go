@@ -3,9 +3,10 @@
 package handler
 
 import (
-	"code.byted.org/middleware/hertz/pkg/app"
-	"code.byted.org/middleware/hertz/pkg/common/utils"
 	"context"
+
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 func Ping(ctx context.Context, c *app.RequestContext) {

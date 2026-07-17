@@ -1,24 +1,17 @@
-module code.byted.org/bytefaas/bytefaas_native_hertz_a2a_deep_agent_demo
+module github.com/Charlie-BU/TongjiStudent
 
 go 1.23.2
 
 toolchain go1.23.8
 
 require (
-	code.byted.org/flow/eino-byted-ext/byted v0.3.13
 	code.byted.org/flow/eino-byted-ext/callbacks/fornax v0.2.3
 	code.byted.org/flowdevops/fornax_sdk v1.2.56
-	code.byted.org/gopkg/logs v1.2.27
-	code.byted.org/gopkg/logs/v2 v2.2.1
-	code.byted.org/inf/bytedai-go v1.1.44
-	code.byted.org/inf/bytedmcp/go v1.1.27
-	code.byted.org/lang/gg v0.22.0
-	code.byted.org/middleware/hertz v1.14.2
 	github.com/cloudwego/eino v0.8.4
-	github.com/cloudwego/eino-ext/a2a v0.0.1-alpha.10
 	github.com/cloudwego/eino-ext/adk/backend/local v0.2.3
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.63
 	github.com/cloudwego/eino-ext/components/tool/mcp v0.0.8
+	github.com/cloudwego/hertz v0.10.3
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.43.0
 )
@@ -38,6 +31,7 @@ require (
 	code.byted.org/bytedtrace/bytedtrace-gls-switch v1.3.0 // indirect
 	code.byted.org/bytedtrace/interface-go v1.0.22 // indirect
 	code.byted.org/bytedtrace/serializer-go v1.0.1-pre // indirect
+	code.byted.org/flow/eino-byted-ext/byted v0.3.13 // indirect
 	code.byted.org/flow/eino-byted-ext/callbacks/metrics v0.1.2 // indirect
 	code.byted.org/flow/eino-byted-ext/components/model/llmgateway v0.1.13 // indirect
 	code.byted.org/flow/flow-telemetry-common/go v0.0.0-20260113113300-0887ab5e838a // indirect
@@ -60,6 +54,8 @@ require (
 	code.byted.org/gopkg/localcache/contributes/gcache v0.8.1 // indirect
 	code.byted.org/gopkg/localcache/contributes/vfastcache v0.2.0 // indirect
 	code.byted.org/gopkg/logid v0.0.0-20241008043456-230d03adb830 // indirect
+	code.byted.org/gopkg/logs v1.2.27 // indirect
+	code.byted.org/gopkg/logs/v2 v2.2.1 // indirect
 	code.byted.org/gopkg/metainfo v0.1.4 // indirect
 	code.byted.org/gopkg/metrics v1.4.25 // indirect
 	code.byted.org/gopkg/metrics/v3 v3.1.35 // indirect
@@ -81,6 +77,7 @@ require (
 	code.byted.org/kv/circuitbreaker v0.0.0-20200212034351-d3f51a5b9165 // indirect
 	code.byted.org/kv/goredis v5.5.7+incompatible // indirect
 	code.byted.org/kv/redis-v6 v1.0.29 // indirect
+	code.byted.org/lang/gg v0.22.0 // indirect
 	code.byted.org/lang/trace v0.0.3 // indirect
 	code.byted.org/lidar/profiler v0.4.5 // indirect
 	code.byted.org/lidar/profiler/hertz v0.4.7 // indirect
@@ -92,11 +89,10 @@ require (
 	code.byted.org/log_market/ttlogagent_gosdk/v4 v4.0.54 // indirect
 	code.byted.org/middleware/fic_client v0.2.8 // indirect
 	code.byted.org/middleware/gocaller v0.0.6 // indirect
+	code.byted.org/middleware/hertz v1.14.2 // indirect
 	code.byted.org/obric/overpass v0.0.0-20251205062837-4345d969346d // indirect
 	code.byted.org/overpass/data_aml_llmflow_engine v0.0.0-20241107145550-f2da45272e96 // indirect
 	code.byted.org/overpass/stone_llm_gateway v0.0.0-20251205071740-a38bf1fc8d14 // indirect
-	code.byted.org/overpass/toutiao_ttregion_manager v0.0.0-20231211101957-46c9440bc361 // indirect
-	code.byted.org/paas/cloud-sdk-go v0.0.285 // indirect
 	code.byted.org/security/go-spiffe-v2 v1.0.8 // indirect
 	code.byted.org/security/memfd v0.0.2 // indirect
 	code.byted.org/security/sensitive_finder_engine v0.3.18 // indirect
@@ -105,7 +101,6 @@ require (
 	code.byted.org/seed/common_idls/model_api v1.0.15 // indirect
 	code.byted.org/service_mesh/shmipc v0.2.20 // indirect
 	code.byted.org/tiktok/buildinfo v0.0.2 // indirect
-	code.byted.org/tiktok/region_lib v0.11.0 // indirect
 	code.byted.org/trace/trace-client-go v1.3.7 // indirect
 	code.byted.org/ttarch/byteconf-cel-go v0.0.3 // indirect
 	code.byted.org/ttarch/spd_kitex_section v1.0.1 // indirect
@@ -146,7 +141,6 @@ require (
 	github.com/cloudwego/fastpb v0.0.5 // indirect
 	github.com/cloudwego/frugal v0.2.6 // indirect
 	github.com/cloudwego/gopkg v0.1.5 // indirect
-	github.com/cloudwego/hertz v0.10.3 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/cloudwego/kitex v0.14.1 // indirect
 	github.com/cloudwego/kitex/pkg/protocol/bthrift v0.0.0-20241205072100-85e3c72c57da // indirect
@@ -170,14 +164,11 @@ require (
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
-	github.com/go-openapi/jsonreference v0.21.0 // indirect
-	github.com/go-openapi/spec v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
-	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
@@ -191,11 +182,9 @@ require (
 	github.com/hbollon/go-edlib v1.6.0 // indirect
 	github.com/hertz-contrib/http2 v0.1.1 // indirect
 	github.com/hertz-contrib/localsession v0.1.0 // indirect
-	github.com/hertz-contrib/sse v0.1.0 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/invopop/yaml v0.1.0 // indirect
-	github.com/jellydator/ttlcache/v3 v3.4.0 // indirect
 	github.com/jhump/protoreflect v1.15.6 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -204,6 +193,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -214,7 +204,6 @@ require (
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.1-0.20210726034734-bdbb7cc3a1c0 // indirect
 	github.com/orcaman/concurrent-map v1.0.0 // indirect
-	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/perimeterx/marshmallow v1.1.4 // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
@@ -254,7 +243,6 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/errs v1.3.0 // indirect
-	go.uber.org/atomic v1.9.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
 	golang.org/x/arch v0.14.0 // indirect
 	golang.org/x/crypto v0.39.0 // indirect

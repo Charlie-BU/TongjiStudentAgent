@@ -17,3 +17,10 @@ func GetGracefulTime() time.Duration {
 	}
 	return time.Duration(gracefulTimeout) * time.Second
 }
+
+func GetServerPort() string {
+	if port := os.Getenv("PORT0"); port != "" {
+		return port
+	}
+	return "8080"
+}

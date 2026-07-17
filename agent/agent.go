@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"os"
 
-	"code.byted.org/gopkg/logs"
-	"code.byted.org/inf/bytedai-go/region"
-	bytedclient "code.byted.org/inf/bytedmcp/go/client"
+	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
 	"github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+	mcpclient "github.com/mark3labs/mcp-go/client"
 )
 
 var (
 	deepAgent adk.Agent
-	mcpClient *bytedclient.BytedMCPClient
+	mcpClient *mcpclient.Client
 )
 
 // initChatModel reads endpoint configuration from environment variables and creates an Ark ChatModel instance.
@@ -29,9 +29,12 @@ func initChatModel(ctx context.Context) (*ark.ChatModel, error) {
 		return nil, fmt.Errorf("ENDPOINT_ID or ENDPOINT_API_KEY is not set")
 	}
 
-	arkBaseUrl := region.GetBaseUrl()
+	arkBaseUrl := os.Getenv("ARK_BASE_URL")
 	if arkBaseUrl == "" {
-		return nil, fmt.Errorf("failed to get ark base url")
+		arkBaseUrl = os.Getenv("ARK_BASE_URL_CN")
+	}
+	if arkBaseUrl == "" {
+		return nil, fmt.Errorf("ARK_BASE_URL or ARK_BASE_URL_CN is not set")
 	}
 
 	logs.Infof("about to initialize model with endpoint id: %s, base url: %s", endpointID, arkBaseUrl)
@@ -53,7 +56,7 @@ func InitDeepAgentAndMcpClient(ctx context.Context) error {
 		return fmt.Errorf("failed to init chat model: %w", err)
 	}
 
-	mcpClient, err = getMCPClient()
+	mcpClient, err = getMCPClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to init mcp client: %w", err)
 	}
@@ -107,7 +110,44 @@ func GetRunner(ctx context.Context, enableStreaming bool, store compose.CheckPoi
 	return runner, nil
 }
 
-func GetMcpClient(_ context.Context) (*bytedclient.BytedMCPClient, error) {
+// Chat runs a single user message through the initialized DeepAgent and returns its final response.
+func Chat(ctx context.Context, message string) (string, error) {
+	runner, err := GetRunner(ctx, false, nil)
+	if err != nil {
+		return "", fmt.Errorf("create agent runner: %w", err)
+	}
+
+	iter := runner.Query(ctx, message)
+	var response string
+	for {
+		event, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if event.Err != nil {
+			return "", fmt.Errorf("run agent: %w", event.Err)
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil || event.Output.MessageOutput.Role != schema.Assistant {
+			continue
+		}
+
+		output, err := event.Output.MessageOutput.GetMessage()
+		if err != nil {
+			return "", fmt.Errorf("read agent response: %w", err)
+		}
+		if output != nil && output.Content != "" {
+			logs.Infof("agent response: %s", output)
+			response = output.Content
+		}
+	}
+
+	if response == "" {
+		return "", fmt.Errorf("agent returned no text response")
+	}
+	return response, nil
+}
+
+func GetMcpClient(_ context.Context) (*mcpclient.Client, error) {
 	if mcpClient == nil {
 		return nil, fmt.Errorf("mcp client not initialized")
 	}

@@ -1,9 +1,8 @@
 package main
 
 import (
-	"code.byted.org/middleware/hertz/pkg/app/server"
-
-	"code.byted.org/bytefaas/bytefaas_native_hertz_a2a_deep_agent_demo/biz/handler"
+	"github.com/Charlie-BU/TongjiStudent/biz/handler"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 // customizeRegister register customize routers.
@@ -14,4 +13,5 @@ func customizeRegister(r *server.Hertz) {
 	// NOTE: GET v1/ping should be provided for liveness check by FaaS Platform.
 	// Status Code OK denotes that the service is healthy.
 	r.GET("/v1/ping", handler.Ping)
+	r.POST("/v1/agent/chat", handler.Chat)
 }

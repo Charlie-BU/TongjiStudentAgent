@@ -2,42 +2,40 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"time"
 
-	bytedaiserver "code.byted.org/inf/bytedai-go/agent/server"
-	bytedclient "code.byted.org/inf/bytedmcp/go/client"
-	"code.byted.org/middleware/hertz/byted"
-	"code.byted.org/middleware/hertz/pkg/app"
-	hertzserver "code.byted.org/middleware/hertz/pkg/app/server"
-	"code.byted.org/middleware/hertz/pkg/common/config"
-
-	"code.byted.org/gopkg/logs/v2"
+	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
+	"github.com/cloudwego/hertz/pkg/app"
+	hertzserver "github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/config"
 )
 
 func main() {
+	port := flag.String("port", GetServerPort(), "HTTP server port")
+	flag.Parse()
+
 	ctx := context.Background()
 
 	initializeClient(ctx)
 
-	byted.Init()
+	opts := make([]config.Option, 0, 2)
+	opts = append(opts,
+		hertzserver.WithHostPorts(":"+*port),
+		hertzserver.WithExitWaitTime(GetGracefulTime()),
+	)
 
-	opts := make([]config.Option, 0, 1)
-	opts = append(opts, hertzserver.WithExitWaitTime(GetGracefulTime()))
-
-	hz := byted.Default(opts...)
+	hz := hertzserver.Default(opts...)
 
 	hz.Use(requestLoggingMiddleware)
 	hz.Use(streamHeaderMiddleware)
-	hz.Use(jwtForwardMiddleware)
 
 	register(hz)
 
 	for _, hook := range GetShutdownHooks() {
 		hz.OnShutdown = append(hz.OnShutdown, hook)
 	}
-
-	bytedaiserver.NewMultiA2AAgentWrapper(hz).AddAgent(ctx, "", buildA2AServerConfig(ctx))
 
 	hz.Spin()
 }
@@ -61,9 +59,3 @@ func streamHeaderMiddleware(c context.Context, ctx *app.RequestContext) {
 }
 
 // JWT转发中间件，用于将JWT令牌转发给后端服务
-func jwtForwardMiddleware(c context.Context, ctx *app.RequestContext) {
-	if token := ctx.GetHeader("X-Jwt-Token"); token != nil {
-		c = bytedclient.WithIdentityToken(c, string(token))
-	}
-	ctx.Next(c)
-}

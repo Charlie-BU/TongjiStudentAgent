@@ -3,9 +3,8 @@
 package main
 
 import (
-	"code.byted.org/middleware/hertz/pkg/app/server"
-
-	"code.byted.org/bytefaas/bytefaas_native_hertz_a2a_deep_agent_demo/biz/handler"
+	"github.com/Charlie-BU/TongjiStudent/biz/handler"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 // register register routes based on the IDL 'api.${HTTP Method}' annotation.
