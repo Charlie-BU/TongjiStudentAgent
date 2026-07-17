@@ -10,12 +10,10 @@ import (
 	"github.com/joho/godotenv"
 
 	einoext "code.byted.org/flow/eino-byted-ext/byted"
-	"code.byted.org/flow/eino-byted-ext/callbacks/bytedtrace"
 	"code.byted.org/flow/eino-byted-ext/callbacks/fornax"
 	"code.byted.org/flowdevops/fornax_sdk"
 	"code.byted.org/flowdevops/fornax_sdk/domain"
 	"code.byted.org/gopkg/logs/v2"
-	"code.byted.org/security/agentarmor_sdk/eino_callback"
 
 	"code.byted.org/bytefaas/bytefaas_native_hertz_a2a_deep_agent_demo/agent"
 )
@@ -61,13 +59,6 @@ func initializeClient(ctx context.Context) {
 	if err := initFornaxCallback(); err != nil {
 		panic(fmt.Errorf("error initializing fornax callback, err: %v", err))
 	}
-	if err := initBytedtraceCallback(); err != nil {
-		panic(fmt.Errorf("error initializing bytedtrace callback, err: %v", err))
-	}
-
-	if err := eino_callback.InitArmorTraceCallback(); err != nil {
-		logs.Errorf("error initializing armor callback, err: %v", err)
-	}
 
 	if err := agent.InitDeepAgentAndMcpClient(ctx); err != nil {
 		panic(fmt.Errorf("error initializing deep agent client, err: %v", err))
@@ -104,13 +95,6 @@ func initFornaxCallback() error {
 	})
 
 	handler := fornax.NewDefaultCallbackHandler(fornaxClient)
-	callbacks.AppendGlobalHandlers(handler)
-
-	return nil
-}
-
-func initBytedtraceCallback() error {
-	handler := bytedtrace.NewGenAICallbackHandler()
 	callbacks.AppendGlobalHandlers(handler)
 
 	return nil

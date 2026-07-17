@@ -6,7 +6,6 @@ toolchain go1.23.8
 
 require (
 	code.byted.org/flow/eino-byted-ext/byted v0.3.13
-	code.byted.org/flow/eino-byted-ext/callbacks/bytedtrace v0.0.5
 	code.byted.org/flow/eino-byted-ext/callbacks/fornax v0.2.3
 	code.byted.org/flowdevops/fornax_sdk v1.2.56
 	code.byted.org/gopkg/logs v1.2.27
@@ -15,7 +14,6 @@ require (
 	code.byted.org/inf/bytedmcp/go v1.1.27
 	code.byted.org/lang/gg v0.22.0
 	code.byted.org/middleware/hertz v1.14.2
-	code.byted.org/security/agentarmor_sdk v1.0.2
 	github.com/cloudwego/eino v0.8.4
 	github.com/cloudwego/eino-ext/a2a v0.0.1-alpha.10
 	github.com/cloudwego/eino-ext/adk/backend/local v0.2.3
@@ -29,8 +27,6 @@ require (
 	code.byted.org/aiops/apm_vendor_byted v0.0.44 // indirect
 	code.byted.org/aiops/metrics_codec v0.0.33 // indirect
 	code.byted.org/aiops/monitoring-common-go v0.0.5 // indirect
-	code.byted.org/argos/bytedtrace-genai/go/bytedtrace-genai-sdk v0.0.4 // indirect
-	code.byted.org/aweme-go/hstruct v0.1.1 // indirect
 	code.byted.org/bcc/bcc-go-client v0.1.51 // indirect
 	code.byted.org/bcc/conf_engine v0.0.0-20230510030051-32fb55f74cf1 // indirect
 	code.byted.org/bcc/pull_json_model v1.0.22 // indirect
@@ -136,6 +132,7 @@ require (
 	github.com/bufbuild/protocompile v0.8.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
+	github.com/bytedance/mockey v1.4.5 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/caarlos0/env/v6 v6.10.1 // indirect
