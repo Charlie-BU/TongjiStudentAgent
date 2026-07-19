@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Charlie-BU/TongjiStudent/agent"
+	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -28,7 +28,7 @@ func Chat(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	response, err := agent.Chat(ctx, req.Message)
+	response, err := chat.Chat(ctx, req.Message)
 	if err != nil {
 		c.JSON(consts.StatusInternalServerError, utils.H{"error": "agent invocation failed"})
 		return
