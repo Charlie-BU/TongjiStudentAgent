@@ -101,7 +101,7 @@ HTTP /v1/agent/chat
 | reference 概念 | 本项目落点 |
 | --- | --- |
 | `harness/core` | `internal/agentic`：Graph、Context Engine、Tool Policy、Session 契约、Run 状态机 |
-| `harness/adapter` | `internal/integration` 与 `internal/store`：Ark、Knowledge、MCP、Redis、数据库、事件适配 |
+| `harness/adapter` | `integration/`（迁移期）与后续 `internal/integration`、`internal/store`：Ark、Knowledge、MCP、Sandbox、Redis、数据库、事件适配 |
 | `harness/cmd` | 当前 `main.go` 与后续 `cmd/server` |
 | `harness/biz` | `biz/handler` 与 `internal/application` |
 
@@ -114,7 +114,7 @@ handler/application -> agentic core <- integration/store implementations
                          interface only
 ```
 
-`internal/agentic` 不能导入 Hertz、具体 Redis Client、具体 MCP Client 或 Ark SDK。它只依赖 Eino 的消息和编排契约，以及项目内部定义的接口。
+`internal/agentic` 不能导入 Hertz、具体 Redis Client、具体 MCP Client、Ark SDK 或 Sandbox 实现。它只依赖 Eino 的消息和编排契约，以及项目内部定义的接口。
 
 ### 3.2 `Handle` 与 `Run` 分离
 
@@ -248,6 +248,7 @@ TongjiStudentAgent/
 │   ├── arkmodel/                       # Ark 模型适配
 │   ├── knowledge/                      # Ark 知识库适配
 │   └── mcp/                            # 远程 MCP Client 适配
+├── integration/sandbox/                # 迁移期 Sandbox Adapter；不属于 Agent Runtime
 ├── internal/store/
 │   ├── memory/                         # 开发与测试实现
 │   ├── redis/                          # Session、锁、Checkpoint
@@ -796,7 +797,7 @@ run
 
 ### 12.4 必须移除的能力
 
-公开部署前，从 Agent 初始化中移除 `filesystem.New`、本地 Backend 和 `StreamingShell`。校园产品首期没有文件编辑和命令执行需求。未来若出现文档处理场景，应接受控文件服务或隔离沙箱，并单独做权限设计，不能恢复宿主机 Shell。
+本地 Sandbox 实现已收敛到 `integration/sandbox`，`agent` 不再了解本地 Backend、文件系统或 Shell 的具体实现。Agent 仅在 `SANDBOX_ENABLED=true` 时装配其 middleware；变量未设置或为 `false` 时不会注册文件系统或 `StreamingShell`。该开关只允许在受控本地开发环境使用，公开部署必须保持关闭。未来若出现文档处理场景，应在 `integration/sandbox` 提供受控文件服务或隔离 Sandbox Adapter，并通过显式配置注入，不能恢复宿主机 Shell。
 
 ## 13. 测试与评测
 

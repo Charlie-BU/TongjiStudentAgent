@@ -7,11 +7,10 @@ import (
 	"strings"
 
 	"github.com/Charlie-BU/TongjiStudent/integration/ark/knowledge"
+	"github.com/Charlie-BU/TongjiStudent/integration/sandbox"
 	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
-	"github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -74,16 +73,24 @@ func InitDeepAgentAndMcpClient(ctx context.Context) error {
 		return fmt.Errorf("failed to get eino tools: %w", err)
 	}
 
-	filesystemMW, err := newFileSystemMiddleware(ctx)
+	handlers := []adk.ChatModelAgentMiddleware{}
+	sandboxEnabled, err := sandbox.EnabledFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to create filesystem middleware: %w", err)
+		return fmt.Errorf("read sandbox configuration: %w", err)
+	}
+	if sandboxEnabled {
+		filesystemMW, err := sandbox.NewFileSystemMiddleware(ctx)
+		if err != nil {
+			return fmt.Errorf("create filesystem middleware: %w", err)
+		}
+		handlers = append(handlers, filesystemMW)
 	}
 
 	deepAgent, err = deep.New(ctx, &deep.Config{
 		Name:        "Tongji Student Agent",
 		Description: "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
 		ChatModel:   chatModel,
-		Handlers:    []adk.ChatModelAgentMiddleware{filesystemMW},
+		Handlers:    handlers,
 		ToolsConfig: adk.ToolsConfig{
 			EmitInternalEvents: true,
 			ToolsNodeConfig: compose.ToolsNodeConfig{
@@ -195,25 +202,4 @@ func CloseMcpClient() error {
 		return nil
 	}
 	return mcpClient.Close()
-}
-
-// newLocalSandBox creates a local sandbox implementation that implements the filesystem.Backend interface.
-// By registering this backend with the deep agent, it gains essential file operation capabilities
-// including read_file, write_file, edit_file, glob, and grep.
-// It also implements the filesystem.StreamingShell interface, enabling streaming shell command execution.
-// If you need to use the AI Sandbox capability provided by AI PaaS, please refer to:
-// https://bytedance.larkoffice.com/wiki/C85Fw9hQWiL1OAkN2w5cu8OSnV2
-func newLocalSandBox(ctx context.Context) (*local.Local, error) {
-	return local.NewBackend(ctx, &local.Config{})
-}
-
-func newFileSystemMiddleware(ctx context.Context) (adk.ChatModelAgentMiddleware, error) {
-	localSandbox, err := newLocalSandBox(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local sandbox, err: %v", err)
-	}
-	return filesystem.New(ctx, &filesystem.MiddlewareConfig{
-		Backend:        localSandbox,
-		StreamingShell: localSandbox,
-	})
 }
