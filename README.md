@@ -50,6 +50,16 @@ ENDPOINT_API_KEY=your-api-key
 FORNAX_ENABLED=false
 # FORNAX_AK=your-fornax-ak
 # FORNAX_SK=your-fornax-sk
+
+# Ark 知识库检索：启用后，检索结果会作为参考资料注入主 Agent 调用链
+ARK_KNOWLEDGE_ENABLED=false
+# ARK_AK=your-knowledge-ak
+# ARK_SK=your-knowledge-sk
+# ARK_KNOWLEDGE_COLLECTION=your-collection-name
+# ARK_KNOWLEDGE_PROJECT=default
+# ARK_KNOWLEDGE_RESOURCE_ID=your-resource-id # 可替代 COLLECTION
+# ARK_KNOWLEDGE_LIMIT=5
+# ARK_KNOWLEDGE_DOMAIN=api-knowledgebase.mlp.cn-beijing.volces.com
 ```
 
 `ENDPOINT_ID`、`ENDPOINT_API_KEY` 以及 `ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）均为必填项。服务启动时会检查它们是否存在并据此创建模型客户端。
@@ -63,6 +73,9 @@ FORNAX_SK=your-fornax-sk
 ```
 
 启用但未同时提供 `FORNAX_AK` 和 `FORNAX_SK` 时，服务会以明确错误退出。
+
+启用知识库时，必须配置 `ARK_AK`、`ARK_SK`，以及
+`ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。主 Agent 会先检索知识库，再将命中的内容作为非可信参考资料传入同一次模型调用；不会再启动独立的知识库模型调用链。
 
 ## 本地启动
 

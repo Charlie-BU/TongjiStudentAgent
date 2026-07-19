@@ -1,1 +1,0 @@
-在本项目的 DeepWiki 存放于 .trae/deepwiki 目录下。在需要时可以随时阅读和使用。
