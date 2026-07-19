@@ -1,6 +1,10 @@
 package sandbox
 
-import "testing"
+import (
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+)
 
 func TestEnabledFromEnv(t *testing.T) {
 	tests := []struct {
@@ -16,23 +20,27 @@ func TestEnabledFromEnv(t *testing.T) {
 		{name: "invalid", value: "enabled", wantErr: true},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("SANDBOX_ENABLED", test.value)
+	Convey("Sandbox 开关解析", t, func() {
+		for _, test := range tests {
+			test := test
+			Convey(test.name, func() {
+				t.Setenv("SANDBOX_ENABLED", test.value)
+				enabled, err := EnabledFromEnv()
 
-			enabled, err := EnabledFromEnv()
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("EnabledFromEnv() error = nil, want error")
+				if test.wantErr {
+					Convey("应拒绝非法配置", func() {
+						So(enabled, ShouldBeFalse)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, "parse SANDBOX_ENABLED")
+					})
+					return
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("EnabledFromEnv() error = %v", err)
-			}
-			if enabled != test.want {
-				t.Fatalf("EnabledFromEnv() = %t, want %t", enabled, test.want)
-			}
-		})
-	}
+
+				Convey("应返回预期的启用状态", func() {
+					So(err, ShouldBeNil)
+					So(enabled, ShouldEqual, test.want)
+				})
+			})
+		}
+	})
 }

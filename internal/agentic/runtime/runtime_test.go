@@ -2,21 +2,36 @@ package runtime
 
 import (
 	"context"
-	"strings"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestNewRequiresChatModel(t *testing.T) {
-	_, err := New(context.Background(), Config{})
-	if err == nil || !strings.Contains(err.Error(), "chat model is required") {
-		t.Fatalf("New() error = %v, want chat model validation error", err)
-	}
+	Convey("创建 Runtime", t, func() {
+		Convey("未提供 ChatModel", func() {
+			runtime, err := New(context.Background(), Config{})
+
+			Convey("应拒绝配置并返回可定位错误", func() {
+				So(runtime, ShouldBeNil)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "chat model is required")
+			})
+		})
+	})
 }
 
 func TestChatRequiresInitializedRuntime(t *testing.T) {
-	var runtime *Runtime
-	_, err := runtime.Chat(context.Background(), "hello")
-	if err == nil || !strings.Contains(err.Error(), "agent runtime is not initialized") {
-		t.Fatalf("Chat() error = %v, want runtime initialization error", err)
-	}
+	Convey("执行 Runtime 聊天", t, func() {
+		Convey("Runtime 未初始化", func() {
+			var runtime *Runtime
+			response, err := runtime.Chat(context.Background(), "你好")
+
+			Convey("应返回初始化错误且不产生响应", func() {
+				So(response, ShouldBeBlank)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "agent runtime is not initialized")
+			})
+		})
+	})
 }

@@ -5,30 +5,30 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestGetEinoToolsFromLocalMCPServer(t *testing.T) {
-	ctx := context.Background()
-	client, err := NewLocalClient(ctx)
-	if err != nil {
-		t.Fatalf("getMCPClient() error = %v", err)
-	}
-	defer client.Close()
+	Convey("从本地 MCP Server 获取 Eino 工具", t, func() {
+		ctx := context.Background()
+		client, err := NewLocalClient(ctx)
+		So(err, ShouldBeNil)
+		So(client, ShouldNotBeNil)
+		defer client.Close()
 
-	tools, err := EinoTools(ctx, client)
-	if err != nil {
-		t.Fatalf("getEinoTools() error = %v", err)
-	}
-	if len(tools) != 1 {
-		t.Fatalf("tool count = %d, want 1", len(tools))
-	}
+		Convey("转换工具目录", func() {
+			tools, err := EinoTools(ctx, client)
 
-	invokable, ok := tools[0].(tool.InvokableTool)
-	if !ok {
-		t.Fatal("local MCP tool is not invokable")
-	}
-	result, err := invokable.InvokableRun(ctx, "{}")
-	if err != nil || result == "" {
-		t.Fatalf("InvokableRun() result = %q, error = %v", result, err)
-	}
+			Convey("应得到一个可调用工具", func() {
+				So(err, ShouldBeNil)
+				So(tools, ShouldHaveLength, 1)
+
+				invokable, ok := tools[0].(tool.InvokableTool)
+				So(ok, ShouldBeTrue)
+				result, err := invokable.InvokableRun(ctx, "{}")
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeBlank)
+			})
+		})
+	})
 }

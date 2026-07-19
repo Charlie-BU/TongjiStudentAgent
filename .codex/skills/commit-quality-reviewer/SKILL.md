@@ -37,7 +37,7 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
     - `working_tree_only`：仅审查未提交改动（默认）
     - `last_commit_only`：仅审查 `HEAD~1..HEAD`
     - `last_commit_plus_working_tree`：审查 `HEAD~1..HEAD` + 未提交改动
-- `whitelist`：读取 `.trae/skills/commit-quality-reviewer/docs/whitelist.md`
+- `whitelist`：读取 `.codex/skills/commit-quality-reviewer/docs/whitelist.md`
 
 若用户要求“某次 commit 对比”，但未给 commit id，必须先追问并等待确认。
 若用户仅说“本次改动/当前改动”且未明确范围，默认使用 `working_tree_only`。
@@ -92,11 +92,19 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
     - 新问题检查：是否引入新的功能/稳定性/安全/性能风险。
     - 依赖影响检查：改动接口、数据结构、配置或行为后，依赖方是否仍可正常运行。
 5. 读取白名单
-    - 加载 `.trae/skills/commit-quality-reviewer/docs/whitelist.md`。
+    - 加载 `.codex/skills/commit-quality-reviewer/docs/whitelist.md`。
     - 命中白名单的条目，按规则降级为 `WAIVED`。
-6. 按通用 + 项目清单审查
+6. 单元测试审查与验证
+    - 当 diff 包含 Go 源码、`*_test.go`、`go.mod`、`go.sum`、测试脚本、CI 测试配置或会影响运行行为的配置时，必须完整阅读 `.codex/rules/unit-testing.md` 和 `docs/UTSpec.md`。
+    - 将以下内容纳入审阅范围：变更的测试文件；变更生产代码所在包的现有 `*_test.go`；以及该包中与改动调用链直接相关的测试辅助文件和 `testdata`。仅为验证本次改动的测试充分性而阅读这些未变更文件，不将无关历史问题作为 finding。
+    - 检查测试是否覆盖本次改动的正常、边界、错误和安全拒绝分支；检查 GoConvey 场景组织、公开测试依赖、mock 选择、环境变量/包级状态恢复、资源关闭、离线确定性和禁止真实外部调用等要求。
+    - 对 Go 源码、测试或模块依赖变更，至少执行受影响包的 `go test <package>`。当变更涉及共享依赖、入口、公共接口、`go.mod`、`go.sum` 或无法可靠缩小范围时，执行 `go test ./...`。
+    - 当变更涉及并发、goroutine、共享状态、Session/Checkpoint、缓存、锁或生命周期管理时，额外执行受影响包或全仓的 `go test -race`。当变更涉及 Go 源码或模块依赖时，执行 `go vet` 覆盖受影响包；范围不明确时执行 `go vet ./...`。
+    - 测试命令必须在项目根目录执行，不得注入生产凭据，不得访问真实模型、校园平台、知识库、学生数据或宿主机 Shell。因环境限制无法执行时，记录命令、失败原因和未验证范围；不得将其表述为已通过。
+    - 测试失败、编译失败、竞态或静态检查失败，且可归因于审阅范围时，作为至少 `HIGH` finding 报告；高风险功能缺少最小回归验证，作为 `MEDIUM` finding 报告。
+7. 按通用 + 项目清单审查
     - 先看 `CRITICAL/HIGH`，再看 `MEDIUM/LOW`。
-7. 输出结论
+8. 输出结论
     - 先列问题，再给摘要与裁决。
     - 对每个问题给出“证据 + 风险 + 建议修复”。
 
@@ -130,7 +138,7 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
 - 可观测性不足：关键流程（graph 节点、DB 写入、外部调用）缺少必要日志或错误上下文
 - 发布链路隐患：版本号、tag、构建步骤与 `publish.yml` 约定不一致
 - 规则/枚举不一致：`FineGrainedFeedDimension`、状态字段、prompt 环境变量命名漂移
-- 测试缺口：改动触达 graph/CRUD/CLI 但无对应回归验证
+- 测试缺口：改动触达 Handler、聊天编排、Runtime、MCP、知识库、Sandbox、配置、工具策略、Session/Checkpoint 或校园业务能力，但无对应回归验证
 
 ### LOW（可跟进）
 
@@ -140,7 +148,7 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
 
 ## 白名单（豁免）机制
 
-- 文件：`.trae/skills/commit-quality-reviewer/docs/whitelist.md`
+- 文件：`.codex/skills/commit-quality-reviewer/docs/whitelist.md`
 - 允许豁免的典型场景：
     - 临时保留的 `print` 调试输出
     - 计划短期保留的注释代码
@@ -153,7 +161,7 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
 
 ## 输出格式（强制）
 
-先给 Findings，再给 Summary。按严重级别从高到低排序。
+先给 Findings，再给 Testing，再给 Summary。按严重级别从高到低排序。
 
 ```markdown
 ## Core Check
@@ -170,6 +178,19 @@ description: "针对当前仓库执行指定改动范围的差异质检（默认
     - Risk: <具体风险>
     - Fix: <可执行修复建议>
     - Status: OPEN | WAIVED
+
+## Testing
+
+| Command | Result | Scope / Notes |
+| ------- | ------ | ------------- |
+| `go test <package>` | PASS | <受影响包> |
+| `go test ./...` | NOT RUN | <未执行原因，若适用> |
+| `go test -race <package>` | NOT RUN | <是否需要及原因> |
+| `go vet <package>` | PASS | <受影响包> |
+
+Test Spec Review: PASS | WARN | FAIL | NOT APPLICABLE
+- Scope: <纳入审阅的测试文件、辅助文件和 testdata>
+- Coverage Assessment: <本次改动已覆盖的正常/边界/错误/安全场景，以及缺口>
 
 ## Summary
 

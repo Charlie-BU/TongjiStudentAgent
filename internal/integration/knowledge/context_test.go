@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -17,21 +19,33 @@ func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, erro
 }
 
 func TestFormatContext(t *testing.T) {
-	context := FormatContext(&SearchKnowledgeRes{Data: &SearchKnowledgeData{ResultList: []SearchResult{
-		{ChunkTitle: "校车", Content: "班车在工作日运行。"},
-		{OriginalQuestion: "何时选课？", Content: "请关注教务处通知。"},
-	}}})
+	Convey("格式化知识库上下文", t, func() {
+		response := &SearchKnowledgeRes{Data: &SearchKnowledgeData{ResultList: []SearchResult{
+			{ChunkTitle: "校车", Content: "班车在工作日运行。"},
+			{OriginalQuestion: "何时选课？", Content: "请关注教务处通知。"},
+		}}}
 
-	want := "[1] 校车\n班车在工作日运行。\n---\n相似问题：何时选课？\n参考答案：请关注教务处通知。\n"
-	if context != want {
-		t.Fatalf("FormatContext() = %q, want %q", context, want)
-	}
+		Convey("包含普通切片和相似问题", func() {
+			context := FormatContext(response)
+			want := "[1] 校车\n班车在工作日运行。\n---\n相似问题：何时选课？\n参考答案：请关注教务处通知。\n"
+
+			Convey("应保留资料内容和固定分隔格式", func() {
+				So(context, ShouldEqual, want)
+			})
+		})
+	})
 }
 
 func TestFormatContextEmptyResponse(t *testing.T) {
-	if context := FormatContext(nil); context != "" {
-		t.Fatalf("FormatContext(nil) = %q, want empty string", context)
-	}
+	Convey("格式化空知识库响应", t, func() {
+		Convey("响应为 nil", func() {
+			context := FormatContext(nil)
+
+			Convey("应返回空上下文", func() {
+				So(context, ShouldBeBlank)
+			})
+		})
+	})
 }
 
 func TestNewFromEnv(t *testing.T) {
@@ -56,39 +70,49 @@ func TestNewFromEnv(t *testing.T) {
 		{name: "custom configuration", env: map[string]string{"ARK_KNOWLEDGE_ENABLED": "true", "ARK_AK": " ak ", "ARK_SK": " sk ", "ARK_KNOWLEDGE_COLLECTION": " campus ", "ARK_KNOWLEDGE_PROJECT": " project ", "ARK_KNOWLEDGE_RESOURCE_ID": " resource ", "ARK_KNOWLEDGE_LIMIT": "3", "ARK_KNOWLEDGE_DOMAIN": " knowledge.example.com "}, wantLimit: 3, wantDomain: "knowledge.example.com"},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			for _, key := range keys {
-				t.Setenv(key, "")
-			}
-			for key, value := range test.env {
-				t.Setenv(key, value)
-			}
+	Convey("从环境变量创建知识库客户端", t, func() {
+		for _, test := range tests {
+			test := test
+			Convey(test.name, func() {
+				for _, key := range keys {
+					t.Setenv(key, "")
+				}
+				for key, value := range test.env {
+					t.Setenv(key, value)
+				}
 
-			client, err := NewFromEnv()
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("NewFromEnv() error = %v, want containing %q", err, test.wantErr)
+				client, err := NewFromEnv()
+				if test.wantErr != "" {
+					Convey("应拒绝无效配置", func() {
+						So(client, ShouldBeNil)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, test.wantErr)
+					})
+					return
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("NewFromEnv() error = %v", err)
-			}
-			if test.wantNil {
-				if client != nil {
-					t.Fatal("NewFromEnv() returned a client when disabled")
+
+				if test.wantNil {
+					Convey("开关关闭时不创建客户端", func() {
+						So(err, ShouldBeNil)
+						So(client, ShouldBeNil)
+					})
+					return
 				}
-				return
-			}
-			if client == nil {
-				t.Fatal("NewFromEnv() returned nil client")
-			}
-			if client.ak != "ak" || client.sk != "sk" || client.collection != "campus" || client.project != "project" || client.resourceID != "resource" || client.limit != test.wantLimit || client.domain != test.wantDomain {
-				t.Fatalf("NewFromEnv() client = %+v, unexpected configuration", client)
-			}
-		})
-	}
+
+				Convey("应创建并标准化客户端配置", func() {
+					So(err, ShouldBeNil)
+					So(client, ShouldNotBeNil)
+					So(client.ak, ShouldEqual, "ak")
+					So(client.sk, ShouldEqual, "sk")
+					So(client.collection, ShouldEqual, "campus")
+					So(client.project, ShouldEqual, "project")
+					So(client.resourceID, ShouldEqual, "resource")
+					So(client.limit, ShouldEqual, test.wantLimit)
+					So(client.domain, ShouldEqual, test.wantDomain)
+				})
+			})
+		}
+	})
 }
 
 func TestClientSearch(t *testing.T) {
@@ -106,43 +130,49 @@ func TestClientSearch(t *testing.T) {
 		{name: "transport error", roundTripErr: errors.New("network unavailable"), wantErr: "send knowledge search request"},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := &Client{ak: "test-ak", sk: "test-sk", domain: "knowledge.example.com", collection: "campus", project: "default", resourceID: "resource", limit: 3}
-			client.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-				if request.Method != http.MethodPost || request.URL.Scheme != "https" || request.URL.Host != client.domain || request.URL.Path != searchPath {
-					t.Errorf("request = %s %s", request.Method, request.URL)
-				}
-				if request.Header.Get("Accept") != "application/json" || request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Host") != client.domain || request.Header.Get("Authorization") == "" || request.Header.Get("X-Date") == "" || request.Header.Get("X-Content-Sha256") == "" {
-					t.Errorf("request headers = %#v", request.Header)
-				}
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := `{"name":"campus","project":"default","resource_id":"resource","query":"where is the library?","limit":3,"dense_weight":0.5,"pre_processing":{"need_instruction":true},"post_processing":{"retrieve_count":3,"chunk_group":true}}`
-				if string(body) != want {
-					t.Errorf("request body = %s, want %s", body, want)
-				}
-				if test.roundTripErr != nil {
-					return nil, test.roundTripErr
-				}
-				return &http.Response{StatusCode: test.responseCode, Body: io.NopCloser(strings.NewReader(test.responseBody)), Header: make(http.Header)}, nil
-			})}
+	Convey("检索知识库", t, func() {
+		for _, test := range tests {
+			test := test
+			Convey(test.name, func() {
+				client := &Client{ak: "test-ak", sk: "test-sk", domain: "knowledge.example.com", collection: "campus", project: "default", resourceID: "resource", limit: 3}
+				client.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+					So(request.Method, ShouldEqual, http.MethodPost)
+					So(request.URL.Scheme, ShouldEqual, "https")
+					So(request.URL.Host, ShouldEqual, client.domain)
+					So(request.URL.Path, ShouldEqual, searchPath)
+					So(request.Header.Get("Accept"), ShouldEqual, "application/json")
+					So(request.Header.Get("Content-Type"), ShouldEqual, "application/json")
+					So(request.Header.Get("Host"), ShouldEqual, client.domain)
+					So(request.Header.Get("Authorization"), ShouldNotBeBlank)
+					So(request.Header.Get("X-Date"), ShouldNotBeBlank)
+					So(request.Header.Get("X-Content-Sha256"), ShouldNotBeBlank)
+					body, err := io.ReadAll(request.Body)
+					So(err, ShouldBeNil)
+					want := `{"name":"campus","project":"default","resource_id":"resource","query":"where is the library?","limit":3,"dense_weight":0.5,"pre_processing":{"need_instruction":true},"post_processing":{"retrieve_count":3,"chunk_group":true}}`
+					So(string(body), ShouldEqual, want)
+					if test.roundTripErr != nil {
+						return nil, test.roundTripErr
+					}
+					return &http.Response{StatusCode: test.responseCode, Body: io.NopCloser(strings.NewReader(test.responseBody)), Header: make(http.Header)}, nil
+				})}
 
-			result, err := client.Search(context.Background(), "where is the library?")
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("Search() error = %v, want containing %q", err, test.wantErr)
+				result, err := client.Search(context.Background(), "where is the library?")
+				if test.wantErr != "" {
+					Convey("上游失败时应返回可定位错误", func() {
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, test.wantErr)
+					})
+					return
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Search() error = %v", err)
-			}
-			if result == nil || len(result.Data.ResultList) != 1 || result.Data.ResultList[0].Content != "answer" {
-				t.Fatalf("Search() result = %#v", result)
-			}
-		})
-	}
+
+				Convey("上游成功时应解析检索结果", func() {
+					So(err, ShouldBeNil)
+					So(result, ShouldNotBeNil)
+					So(result.Data, ShouldNotBeNil)
+					So(result.Data.ResultList, ShouldHaveLength, 1)
+					So(result.Data.ResultList[0].Content, ShouldEqual, "answer")
+				})
+			})
+		}
+	})
 }
