@@ -14,9 +14,3 @@ func Ping(ctx context.Context, c *app.RequestContext) {
 		"message": "hey yo!",
 	})
 }
-
-func HelloWorld(ctx context.Context, c *app.RequestContext) {
-	c.JSON(200, utils.H{
-		"message": "Hello World From Hertz @ FaaS-Native",
-	})
-}
