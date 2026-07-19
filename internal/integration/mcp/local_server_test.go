@@ -1,4 +1,4 @@
-package mcpserver
+package mcp
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 func TestGetCurrentTimeTool(t *testing.T) {
 	ctx := context.Background()
-	client, err := NewClient(ctx)
+	client, err := NewLocalClient(ctx)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}

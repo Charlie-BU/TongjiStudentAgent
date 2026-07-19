@@ -18,11 +18,12 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 ```text
 .
-├── agent/                 # DeepAgent、模型与 MCP Client 初始化
 ├── biz/handler/           # HTTP 处理函数与健康检查接口
-├── integration/fornax/    # 可选的 Fornax 内部集成隔离层
-├── mcpserver/             # 本项目拥有的进程内 MCP Server 示例
-├── pkg/logging/           # 本地日志模块
+├── internal/
+│   ├── application/chat/  # /v1/agent/chat 应用服务与依赖装配
+│   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
+│   ├── integration/       # Ark、知识库、Fornax、MCP 与本地 Sandbox 适配
+│   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
 ├── .env                   # 本地配置（已被 Git 忽略）
 ├── main.go                # Hertz 服务入口

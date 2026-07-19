@@ -101,7 +101,7 @@ HTTP /v1/agent/chat
 | reference 概念 | 本项目落点 |
 | --- | --- |
 | `harness/core` | `internal/agentic`：Graph、Context Engine、Tool Policy、Session 契约、Run 状态机 |
-| `harness/adapter` | `integration/`（迁移期）与后续 `internal/integration`、`internal/store`：Ark、Knowledge、MCP、Sandbox、Redis、数据库、事件适配 |
+| `harness/adapter` | `internal/integration/`、`internal/platform/` 与后续 `internal/store`：Ark、Knowledge、MCP、Sandbox、Redis、数据库、事件适配 |
 | `harness/cmd` | 当前 `main.go` 与后续 `cmd/server` |
 | `harness/biz` | `biz/handler` 与 `internal/application` |
 
@@ -227,9 +227,9 @@ flowchart LR
 
 ## 5. Agent 主仓设计
 
-### 5.1 建议目录
+### 5.1 当前目录与后续扩展
 
-在不一次性大搬迁当前代码的前提下，新增能力按以下边界落位；旧的 `agent/`、`biz/handler/` 可逐步成为适配层，避免大爆炸式重构。
+当前已完成第一轮路径归位：聊天应用服务、通用 Agent 运行时、Ark/知识库/MCP/Fornax 适配，以及配置和日志平台能力均已移入 `internal/`。以下目录树同时表达当前实现和后续扩展目标；标注“后续”的目录尚未创建，不应为预留结构而提前引入空实现。
 
 ```text
 TongjiStudentAgent/
@@ -237,27 +237,28 @@ TongjiStudentAgent/
 ├── biz/handler/                        # HTTP/SSE 参数与响应适配
 ├── internal/application/chat/          # Handle 生命周期、Run/Resume/Cancel
 ├── internal/agentic/
-│   ├── runtime/                        # Agent、Graph、Run 状态
-│   ├── stage/                          # input/context/model/tool/output 节点
-│   ├── context/                        # 上下文装配与 Token Budget
-│   ├── session/                        # Session/History/Checkpoint 契约
-│   ├── tool/                           # Registry、Policy、Executor、错误分类
-│   ├── event/                          # 内部事件模型
-│   └── skill/                          # 后续 Skill manifest/loader
+│   ├── runtime/                        # 当前：AgentRuntime、Runner 封装
+│   ├── stage/                          # 后续：input/context/model/tool/output 节点
+│   ├── context/                        # 后续：上下文装配与 Token Budget
+│   ├── session/                        # 后续：Session/History/Checkpoint 契约
+│   ├── tool/                           # 后续：Registry、Policy、Executor、错误分类
+│   ├── event/                          # 后续：内部事件模型
+│   └── skill/                          # 后续：Skill manifest/loader
 ├── internal/integration/
-│   ├── arkmodel/                       # Ark 模型适配
-│   ├── knowledge/                      # Ark 知识库适配
-│   └── mcp/                            # 远程 MCP Client 适配
-├── integration/sandbox/                # 迁移期 Sandbox Adapter；不属于 Agent Runtime
+│   ├── arkmodel/                       # 当前：Ark 模型适配
+│   ├── knowledge/                      # 当前：Ark 知识库适配
+│   ├── mcp/                            # 当前：本地 MCP Client；后续远程 ClientPool/能力发现
+│   ├── fornax/                         # 当前：可选 Fornax 适配
+│   └── sandbox/                        # 当前：本地调试适配；不属于 Agent Runtime
 ├── internal/store/
-│   ├── memory/                         # 开发与测试实现
-│   ├── redis/                          # Session、锁、Checkpoint
-│   └── database/                       # 原始消息、反馈、审计
+│   ├── memory/                         # 后续：开发与测试实现
+│   ├── redis/                          # 后续：Session、锁、Checkpoint
+│   └── database/                       # 后续：原始消息、反馈、审计
 ├── internal/platform/
-│   ├── auth/                           # 可信用户身份
-│   ├── config/                         # 配置解析与启动校验
-│   ├── observability/                  # trace/metrics/logging
-│   └── privacy/                        # 脱敏与日志策略
+│   ├── auth/                           # 后续：可信用户身份
+│   ├── config/                         # 当前：配置解析与启动校验
+│   ├── observability/                  # 当前：logging；后续 trace/metrics
+│   └── privacy/                        # 后续：脱敏与日志策略
 └── docs/
 ```
 
@@ -797,7 +798,7 @@ run
 
 ### 12.4 必须移除的能力
 
-本地 Sandbox 实现已收敛到 `integration/sandbox`，`agent` 不再了解本地 Backend、文件系统或 Shell 的具体实现。Agent 仅在 `SANDBOX_ENABLED=true` 时装配其 middleware；变量未设置或为 `false` 时不会注册文件系统或 `StreamingShell`。该开关只允许在受控本地开发环境使用，公开部署必须保持关闭。未来若出现文档处理场景，应在 `integration/sandbox` 提供受控文件服务或隔离 Sandbox Adapter，并通过显式配置注入，不能恢复宿主机 Shell。
+本地 Sandbox 实现已收敛到 `internal/integration/sandbox`，`internal/agentic` 不再了解本地 Backend、文件系统或 Shell 的具体实现。应用装配层仅在 `SANDBOX_ENABLED=true` 时注入其 middleware；变量未设置或为 `false` 时不会注册文件系统或 `StreamingShell`。该开关只允许在受控本地开发环境使用，公开部署必须保持关闭。未来若出现文档处理场景，应在 `internal/integration/sandbox` 提供受控文件服务或隔离 Sandbox Adapter，并通过显式配置注入，不能恢复宿主机 Shell。
 
 ## 13. 测试与评测
 

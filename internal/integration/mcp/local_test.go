@@ -1,4 +1,4 @@
-package agent
+package mcp
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 
 func TestGetEinoToolsFromLocalMCPServer(t *testing.T) {
 	ctx := context.Background()
-	client, err := getMCPClient(ctx)
+	client, err := NewLocalClient(ctx)
 	if err != nil {
 		t.Fatalf("getMCPClient() error = %v", err)
 	}
 	defer client.Close()
 
-	tools, err := getEinoTools(ctx, client)
+	tools, err := EinoTools(ctx, client)
 	if err != nil {
 		t.Fatalf("getEinoTools() error = %v", err)
 	}

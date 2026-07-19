@@ -7,9 +7,9 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/Charlie-BU/TongjiStudent/agent"
-	"github.com/Charlie-BU/TongjiStudent/integration/fornax"
-	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
+	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/fornax"
+	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 )
 
 type ShutdownHook = func(ctx context.Context)
@@ -49,14 +49,14 @@ func initializeClient(ctx context.Context) {
 		panic(fmt.Errorf("error initializing Fornax integration, err: %v", err))
 	}
 
-	if err := agent.InitDeepAgentAndMcpClient(ctx); err != nil {
-		panic(fmt.Errorf("error initializing deep agent client, err: %v", err))
+	if err := chat.Init(ctx); err != nil {
+		panic(fmt.Errorf("error initializing chat service, err: %v", err))
 	}
 
 	RegisterShutdownHook(func(ctx context.Context) {
-		logs.CtxInfo(ctx, "closing mcp client")
-		if err := agent.CloseMcpClient(); err != nil {
-			logs.CtxError(ctx, "failed to close mcp client: %v", err)
+		logs.CtxInfo(ctx, "closing chat service")
+		if err := chat.Close(); err != nil {
+			logs.CtxError(ctx, "failed to close chat service: %v", err)
 		}
 	})
 

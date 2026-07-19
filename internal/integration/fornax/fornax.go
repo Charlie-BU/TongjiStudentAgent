@@ -12,7 +12,7 @@ import (
 	"code.byted.org/flowdevops/fornax_sdk/domain"
 	"github.com/cloudwego/eino/callbacks"
 
-	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
+	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 )
 
 // RegisterShutdownHook registers cleanup work for application shutdown.
