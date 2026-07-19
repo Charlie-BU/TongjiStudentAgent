@@ -72,7 +72,7 @@ description: "基于用户指定的改动范围（默认当前工作区）分析
     - 插入到 `docs/CHANGELOG.md` 最上方，保持整体按时间从新到旧排列。
 8. 生成建议 commit message
     - 根据本次改动主线，产出 1 条 git-cz 风格 message：`type(scope): subject`。
-    - `subject` 需简洁，不写空泛词，不堆叠多主题。
+    - `subject` 需尽可能用一句话覆盖全部重要改动范围，保持简洁具体，不写空泛词。
 
 ## 顶部增量写入模板（必须包含）
 
@@ -135,6 +135,6 @@ description: "基于用户指定的改动范围（默认当前工作区）分析
 - 禁止省略 `Base Commit`（其值应来自 `HEAD~1`）。
 - 禁止省略 `Compare Scope`。
 - 禁止省略“撰写时间”（`YYYY-MM-DD HH:mm`）。
-- 禁止输出不符合 git-cz 的 commit message，或过长、语义不清的 subject。
+- 禁止输出不符合 git-cz 的 commit message，或语义不清的 subject。
 - 禁止忽略依赖与被依赖影响分析。
 - 禁止在用户未授权时自动把“已提交改动”与“未提交改动”混写为同一条记录。
