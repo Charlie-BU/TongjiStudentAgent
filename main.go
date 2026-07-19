@@ -6,24 +6,25 @@ import (
 	"fmt"
 	"time"
 
-	logs "github.com/Charlie-BU/TongjiStudent/pkg/logging"
+	platformconfig "github.com/Charlie-BU/TongjiStudent/internal/platform/config"
+	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 	"github.com/cloudwego/hertz/pkg/app"
 	hertzserver "github.com/cloudwego/hertz/pkg/app/server"
-	"github.com/cloudwego/hertz/pkg/common/config"
+	hertzconfig "github.com/cloudwego/hertz/pkg/common/config"
 )
 
 func main() {
-	port := flag.String("port", GetServerPort(), "HTTP server port")
+	port := flag.String("port", platformconfig.ServerPort(), "HTTP server port")
 	flag.Parse()
 
 	ctx := context.Background()
 
 	initializeClient(ctx)
 
-	opts := make([]config.Option, 0, 2)
+	opts := make([]hertzconfig.Option, 0, 2)
 	opts = append(opts,
 		hertzserver.WithHostPorts(":"+*port),
-		hertzserver.WithExitWaitTime(GetGracefulTime()),
+		hertzserver.WithExitWaitTime(platformconfig.GracefulTime()),
 	)
 
 	hz := hertzserver.Default(opts...)

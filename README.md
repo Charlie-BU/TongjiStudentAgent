@@ -18,11 +18,12 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 ```text
 .
-├── agent/                 # DeepAgent、模型与 MCP Client 初始化
 ├── biz/handler/           # HTTP 处理函数与健康检查接口
-├── integration/fornax/    # 可选的 Fornax 内部集成隔离层
-├── mcpserver/             # 本项目拥有的进程内 MCP Server 示例
-├── pkg/logging/           # 本地日志模块
+├── internal/
+│   ├── application/chat/  # /v1/agent/chat 应用服务与依赖装配
+│   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
+│   ├── integration/       # Ark、知识库、Fornax、MCP 与本地 Sandbox 适配
+│   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
 ├── .env                   # 本地配置（已被 Git 忽略）
 ├── main.go                # Hertz 服务入口
@@ -60,6 +61,9 @@ ARK_KNOWLEDGE_ENABLED=false
 # ARK_KNOWLEDGE_RESOURCE_ID=your-resource-id # 可替代 COLLECTION
 # ARK_KNOWLEDGE_LIMIT=5
 # ARK_KNOWLEDGE_DOMAIN=api-knowledgebase.mlp.cn-beijing.volces.com
+
+# 本地文件系统与 Shell 工具；默认关闭，仅限受控本地开发环境
+SANDBOX_ENABLED=false
 ```
 
 `ENDPOINT_ID`、`ENDPOINT_API_KEY` 以及 `ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）均为必填项。服务启动时会检查它们是否存在并据此创建模型客户端。
@@ -76,6 +80,8 @@ FORNAX_SK=your-fornax-sk
 
 启用知识库时，必须配置 `ARK_AK`、`ARK_SK`，以及
 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。主 Agent 会先检索知识库，再将命中的内容作为非可信参考资料传入同一次模型调用；不会再启动独立的知识库模型调用链。
+
+`SANDBOX_ENABLED` 未设置或为 `false` 时，Agent 不会注册文件系统或 Shell middleware。设为 `true` 会让 Agent 使用本机 Backend 执行文件操作和命令，仅可用于受控本地开发环境，禁止在公开部署环境开启。
 
 ## 本地启动
 
@@ -101,7 +107,7 @@ go build -o bin/tongjistudent .
 ./bin/tongjistudent -port=8080
 ```
 
-> `build.sh`、`run.sh` 和 `script/bootstrap.sh` 仍保留了原部署模板的产物命名与启动约定；本地调试请优先使用上述 `go run .` 或 `go build` 命令。
+> 本地也可使用 `./local_run.sh [port]` 完成环境校验、依赖下载和启动；部署模板中的 `script/bootstrap.sh` 已移除。
 
 ## 验证服务
 

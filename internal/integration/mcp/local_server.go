@@ -1,5 +1,5 @@
-// Package mcpserver contains MCP tools owned and registered by this service.
-package mcpserver
+// Package mcp 提供当前 MCP Client 的适配实现。
+package mcp
 
 import (
 	"context"
@@ -16,8 +16,8 @@ const (
 	serverVersion = "1.0.0"
 )
 
-// NewServer registers the MCP tools that are available to the DeepAgent.
-func NewServer() *server.MCPServer {
+// newLocalServer 注册本地开发使用的 MCP demo 工具。
+func newLocalServer() *server.MCPServer {
 	mcpServer := server.NewMCPServer(serverName, serverVersion)
 	mcpServer.AddTool(
 		mcp.NewTool(
@@ -29,9 +29,9 @@ func NewServer() *server.MCPServer {
 	return mcpServer
 }
 
-// NewClient creates and initializes an in-process client for the local MCP Server.
-func NewClient(ctx context.Context) (*client.Client, error) {
-	mcpClient, err := client.NewInProcessClient(NewServer())
+// NewLocalClient 创建并初始化进程内 MCP demo Client。
+func NewLocalClient(ctx context.Context) (*client.Client, error) {
+	mcpClient, err := client.NewInProcessClient(newLocalServer())
 	if err != nil {
 		return nil, fmt.Errorf("create local MCP client: %w", err)
 	}

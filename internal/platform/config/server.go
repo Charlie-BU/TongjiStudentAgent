@@ -1,4 +1,5 @@
-package main
+// Package config 管理服务运行配置。
+package config
 
 import (
 	"os"
@@ -6,11 +7,8 @@ import (
 	"time"
 )
 
-func ptrOf[T any](v T) *T {
-	return &v
-}
-
-func GetGracefulTime() time.Duration {
+// GracefulTime 返回服务优雅退出等待时长。
+func GracefulTime() time.Duration {
 	gracefulTimeout, err := strconv.Atoi(os.Getenv("_BYTEFAAS_FUNC_TIMEOUT"))
 	if err != nil {
 		gracefulTimeout = 30
@@ -18,7 +16,8 @@ func GetGracefulTime() time.Duration {
 	return time.Duration(gracefulTimeout) * time.Second
 }
 
-func GetServerPort() string {
+// ServerPort 返回 HTTP 服务监听端口。
+func ServerPort() string {
 	if port := os.Getenv("PORT0"); port != "" {
 		return port
 	}

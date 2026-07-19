@@ -1,5 +1,5 @@
-// Package log provides the application's lightweight logging facade.
-package log
+// Package logging 提供应用日志门面。
+package logging
 
 import (
 	"context"
