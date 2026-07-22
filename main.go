@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
 	platformconfig "github.com/Charlie-BU/TongjiStudent/internal/platform/config"
@@ -44,6 +45,12 @@ func main() {
 // 请求日志中间件，用于记录请求信息和响应信息
 func requestLoggingMiddleware(c context.Context, ctx *app.RequestContext) {
 	startTime := time.Now()
+	if strings.HasPrefix(string(ctx.Request.Path()), "/v1/tongji/oauth/") {
+		logs.CtxInfo(c, "REQ: [Method = %s] [Path = %s]", ctx.Request.Method(), ctx.Request.Path())
+		ctx.Next(c)
+		logs.CtxInfo(c, "RESP: [Duration = %v] [Status Code = %d]", time.Since(startTime), ctx.Response.StatusCode())
+		return
+	}
 	reqInfo := fmt.Sprintf("REQ: [Method = %s] [Path = %s] [Header = %s, Body = %s]", string(ctx.Request.Method()), string(ctx.Request.Path()), string(ctx.Request.Header.Header()), string(ctx.Request.Body()))
 	logs.CtxInfo(c, reqInfo)
 	ctx.Request.Header.Set("X-Bytefaas-Enable-Stream", "true")

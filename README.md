@@ -64,6 +64,12 @@ ARK_KNOWLEDGE_ENABLED=false
 
 # 本地文件系统与 Shell 工具；默认关闭，仅限受控本地开发环境
 SANDBOX_ENABLED=false
+
+# 同济开放平台 OAuth 2.0 授权码模式
+TONGJI_OPEN_PLATFORM_CLIENT_ID=your-client-id
+TONGJI_OPEN_PLATFORM_CLIENT_SECRET=your-client-secret
+TONGJI_OPEN_PLATFORM_REDIRECT_URI=https://app.tongji.edu.cn/wallbreakerAuth/callback.html
+TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 ```
 
 `ENDPOINT_ID`、`ENDPOINT_API_KEY` 以及 `ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）均为必填项。服务启动时会检查它们是否存在并据此创建模型客户端。
@@ -82,6 +88,39 @@ FORNAX_SK=your-fornax-sk
 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。主 Agent 会先检索知识库，再将命中的内容作为非可信参考资料传入同一次模型调用；不会再启动独立的知识库模型调用链。
 
 `SANDBOX_ENABLED` 未设置或为 `false` 时，Agent 不会注册文件系统或 Shell middleware。设为 `true` 会让 Agent 使用本机 Backend 执行文件操作和命令，仅可用于受控本地开发环境，禁止在公开部署环境开启。
+
+## 同济开放平台浏览器授权
+
+服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取。变量模板见 [`.env.example`](.env.example)；`.env` 已被 Git 忽略。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/v1/tongji/oauth/authorize` | 创建签名 `state`，并 302 跳转到同济统一认证页面。 |
+| `POST` | `/v1/tongji/oauth/token` | callback 页面提交 `code` 和 `state`，服务校验 state 后换取并返回短期 Bearer access token。 |
+
+浏览器访问 `https://<你的 Go 服务域名>/v1/tongji/oauth/authorize` 后，开放平台会重定向到已登记的 `https://app.tongji.edu.cn/wallbreakerAuth/callback.html?code=...&state=...`。由于该回调页不在 Go 服务域名下，它必须将参数提交回 Go 服务：
+
+```js
+const params = new URLSearchParams(window.location.search);
+const response = await fetch("https://<你的 Go 服务域名>/v1/tongji/oauth/token", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ code: params.get("code"), state: params.get("state") }),
+});
+const bearerToken = await response.json();
+```
+
+该接口仅允许 `https://app.tongji.edu.cn` 跨域读取响应，响应包含 `access_token`、`token_type`、`expires_in` 和 `scope`，**不会**把 refresh token 返回给浏览器或写入日志。前端应把 access token 保存在内存中并在过期后重新授权；不得放入 URL、日志或长期 `localStorage`。
+
+本项目尚未实现受信任用户身份和 token 持久化，因此返回的 token 仅用于当前浏览器会话。后续接入学生数据 MCP 时，应将 refresh token 安全地绑定至已认证用户，而非交给 Agent 或模型上下文。
+
+### 单测中的 API 调用 demo
+
+默认测试使用本地 Fake Server，不访问真实开放平台：
+
+```bash
+go test ./internal/integration/tongjiapi
+```
 
 ## 本地启动
 
