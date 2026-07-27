@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Name        string
 	Description string
+	Instruction string
 	ChatModel   model.BaseChatModel
 	Tools       []tool.BaseTool
 	Handlers    []adk.ChatModelAgentMiddleware
@@ -36,6 +37,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	agent, err := deep.New(ctx, &deep.Config{
 		Name:        cfg.Name,
 		Description: cfg.Description,
+		Instruction: cfg.Instruction,
 		ChatModel:   cfg.ChatModel,
 		Handlers:    cfg.Handlers,
 		ToolsConfig: adk.ToolsConfig{
