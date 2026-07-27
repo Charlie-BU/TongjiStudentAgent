@@ -65,10 +65,10 @@ if [[ -z "${ARK_BASE_URL:-}" && -z "${ARK_BASE_URL_CN:-}" ]]; then
   exit 1
 fi
 
-FORNAX_ENABLED_VALUE="$(printf '%s' "${FORNAX_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
-if [[ "${FORNAX_ENABLED_VALUE}" == "1" || "${FORNAX_ENABLED_VALUE}" == "true" || "${FORNAX_ENABLED_VALUE}" == "yes" || "${FORNAX_ENABLED_VALUE}" == "on" ]]; then
-  if [[ -z "${FORNAX_AK:-}" || -z "${FORNAX_SK:-}" ]]; then
-    echo "error: FORNAX_AK and FORNAX_SK are required when FORNAX_ENABLED=true" >&2
+COZELOOP_ENABLED_VALUE="$(printf '%s' "${COZELOOP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${COZELOOP_ENABLED_VALUE}" == "1" || "${COZELOOP_ENABLED_VALUE}" == "true" || "${COZELOOP_ENABLED_VALUE}" == "yes" || "${COZELOOP_ENABLED_VALUE}" == "on" ]]; then
+  if [[ -z "${COZELOOP_WORKSPACE_ID:-}" || -z "${COZELOOP_JWT_OAUTH_CLIENT_ID:-}" || -z "${COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID:-}" || -z "${COZELOOP_JWT_OAUTH_PRIVATE_KEY:-}" ]]; then
+    echo "error: COZELOOP_WORKSPACE_ID, COZELOOP_JWT_OAUTH_CLIENT_ID, COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID, and COZELOOP_JWT_OAUTH_PRIVATE_KEY are required when COZELOOP_ENABLED=true" >&2
     exit 1
   fi
 fi
