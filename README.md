@@ -11,7 +11,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Agent 调用接口：`POST /v1/agent/chat`。
 - 基于 Ark 兼容配置初始化 Eino DeepAgent。
 - 进程内 MCP Server 示例，注册了 `get_current_time` 工具。
-- 可选 Fornax 评测/Trace 集成，默认关闭。
+- 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
 - 本地日志模块，不直接使用项目业务代码中的字节内部日志库。
 
 ## 项目结构
@@ -22,7 +22,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 ├── internal/
 │   ├── application/chat/  # /v1/agent/chat 应用服务与依赖装配
 │   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
-│   ├── integration/       # Ark、知识库、Fornax、MCP 与本地 Sandbox 适配
+│   ├── integration/       # Ark、知识库、Cozeloop（开源版 Fornax）、MCP、本地 Sandbox 与同济开放平台适配
 │   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
 ├── .env                   # 本地配置（已被 Git 忽略）
@@ -34,7 +34,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 ## 前置条件
 
 - Go `1.23.8`（项目的 `go.mod` 指定的 toolchain 版本）。
-- 可访问项目 Go 依赖。虽然 Fornax 默认不运行，但其隔离模块仍在同一 Go module 内；首次下载依赖时，如本机没有缓存，仍需要具备访问相关内部依赖的权限。
+- 可访问项目 Go 依赖。
 - 可用的模型 Endpoint 凭据。
 
 ## 配置本地环境
@@ -47,10 +47,12 @@ ARK_BASE_URL_CN=https://your-model-endpoint
 ENDPOINT_ID=your-endpoint-id
 ENDPOINT_API_KEY=your-api-key
 
-# 可选的内部 Fornax 评测与 Trace 集成；本地默认关闭
-FORNAX_ENABLED=false
-# FORNAX_AK=your-fornax-ak
-# FORNAX_SK=your-fornax-sk
+# 可选 Cozeloop 集成（开源版 Fornax）：用于 Trace 观测与系统 Prompt 管理
+COZELOOP_ENABLED=false
+# COZELOOP_WORKSPACE_ID=your-workspace-id
+# COZELOOP_JWT_OAUTH_CLIENT_ID=your-jwt-oauth-client-id
+# COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID=your-public-key-id
+# COZELOOP_JWT_OAUTH_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 
 # Ark 知识库检索：启用后，检索结果会作为参考资料注入主 Agent 调用链
 ARK_KNOWLEDGE_ENABLED=false
@@ -74,15 +76,7 @@ TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 
 `ENDPOINT_ID`、`ENDPOINT_API_KEY` 以及 `ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）均为必填项。服务启动时会检查它们是否存在并据此创建模型客户端。
 
-如需启用 Fornax，请显式设置：
-
-```env
-FORNAX_ENABLED=true
-FORNAX_AK=your-fornax-ak
-FORNAX_SK=your-fornax-sk
-```
-
-启用但未同时提供 `FORNAX_AK` 和 `FORNAX_SK` 时，服务会以明确错误退出。
+如需启用 Cozeloop，请显式设置 `COZELOOP_ENABLED=true` 以及对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 
 启用知识库时，必须配置 `ARK_AK`、`ARK_SK`，以及
 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。主 Agent 会先检索知识库，再将命中的内容作为非可信参考资料传入同一次模型调用；不会再启动独立的知识库模型调用链。
@@ -91,7 +85,7 @@ FORNAX_SK=your-fornax-sk
 
 ## 同济开放平台浏览器授权
 
-服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取。变量模板见 [`.env.example`](.env.example)；`.env` 已被 Git 忽略。
+服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考本 README 中的配置示例。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -219,4 +213,3 @@ curl --request POST http://127.0.0.1:8080/v1/agent/chat \
 
 - A2A 架构和原字节内部 MCP Client 已移除。
 - Hertz 已替换为开源 `github.com/cloudwego/hertz`。
-- Fornax 相关内部依赖仅由 `integration/fornax` 隔离层引用；要让根依赖树完全不包含它们，需要进一步将该集成拆分为独立进程或独立仓库模块。
