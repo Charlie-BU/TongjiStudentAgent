@@ -7,12 +7,15 @@ import (
 	"strings"
 
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
+	promptconfig "github.com/Charlie-BU/TongjiStudent/internal/application/prompt"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/arkmodel"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/cozeloop"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	mcpintegration "github.com/Charlie-BU/TongjiStudent/internal/integration/mcp"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
 	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 )
 
@@ -37,6 +40,11 @@ func Init(ctx context.Context) error {
 
 // NewFromEnv 从环境变量构造聊天服务。
 func NewFromEnv(ctx context.Context) (*Service, error) {
+	instruction, err := loadSystemInstruction(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	chatModel, err := arkmodel.NewFromEnv(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize chat model: %w", err)
@@ -75,6 +83,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	rt, err := runtime.New(ctx, runtime.Config{
 		Name:        "Tongji Student Agent",
 		Description: "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
+		Instruction: instruction,
 		ChatModel:   chatModel,
 		Tools:       tools,
 		Handlers:    handlers,
@@ -85,6 +94,23 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	return &Service{runtime: rt, mcpClient: mcpClient, knowledgeClient: knowledgeClient}, nil
+}
+
+func loadSystemInstruction(ctx context.Context) (string, error) {
+	if !cozeloop.Enabled() {
+		return "", nil
+	}
+
+	messages, err := cozeloop.FetchPrompt(ctx, promptconfig.TongjiStudentSystemPrompt, "", nil)
+	if err != nil {
+		return "", fmt.Errorf("load system prompt: %w", err)
+	}
+
+	instruction, err := cozeloop.MessageContent(messages, schema.System)
+	if err != nil {
+		return "", fmt.Errorf("system prompt %q: %w", promptconfig.TongjiStudentSystemPrompt, err)
+	}
+	return instruction, nil
 }
 
 // Chat 通过默认聊天服务执行单轮对话。

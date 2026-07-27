@@ -8,7 +8,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
-	"github.com/Charlie-BU/TongjiStudent/internal/integration/fornax"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/cozeloop"
 	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 )
 
@@ -45,18 +45,20 @@ func initializeClient(ctx context.Context) {
 		panic(fmt.Errorf("error loading .env file, err: %v", err))
 	}
 
-	if err := fornax.Init(ctx, RegisterShutdownHook); err != nil {
-		panic(fmt.Errorf("error initializing Fornax integration, err: %v", err))
+	// 初始化 Cozeloop
+	if err := cozeloop.Init(ctx, RegisterShutdownHook); err != nil {
+		panic(fmt.Errorf("error initializing Cozeloop integration, err: %v", err))
 	}
 
+	// 初始化 Agent
 	if err := chat.Init(ctx); err != nil {
-		panic(fmt.Errorf("error initializing chat service, err: %v", err))
+		panic(fmt.Errorf("error initializing agent, err: %v", err))
 	}
 
 	RegisterShutdownHook(func(ctx context.Context) {
-		logs.CtxInfo(ctx, "closing chat service")
+		logs.CtxInfo(ctx, "closing agent")
 		if err := chat.Close(); err != nil {
-			logs.CtxError(ctx, "failed to close chat service: %v", err)
+			logs.CtxError(ctx, "failed to close agent: %v", err)
 		}
 	})
 

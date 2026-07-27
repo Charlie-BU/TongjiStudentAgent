@@ -1,3 +1,51 @@
+## CHANGELOG - 2026-07-28 00:54 - 迁移至 CozeLoop Trace 与 PromptHub 系统提示词
+
+### 撰写时间
+
+- 2026-07-28 00:54
+
+### Base Commit
+
+- 0be5bba6b1782f3d5033d2e850b278a5bcf8ec66
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 原来的 Fornax 集成依赖内部模块，虽然被隔离在 `internal/integration/fornax`，但仍让根 Go module 携带内部依赖，也无法承担开源部署下的 Prompt 管理需求。
+- 这次将可选观测能力迁移到开源 CozeLoop，并把系统 Prompt 的获取固定在服务启动阶段。目标是在不改变 `/v1/agent/chat` 协议和默认关闭路径的前提下，形成“可选 Trace + PromptHub 配置 + Runtime Instruction”的清晰链路。
+
+### 改动概览
+
+- 删除 Fornax adapter 及其内部依赖，升级 `github.com/cloudwego/eino`，引入公开的 CozeLoop SDK、Eino callback 与 PromptHub 组件；`go.mod`、`go.sum` 因此收敛为公开依赖树。
+- 新增 `internal/integration/cozeloop`：`COZELOOP_ENABLED` 默认关闭；开启时创建 SDK client、注册 Eino 全局 callback，并在关闭钩子中释放 client。启动预检要求 workspace ID、JWT OAuth client ID、public key ID 与 private key 全部存在，避免把缺失私钥延后为 SDK 的泛化认证失败。
+- 新增 `internal/application/prompt/keys.go`，将 `prompt.tongjistudent.system_prompt` 作为集中管理的 PromptHub 标识。聊天服务在 CozeLoop 启用时拉取、格式化并提取 System 消息；`runtime.Config.Instruction` 再将其交给 `deep.New`。
+- README 同步 CozeLoop 环境变量、PromptHub 行为和依赖前置条件，移除 Fornax 专用说明；现有聊天、Runtime 与 CozeLoop 测试同步覆盖新开关、未初始化 client、System 消息拼接以及缺失 JWT 私钥。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`initializeClient` 仍先执行 `godotenv.Load`，随后初始化 CozeLoop，再调用 `chat.Init`。因此 `.env` 中的 `COZELOOP_*` 变量会在 PromptHub 拉取前就被读取；关闭开关时不会创建远端 client，也不会请求 PromptHub。
+- 当前改动：`cozeloop.Init` 只在显式启用后注册 `cozeloopcallback.NewLoopHandler`。`chat.NewFromEnv` 调用 `loadSystemInstruction`，经 `FetchPrompt` 取得远端消息，并用 `MessageContent(..., schema.System)` 合并 System 文本；失败会中止服务初始化，而不会用不完整 Prompt 静默启动。
+- 下游影响：`runtime.New` 现在把 `Config.Instruction` 转发给 Deep Agent，后续 `/v1/agent/chat` 的请求由同一 Runtime 消费该系统指令。HTTP Handler、知识库注入、MCP 与 Sandbox 的外部协议没有改动；关闭时仍由既有 shutdown hooks 依序关闭 Agent 与 CozeLoop client。
+
+### 改动结果与业务影响
+
+- 默认运行路径继续不启用外部 Trace 或 PromptHub。显式启用后，模型调用会被 Eino 全局 callback 观测，并使用 PromptHub 中的系统提示词，而不需要把 Prompt 固化在二进制代码中。
+- 这次额外处理了一个配置边界：README 已声明 JWT 私钥是必需项，但初版预检遗漏它。现在缺少私钥会在创建 SDK client 前返回包含变量名的配置错误，并有离线回归测试。
+- 已执行 `go test ./...`、`go test -race ./internal/integration/cozeloop ./internal/application/chat`、`go vet ./...` 与 `git diff --check HEAD`，均通过。首次在受限沙箱运行全仓测试时，既有 `httptest` 用例因端口绑定限制失败；在允许本地 loopback 的环境复跑后通过。
+
+### 风险与待办
+
+- CozeLoop 开启后，服务启动依赖远端 PromptHub 可用性与 `prompt.tongjistudent.system_prompt` 的内容结构。当前选择失败即停止启动，以避免在未知系统指令下服务；生产环境仍需用独立 workspace 验证权限、Prompt 版本与可用性。
+- 当前仅接受完整 JWT OAuth 配置，未提供 `COZELOOP_API_TOKEN` 的测试用替代分支。若本地调试需要 API Token，应先明确安全边界，再实现二选一的配置校验与文档。
+- `callbacks.AppendGlobalHandlers` 和 CozeLoop client 都是进程级资源，当前初始化路径假设服务进程只初始化一次。未来若引入热重载或同进程多应用实例，需要补充 handler 去重与 client 生命周期管理。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(observability): migrate Fornax integration to CozeLoop`
+
 ## CHANGELOG - 2026-07-23 01:01 - 接入同济开放平台浏览器 OAuth 授权链路
 
 ### 撰写时间

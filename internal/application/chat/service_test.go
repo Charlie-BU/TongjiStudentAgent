@@ -2,9 +2,8 @@ package chat
 
 import (
 	"context"
-	"testing"
-
 	. "github.com/smartystreets/goconvey/convey"
+	"testing"
 )
 
 func TestChatRequiresInitializedDefaultService(t *testing.T) {
