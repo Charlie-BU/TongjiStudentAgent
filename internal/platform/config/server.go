@@ -9,7 +9,7 @@ import (
 
 // GracefulTime 返回服务优雅退出等待时长。
 func GracefulTime() time.Duration {
-	gracefulTimeout, err := strconv.Atoi(os.Getenv("_BYTEFAAS_FUNC_TIMEOUT"))
+	gracefulTimeout, err := strconv.Atoi(os.Getenv("FUNC_TIMEOUT"))
 	if err != nil {
 		gracefulTimeout = 30
 	}

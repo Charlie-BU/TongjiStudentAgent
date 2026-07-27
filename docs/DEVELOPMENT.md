@@ -50,7 +50,7 @@
 
 ```text
 HTTP /v1/agent/chat
-  -> biz/handler.Chat
+  -> biz/handler.Chat（Bearer 凭据写入请求上下文）
   -> agent.Chat
   -> 可选 Ark Knowledge Search
   -> Eino DeepAgent Runner
@@ -69,9 +69,9 @@ HTTP /v1/agent/chat
 | 工具治理 | 没有工具风险等级、参数预检、超时和失败策略 | 无法安全接入学生隐私和未来写操作 |
 | HITL | 未实现 | 无法确认高风险操作，也无法中断后恢复 |
 | 流式协议 | HTTP 只返回最终 JSON | 前端无法显示思考状态、工具进度和确认请求 |
-| 身份与鉴权 | Chat 接口无认证授权 | 不能安全访问课表、成绩等个人数据 |
+| 身份与鉴权 | Chat 接口可将格式正确的 Bearer 凭据写入请求上下文；当前不因缺失或无效格式拒绝调用，也未验证 token、绑定用户或审核 scope | 不能安全访问课表、成绩等个人数据 |
 | 安全 | DeepAgent 挂载本地文件和 `/bin/sh` | 暴露后可能读 `.env`、写文件或执行命令 |
-| 隐私 | 日志记录完整 Header、Body、回复和 Agent Message | 可能泄露 Token、成绩、课表和个人信息 |
+| 隐私 | 普通 HTTP 日志仅记录 Request ID、方法、路径、状态码和耗时；Chat 不再记录完整回复 | 仍需补充审计、字段级脱敏和受限诊断日志 |
 | 评测 | 只有局部单测 | 无法证明回答准确性、工具选择和来源完整性 |
 
 ### 2.3 两个仓库的确定边界

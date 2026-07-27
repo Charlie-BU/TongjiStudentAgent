@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-28 01:49 - 收敛 Chat 请求元数据并为后续校园凭据透传预留上下文
+
+### 撰写时间
+
+- 2026-07-28 01:49
+
+### Base Commit
+
+- 4456fd1fd880e4d46270f01a242d4e41d73f771e
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- Chat 入口此前会记录完整 Header、请求体和 Agent 回复。校园场景下，这会让浏览器 Bearer token、用户问题和未来的 Tool Result 进入普通日志；同时后续远程 MCP 需要使用浏览器会话中的短期校园 token，但当前 Agent 还没有实际的 token 验证与用户授权链路。
+- 因此这次不把 token 格式检查包装成认证。目标是先删除普通日志中的敏感内容，建立请求关联 ID，并把格式正确的 Bearer token 作为可选的单请求上下文保存；没有 token 或格式错误时，Agent 仍按原路径调用。
+
+### 改动概览
+
+- 新增 `internal/platform/auth`：`ExtractBearerToken` 只解析标准 Bearer 格式，`WithAccessToken` 和 `AccessTokenFromContext` 使用私有 context key 保存与读取 token。未引入 token 持久化、模型消息注入或日志输出。
+- `biz/handler.Chat` 改为可选调用 `withChatAccessToken`。合法 token 会传入 `chat.Chat` 的 context；缺失、Basic 或格式错误的 header 会保留原 context 并继续处理消息，不返回 401。
+- `main.go` 的请求日志改为仅记录随机 `X-Request-ID`、方法、路径、状态码和耗时，不再记录 Header、Body 或响应内容；响应改用 `X-Enable-Stream`，并增加 `main_test.go` 固定 Request ID 与流式响应头契约。
+- 删除 Chat 服务输出完整 Agent 回复的普通日志；运行配置的优雅退出变量从 `_BYTEFAAS_FUNC_TIMEOUT` 调整为 `FUNC_TIMEOUT`。README、开发文档和风险文档同步当前 token 边界与日志约束。
+- 新增 Bearer 解析、请求上下文与 Handler 辅助函数测试，覆盖合法 token 写入及缺失、Basic、缺段和多段值被忽略的场景。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：浏览器仍通过同济 OAuth 回调取得短期 access token；`POST /v1/agent/chat` 可以选择性放入 `Authorization: Bearer <access_token>`。Hertz 的 `requestLoggingMiddleware` 在路由前生成 Request ID，随后 `streamHeaderMiddleware` 写入当前响应头。
+- 当前改动：Handler 仅把通过 `ExtractBearerToken` 的 token 写入 context，再将该 context 交给 `chat.Chat`、知识库和 Runtime。普通日志从请求/响应全量序列化改为元数据记录，避免 token 和对话内容默认落盘。
+- 下游影响：当前进程内 MCP demo 没有读取 access token，因此 Chat 的业务结果与无 token 客户端保持兼容。未来远程校园 MCP 接入时可从 `auth.AccessTokenFromContext(ctx)` 读取 token；在此之前，token 不构成身份、授权或访问控制依据。
+
+### 改动结果与业务影响
+
+- 调用方无需等待完整认证体系即可继续使用 Chat；携带合法 Bearer token 的请求则为后续 MCP 调用保留了不经过模型、响应和普通日志的传递通道。
+- `X-Request-ID` 提供了不携带用户内容的排障关联标识，`X-Enable-Stream` 替代旧的 Bytefaas 专用响应头。改动同时缩小了 Agent 回复和 HTTP 请求内容的日志暴露面。
+- 已执行 `go test ./...`、`go test -race ./biz/handler ./internal/platform/auth ./internal/application/chat .`、`go vet ./...` 与 `git diff --check HEAD`，均通过。测试不读取 `.env`、不调用真实模型或校园平台；全仓 `httptest` 用例在允许 loopback 的环境中运行。
+
+### 风险与待办
+
+- 当前 token 仅有格式解析，没有签名/有效期验证、用户绑定、scope 审核或远程 MCP 消费方。个人数据工具上线前必须在可信网关或同济开放平台完成这些授权步骤，不能依赖当前 context 值。
+- `X-Bytefaas-Enable-Stream` 已被移除。若部署平台或旧客户端仍依赖该头，需要在上线前确认迁移策略，或显式保留兼容层。
+- 日志缩减仅覆盖普通 HTTP 与 Chat 回复路径；未来若增加诊断采样、远程 MCP 或第三方 callback，应单独设计受限安全日志、字段脱敏和访问审计。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(http): add request context and safe logging`
+
 ## CHANGELOG - 2026-07-28 00:54 - 迁移至 CozeLoop Trace 与 PromptHub 系统提示词
 
 ### 撰写时间

@@ -13,7 +13,6 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	mcpintegration "github.com/Charlie-BU/TongjiStudent/internal/integration/mcp"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
-	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -143,7 +142,6 @@ func (s *Service) Chat(ctx context.Context, message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	logs.Infof("agent response: %s", response)
 	return response, nil
 }
 

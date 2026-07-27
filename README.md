@@ -8,7 +8,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 - 开源 Hertz HTTP 服务，默认监听 `8080` 端口。
 - 健康检查接口：`GET /`、`GET /ping`、`GET /v1/ping`。
-- Agent 调用接口：`POST /v1/agent/chat`。
+- Agent 调用接口：`POST /v1/agent/chat`，可选传入短期 Bearer access token。
 - 基于 Ark 兼容配置初始化 Eino DeepAgent。
 - 进程内 MCP Server 示例，注册了 `get_current_time` 工具。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
@@ -106,7 +106,7 @@ const bearerToken = await response.json();
 
 该接口仅允许 `https://app.tongji.edu.cn` 跨域读取响应，响应包含 `access_token`、`token_type`、`expires_in` 和 `scope`，**不会**把 refresh token 返回给浏览器或写入日志。前端应把 access token 保存在内存中并在过期后重新授权；不得放入 URL、日志或长期 `localStorage`。
 
-本项目尚未实现受信任用户身份和 token 持久化，因此返回的 token 仅用于当前浏览器会话。后续接入学生数据 MCP 时，应将 refresh token 安全地绑定至已认证用户，而非交给 Agent 或模型上下文。
+本项目尚未实现受信任用户身份和 token 持久化，因此返回的 token 仅用于当前浏览器会话。Chat 接口可由浏览器以 HTTP `Authorization: Bearer <access_token>` 传入该短期 token；服务仅将格式正确的 token 放入本次请求的私有上下文，不写入模型消息、响应或普通日志。当前阶段不会因 token 缺失或格式错误拒绝 Agent 调用，也未完成 token 有效性验证、用户绑定或 scope 审核；这些能力是个人数据 MCP 上线前的前置条件。
 
 ### 单测中的 API 调用 demo
 
@@ -171,6 +171,7 @@ go test ./...
 ```bash
 curl --request POST http://127.0.0.1:8080/v1/agent/chat \
   --header 'Content-Type: application/json' \
+  --header 'Authorization: Bearer <access_token>' \
   --data '{"message":"现在几点了？"}'
 ```
 
@@ -186,7 +187,7 @@ curl --request POST http://127.0.0.1:8080/v1/agent/chat \
 {"message":"Agent 的最终文本回复"}
 ```
 
-`message` 为空或请求体不是合法 JSON 时会返回 `400`；模型调用或 Agent 执行失败时会返回 `500`。当前接口为非流式单轮调用，不保存会话历史。
+`Authorization` 为可选字段，当前仅在 Bearer 格式正确时写入请求上下文；`message` 为空或请求体不是合法 JSON 时会返回 `400`；模型调用或 Agent 执行失败时会返回 `500`。当前接口为非流式单轮调用，不保存会话历史。响应会包含用于问题排查的 `X-Request-ID`，普通日志只记录该 ID、方法、路径、状态码和耗时，不记录请求或响应内容。
 
 ## 模型与 MCP 的现状
 
