@@ -9,7 +9,8 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
-	"github.com/Charlie-BU/TongjiStudent/internal/application/allowlist"
+	promptallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/prompt"
+	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/arkmodel"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/cozeloop"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
@@ -56,11 +57,11 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
 
-	mcpClient, err := mcpintegration.NewLocalClient(ctx)
+	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("initialize mcp client: %w", err)
+		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
 	}
-	tools, err := mcpintegration.EinoTools(ctx, mcpClient)
+	tools, err := mcpintegration.EinoTools(ctx, mcpClient, toolallowlist.MCPTools...)
 	if err != nil {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("convert mcp tools: %w", err)
@@ -103,14 +104,14 @@ func loadSystemInstruction(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
-	messages, err := cozeloop.FetchPrompt(ctx, allowlist.TongjiStudentSystemPrompt, "", nil)
+	messages, err := cozeloop.FetchPrompt(ctx, promptallowlist.TongjiStudentSystemPrompt, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("load system prompt: %w", err)
 	}
 
 	instruction, err := cozeloop.MessageContent(messages, schema.System)
 	if err != nil {
-		return "", fmt.Errorf("system prompt %q: %w", allowlist.TongjiStudentSystemPrompt, err)
+		return "", fmt.Errorf("system prompt %q: %w", promptallowlist.TongjiStudentSystemPrompt, err)
 	}
 	return instruction, nil
 }

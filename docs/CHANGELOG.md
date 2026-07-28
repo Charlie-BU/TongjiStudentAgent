@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-28 15:45 - 接入远程 MCP 并为个人数据工具透传请求级凭据
+
+### 撰写时间
+
+- 2026-07-28 15:45
+
+### Base Commit
+
+- f04040f91e99d0b1ae1e0a36c684df1526503786
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 原 Agent 只连接进程内 `get_current_time` MCP demo，无法验证与独立 `TongjiStudentMCPServer` 的部署协议，也不能把浏览器请求中已有的短期校园 access token 安全地交给个人数据工具。
+- 本次目标是将启动依赖切换到远程 Streamable HTTP MCP，按应用 allowlist 发现可用 Tool，并让每次个人数据 Tool 调用仅从当前请求 context 读取凭据、按需注入远程请求；缺失 token 时不得触发远程调用。
+
+### 改动概览
+
+- 删除进程内 MCP Server、`get_current_time` demo 及其测试；新增 `internal/integration/mcp/client.go`，从 `MCP_SERVER_URL`、`MCP_TIMEOUT` 读取远程连接配置，完成 Client 创建、启动、Initialize、Tool Schema 发现和 allowlist 完整性校验。
+- application allowlist 从单一包拆分为 `prompt`、`skill`、`tool` 子包；当前 Tool allowlist 固定为 `tongji.student.score`。聊天服务初始化时改为连接远程 MCP，并只将该 allowlist 转换为 Eino Tool。
+- 为 Eino MCP Tool 增加请求级包装：仅在 `AccessTokenFromContext` 成功时附加 `X-Tongji-Access-Token`；缺失 token 时返回本地未授权提示而不访问 MCP。请求头按单次 `tool.Option` 传递，不写入 Client 全局状态或普通日志。
+- README 与开发文档同步远程 MCP 必填环境变量、远程调用链、token 注入行为、缺失 token 的拒绝语义及远程服务的凭据保护责任。
+- 新增离线 MCP 测试，覆盖配置解析、远程初始化失败、allowlist 缺项、无 token 不发请求，以及不同请求 token 的独立头透传。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP Handler 继续只把格式正确的 Bearer token 放入 request context；`chat.NewFromEnv` 在模型与知识库初始化后读取 MCP 配置、连接远程 Client，再传入 Tool allowlist。服务启动会在远程连接、Initialize 或允许工具发现失败时中止。
+- 当前改动：`EinoTools` 先调用远程 `ListTools` 取得 allowlist 中的 schema，再将可同步调用的 Tool 包装为 `requestScopedTool`。运行时调用包装器时才读取本次 context 并使用 `einoext.WithCustomHeaders` 向该次 `tools/call` 请求添加校园 token。
+- 下游影响：DeepAgent 不再获得本地时间 demo，而获得远程成绩 Tool；无 token 调用不会越过本地进程，有 token 调用由远程 MCP/同济开放平台继续验证有效期、用户绑定与 scope。远程 MCP 部署必须接受 Streamable HTTP 协议，并避免记录 `X-Tongji-Access-Token`。
+
+### 改动结果与业务影响
+
+- Agent 启动成功现在同时验证模型配置、远程 MCP 初始化和 allowlist 工具发现，减少运行到首次 Tool 调用才发现服务端能力不匹配的情况。
+- 同一进程内的并发请求不共享 token：包装器按调用 context 创建请求头；测试验证连续调用分别到达测试 MCP 的对应 token，且 Tool 响应不回显凭据。
+- 已执行 `go test ./...`、`go test -race ./...`、`go vet ./...`、`git diff --check` 与 `git diff --cached --check`，均通过。MCP 测试仅使用本机回环测试服务，不读取 `.env`、不访问真实校园平台或模型。
+
+### 风险与待办
+
+- 远程 MCP 成为启动前置依赖；网络不可达、协议不兼容或 allowlist 漂移都会阻止服务启动。生产部署应配置独立健康检查、连接超时和受控发布顺序。
+- 当前本地仅检查 Bearer 格式并转发 token，不验证签名、有效期、用户身份或 scope；这些安全判定必须在可信远程 MCP 或同济开放平台落实，不能由 Agent 模型推断。
+- 目前仅包装同步 Invokable Tool。若远程 MCP 后续提供流式或异步工具，需要扩展等价的请求级 header 注入和取消/错误传播测试，避免回退到无凭据或全局凭据路径。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(mcp): add remote client and request-scoped token forwarding`
+
 ## CHANGELOG - 2026-07-28 12:05 - 为单轮 Agent 增加安全 SSE 运行事件与断连取消
 
 ### 撰写时间

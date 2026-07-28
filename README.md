@@ -10,7 +10,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - 健康检查接口：`GET /`、`GET /ping`、`GET /v1/ping`。
 - Agent 调用接口：兼容 JSON 的 `POST /v1/agent/chat` 与 SSE 的 `POST /v1/agent/chat/stream`，均可选传入短期 Bearer access token。
 - 基于 Ark 兼容配置初始化 Eino DeepAgent。
-- 进程内 MCP Server 示例，注册了 `get_current_time` 工具。
+- 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
 - 本地日志模块，不直接使用项目业务代码中的字节内部日志库。
 
@@ -63,6 +63,10 @@ ARK_KNOWLEDGE_ENABLED=false
 # ARK_KNOWLEDGE_RESOURCE_ID=your-resource-id # 可替代 COLLECTION
 # ARK_KNOWLEDGE_LIMIT=5
 # ARK_KNOWLEDGE_DOMAIN=api-knowledgebase.mlp.cn-beijing.volces.com
+
+# 远程 TongjiStudent MCP Server；启动时会连接、初始化并校验 allowlist
+MCP_SERVER_URL=http://127.0.0.1:3000/mcp
+MCP_TIMEOUT=12s
 
 # 本地文件系统与 Shell 工具；默认关闭，仅限受控本地开发环境
 SANDBOX_ENABLED=false
@@ -158,7 +162,7 @@ curl http://127.0.0.1:8080/v1/ping
 {"message":"hey yo!"}
 ```
 
-运行测试以验证本地 MCP Server 及其他已覆盖模块：
+运行测试以验证远程 MCP 适配及其他已覆盖模块：
 
 ```bash
 go test ./...
@@ -202,15 +206,17 @@ curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
 
 ## 模型与 MCP 的现状
 
-启动过程中会依次创建模型客户端、进程内 MCP Client、MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式和 MCP 初始化已通过。
+启动过程中会依次创建模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
 
 `POST /v1/agent/chat` 与 `POST /v1/agent/chat/stream` 都会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；`/ping` 系列接口只用于服务存活检查。当前仍是无会话的单轮运行；后续可在此基础上加入 Session、取消与 HITL Resume。
 
-内置 MCP demo 的工具为：
+当前允许暴露给 Agent 的远程 MCP 工具为：
 
 | 工具 | 作用 |
 | --- | --- |
-| `get_current_time` | 返回当前 UTC 时间（RFC3339 格式） |
+| `tongji.student.score` | 将请求内校园 access token 转交远程 MCP，查询指定学期成绩 |
+
+每次 Tool 调用会从当前请求 context 读取格式正确的 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时 Tool 在本地返回未授权提示，不会发起 MCP 请求。远程 MCP 与同济开放平台仍必须验证 token 的有效性、用户绑定和 scope；部署远程 MCP 时必须保护该请求头，不能写入普通日志。
 
 ## 路由一览
 

@@ -7,7 +7,7 @@
 
 ## 1. 结论与实施顺序
 
-当前 `TongjiStudentAgent` 已经能够启动 Hertz、调用模型、连接进程内 MCP demo，并可选检索 Ark 知识库，但它仍是演示基架：没有受控的 Agent Loop、会话级短期记忆、远程 MCP、统一工具执行策略、流式事件协议、HITL、评测闭环和生产级安全边界。
+当前 `TongjiStudentAgent` 已经能够启动 Hertz、调用模型、连接远程 MCP、透传请求级校园 token，并可选检索 Ark 知识库，但它仍是演示基架：没有受控的 Agent Loop、会话级短期记忆、统一工具执行策略、HITL、评测闭环和生产级安全边界。
 
 本项目不应直接复制 `reference` 的完整架构。`reference` 已经服务于复杂的多 Agent、Skill、沙箱、任务队列和多种业务形态，成熟度高，也带有大量当前产品用不到的工程复杂度。我们应复用它最重要的设计原则：
 
@@ -42,7 +42,7 @@
 - `POST /v1/agent/chat` 单轮 JSON 聚合接口，以及 `POST /v1/agent/chat/stream` 单轮 SSE 接口。
 - Ark ChatModel 初始化。
 - Eino `deep.New` 预构建 DeepAgent。
-- 进程内 MCP Client 与 `get_current_time` demo 工具。
+- 远程 Streamable HTTP MCP Client 与 application allowlist 中的工具。
 - 可选 Ark 知识库检索，并将检索文本拼入用户消息。
 - 可选 Fornax 回调。
 
@@ -54,7 +54,7 @@ HTTP /v1/agent/chat 或 /v1/agent/chat/stream
   -> chat.Chat 或 chat.Stream
   -> 可选 Ark Knowledge Search
   -> Eino DeepAgent Runner
-  -> 进程内 MCP demo
+  -> 远程 MCP allowlist 工具（请求级 token 注入）
   -> JSON 聚合最终文本或 SSE 安全运行事件
 ```
 
@@ -65,7 +65,7 @@ HTTP /v1/agent/chat 或 /v1/agent/chat/stream
 | Agent 编排 | 依赖 `deep.New` 默认行为，项目没有自己的 Graph 和节点契约 | 无法精确控制 Loop、持久化、事件和错误恢复 |
 | 上下文工程 | 只把知识切片拼入当前问题 | 没有身份、历史、摘要、来源和动态提醒的稳定装配顺序 |
 | 短期记忆 | 请求不带 `session_id`，Runner 没有 CheckPointStore | 多轮对话无法延续 |
-| MCP | 进程内 demo，仅有时间工具 | 与独立的 `TongjiStudentMCPServer` 部署目标不符 |
+| MCP | 启动时连接远程 `TongjiStudentMCPServer`，并只发现 application allowlist 中的工具；调用时转发请求 context 中的 Bearer token，缺失 token 时本地拒绝 | 远程 MCP/开放平台仍需验证 token 有效性、用户绑定和 scope |
 | 工具治理 | 没有工具风险等级、参数预检、超时和失败策略 | 无法安全接入学生隐私和未来写操作 |
 | HITL | 未实现 | 无法确认高风险操作，也无法中断后恢复 |
 | 流式协议 | 已提供单轮 SSE，包含状态、文本增量、工具开始/结束/失败、运行完成/失败；尚无会话事件重连、心跳和 HITL | 前端可展示首期执行过程，但尚不能恢复中断 Run 或展示确认请求 |
@@ -247,7 +247,7 @@ TongjiStudentAgent/
 ├── internal/integration/
 │   ├── arkmodel/                       # 当前：Ark 模型适配
 │   ├── knowledge/                      # 当前：Ark 知识库适配
-│   ├── mcp/                            # 当前：本地 MCP Client；后续远程 ClientPool/能力发现
+│   ├── mcp/                            # 当前：远程 MCP Client、allowlist 发现与请求级 token 注入
 │   ├── fornax/                         # 当前：可选 Fornax 适配
 │   └── sandbox/                        # 当前：本地调试适配；不属于 Agent Runtime
 ├── internal/store/
