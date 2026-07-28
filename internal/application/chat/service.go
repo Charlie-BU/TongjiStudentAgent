@@ -9,7 +9,7 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
-	promptconfig "github.com/Charlie-BU/TongjiStudent/internal/application/prompt"
+	"github.com/Charlie-BU/TongjiStudent/internal/application/allowlist"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/arkmodel"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/cozeloop"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
@@ -103,14 +103,14 @@ func loadSystemInstruction(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
-	messages, err := cozeloop.FetchPrompt(ctx, promptconfig.TongjiStudentSystemPrompt, "", nil)
+	messages, err := cozeloop.FetchPrompt(ctx, allowlist.TongjiStudentSystemPrompt, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("load system prompt: %w", err)
 	}
 
 	instruction, err := cozeloop.MessageContent(messages, schema.System)
 	if err != nil {
-		return "", fmt.Errorf("system prompt %q: %w", promptconfig.TongjiStudentSystemPrompt, err)
+		return "", fmt.Errorf("system prompt %q: %w", allowlist.TongjiStudentSystemPrompt, err)
 	}
 	return instruction, nil
 }
