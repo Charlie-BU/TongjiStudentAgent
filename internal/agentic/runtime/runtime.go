@@ -79,7 +79,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 
 // Stream 执行单轮查询，并通过 emit 输出已脱敏的模型文本与工具生命周期事件。
 // 它不会输出模型 reasoning content、工具参数或工具原始响应。
-func (r *Runtime) Stream(ctx context.Context, message string, emit func(agentevent.Event)) (string, error) {
+func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent.Event)) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")
 	}
@@ -88,7 +88,7 @@ func (r *Runtime) Stream(ctx context.Context, message string, emit func(agenteve
 	}
 
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
-	iter := runner.Query(ctx, message)
+	iter := runner.Query(ctx, query)
 	var response string
 	pendingTools := make(map[string]toolCallStartedData)
 	toolStartedAt := make(map[string]time.Time)

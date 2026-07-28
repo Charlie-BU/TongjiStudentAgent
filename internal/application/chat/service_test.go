@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -25,17 +26,18 @@ func TestChatRequiresInitializedDefaultService(t *testing.T) {
 	})
 }
 
-func TestServiceWithKnowledgeContextWithoutKnowledgeClient(t *testing.T) {
-	Convey("组装知识库上下文", t, func() {
-		service := &Service{}
+func TestMCPToolAllowlist(t *testing.T) {
+	Convey("聊天服务的远程 MCP Tool 白名单", t, func() {
+		tools := toolallowlist.MCPTools()
 
-		Convey("知识库未启用", func() {
-			input, err := service.withKnowledgeContextWithEmitter(context.Background(), "图书馆在哪里？", nil)
+		Convey("只注册维护在 allowlist 中的远程工具", func() {
+			So(tools, ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+		})
 
-			Convey("应原样传递用户问题", func() {
-				So(err, ShouldBeNil)
-				So(input, ShouldEqual, "图书馆在哪里？")
-			})
+		Convey("调用方修改返回值不应影响后续服务初始化", func() {
+			tools[0] = "untrusted-tool"
+
+			So(toolallowlist.MCPTools(), ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
 		})
 	})
 }

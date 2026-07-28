@@ -10,6 +10,7 @@ import (
 
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	githubmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -80,6 +81,18 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			receivedTokensMu.Lock()
 			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
 			receivedTokensMu.Unlock()
+			switch request.GetArguments()["scenario"] {
+			case "unauthorized":
+				return &githubmcp.CallToolResult{
+					Content: []githubmcp.Content{githubmcp.TextContent{Type: "text", Text: `{"status":"unauthorized","message":"raw upstream authorization detail"}`}},
+					IsError: true,
+				}, nil
+			case "unknown_error":
+				return &githubmcp.CallToolResult{
+					Content: []githubmcp.Content{githubmcp.TextContent{Type: "text", Text: `{"status":"unexpected","message":"raw upstream failure detail"}`}},
+					IsError: true,
+				}, nil
+			}
 			return githubmcp.NewToolResultText("score result"), nil
 		})
 		testServer := server.NewTestStreamableHTTPServer(mcpServer)
@@ -111,6 +124,16 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			So(toolsErr.Error(), ShouldContainSubstring, "allowlist")
 		})
 
+		Convey("空白或重复 allowlist 不应发现全部远程工具", func() {
+			for _, names := range [][]string{nil, {""}, {testMCPToolName, testMCPToolName}} {
+				tools, toolsErr := EinoTools(context.Background(), client, names...)
+
+				So(tools, ShouldBeNil)
+				So(toolsErr, ShouldNotBeNil)
+				So(toolsErr.Error(), ShouldContainSubstring, "allowlist")
+			}
+		})
+
 		Convey("应仅为本次调用注入凭据", func() {
 			requestContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
 			result, invokeErr := invokable.InvokableRun(requestContext, `{}`)
@@ -127,7 +150,65 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			So(receivedTokens, ShouldResemble, []string{"test-access-token", "another-access-token"})
 			receivedTokensMu.Unlock()
 		})
+
+		Convey("应将 MCP 业务错误收敛为稳定结果", func() {
+			requestContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
+			result, invokeErr := invokable.InvokableRun(requestContext, `{"scenario":"unauthorized"}`)
+			unknownResult, unknownInvokeErr := invokable.InvokableRun(requestContext, `{"scenario":"unknown_error"}`)
+
+			So(invokeErr, ShouldBeNil)
+			So(result, ShouldContainSubstring, toolStatusUnauthorized)
+			So(result, ShouldNotContainSubstring, "raw upstream authorization detail")
+			So(unknownInvokeErr, ShouldBeNil)
+			So(unknownResult, ShouldContainSubstring, toolStatusExecutionUnavailable)
+			So(unknownResult, ShouldNotContainSubstring, "raw upstream failure detail")
+		})
 	})
+}
+
+func TestRequestScopedToolNormalizesTransportError(t *testing.T) {
+	Convey("请求级 MCP Tool 传输错误", t, func() {
+		wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+			return "", testTimeoutError{}
+		}}}
+
+		Convey("应返回稳定超时结果且不暴露原始错误", func() {
+			requestContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
+			result, err := wrappedTool.InvokableRun(requestContext, `{}`)
+
+			So(err, ShouldBeNil)
+			So(result, ShouldContainSubstring, toolStatusUpstreamTimeout)
+			So(result, ShouldNotContainSubstring, "test timeout detail")
+		})
+	})
+}
+
+type testInvokableTool struct {
+	run func(context.Context, string, ...tool.Option) (string, error)
+}
+
+// Info 返回测试工具的最小元数据。
+func (t testInvokableTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: testMCPToolName}, nil
+}
+
+// InvokableRun 执行测试预设的工具调用。
+func (t testInvokableTool) InvokableRun(ctx context.Context, argumentsInJSON string, options ...tool.Option) (string, error) {
+	return t.run(ctx, argumentsInJSON, options...)
+}
+
+type testTimeoutError struct{}
+
+func (testTimeoutError) Error() string {
+	return "test timeout detail"
+}
+
+func (testTimeoutError) Timeout() bool {
+	return true
+}
+
+func (testTimeoutError) Temporary() bool {
+	return true
 }
 
 // newTestRemoteClient 创建连接到离线 MCP 测试服务的 Client。

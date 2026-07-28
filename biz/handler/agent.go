@@ -28,12 +28,12 @@ var streamChat = chat.Stream
 func Chat(ctx context.Context, c *app.RequestContext) {
 	// 若 token 合法，将 token 写入上下文，否则对 context 不做处理
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
-	message, ok := bindChatMessage(c)
+	query, ok := bindChatMessage(c)
 	if !ok {
 		return
 	}
 
-	response, err := chat.Chat(requestContext, message)
+	response, err := chat.Chat(requestContext, query)
 	if err != nil {
 		c.JSON(consts.StatusInternalServerError, utils.H{"error": "agent invocation failed"})
 		return
@@ -48,7 +48,7 @@ func ChatStream(ctx context.Context, c *app.RequestContext) {
 	// 为流式响应创建独立上下文，用于取消流
 	streamContext, cancel := context.WithCancel(requestContext)
 	defer cancel()
-	message, ok := bindChatMessage(c)
+	query, ok := bindChatMessage(c)
 	if !ok {
 		return
 	}
@@ -62,7 +62,7 @@ func ChatStream(ctx context.Context, c *app.RequestContext) {
 			cancel()
 		}
 	}
-	_, _ = streamChat(streamContext, message, func(event agentevent.Event) {
+	_, _ = streamChat(streamContext, query, func(event agentevent.Event) {
 		if streamStopped.Load() {
 			return
 		}

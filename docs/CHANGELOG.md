@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-28 16:41 - 收敛远程 MCP 工具注册、请求级鉴权与失败结果边界
+
+### 撰写时间
+
+- 2026-07-28 16:41
+
+### Base Commit
+
+- 14660c3e1e3d71b0087d5ef868540f56c73398d5
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 远程 MCP 已成为个人数据能力的实际执行端，但 Tool 的发现、请求级 token 注入和上游失败结果此前集中在单个文件中。随着错误脱敏、allowlist 完整性和调用取消语义同时进入链路，原实现难以明确区分“业务可预期失败”和“应终止本次 Agent Run 的取消”。
+- 这次把目标收敛为两点：第一，远程 Tool 只能由维护在应用层的 allowlist 注册；第二，MCP 返回的错误不能把上游原文带入模型上下文或 SSE 链路，同时仍需保留用户可理解的稳定状态。
+
+### 改动概览
+
+- 将 MCP 集成拆分为 `client.go`、`tools.go`、`request_scoped_tool.go` 和 `tool_result.go`。`client.go` 只负责环境配置、远程 Client 创建、启动和 Initialize；Tool 发现、请求包装及结果归一各自有独立职责。
+- `internal/application/allowlist/tool` 改为私有 `mcpTools` 配合 `MCPTools()` 副本返回，并新增空值、空白名称和重复项校验。`chat.NewFromEnv` 只将这份 allowlist 传给 `mcpintegration.EinoTools`，远程能力缺项时继续在启动阶段失败。
+- `requestScopedTool` 在本次调用 context 中读取 `AccessTokenFromContext`，缺失 token 时本地短路为稳定未授权结果；存在 token 时通过 `einoext.WithCustomHeaders` 仅向该次 MCP 调用附加 `X-Tongji-Access-Token`。取消和 deadline 错误继续向上返回，其余调用错误收敛为安全 JSON 结果。
+- `ToolCallResultHandler` 会把 MCP 的 `IsError` 结果映射为 `unauthorized`、`upstream_timeout`、`upstream_unavailable` 或 `tool_execution_failed`，并丢弃上游原始消息。离线 MCP 测试补充了重复/空 allowlist、业务错误脱敏和传输超时场景。
+- 聊天输入相关参数统一命名为 `query`。同时暂时停用把知识库内容直接拼入用户输入的路径，当前 Runtime 只接收原始 query，等待后续改为显式知识库 Tool。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`handler.Chat` 与 `handler.ChatStream` 仍通过 `withChatAccessToken` 解析格式正确的 Bearer token 并写入 request context；无 token 或格式错误的 token 不会阻止 Agent 运行。`sandbox.EnabledFromEnv` 的读取和 Runtime middleware 组装路径保持不变。
+- 当前改动：`chat.NewFromEnv` 读取 `toolallowlist.MCPTools()`，`EinoTools` 先校验 allowlist 并从远程 MCP 获取对应 schema，再把同步 Tool 包装为 `requestScopedTool`。实际 `tools/call` 时才读取 context token；MCP 业务错误在结果处理器中被替换为不含上游细节的稳定 JSON，网络错误则在包装器中按 timeout 与不可用状态归类。
+- 下游影响：Deep Agent 只看见 allowlist 内的 Tool 和稳定工具结果，普通响应、日志和 SSE 事件不会携带上游错误正文或 token。取消仍作为错误中断 Agent Run，避免把用户主动取消误报为可继续消费的工具结果。
+
+### 改动结果与业务影响
+
+- Tool 注册从可变导出切片改为副本返回，调用方修改返回值不会污染后续服务初始化；空 allowlist、空名称和重复名称也会在远程发现前被拒绝。
+- 校园服务侧的错误信息不再直接进入模型上下文。对于 token 缺失、token 无效、上游超时和通用执行失败，模型获得的是明确且有限的状态与中文提示，可据此向用户给出可理解的下一步。
+- 已执行 `go test ./...`、`go test -race ./...`、`go vet ./...` 与 `git diff --cached --check`，均通过。测试使用本地回环 MCP 服务和 fake invokable Tool，不读取 `.env`，不调用真实模型、校园平台或知识库服务。
+
+### 风险与待办
+
+- 知识库直接注入虽然已停止，但 `NewFromEnv` 仍会按 `ARK_KNOWLEDGE_ENABLED` 初始化 `knowledgeClient`，README 也仍描述启用后的检索行为。因此知识库配置可能继续影响启动，却不再产生检索结果；在恢复为 Tool 调用或正式移除该能力前，需要同步清理初始化、配置说明和测试。
+- `IsError` 被转换为普通 Tool 结果后，Runtime 会将这类调用作为 `tool.call.completed` 投影，而非 `tool.call.failed`。这适合让模型根据稳定状态继续回复；若前端需要区分远程业务失败，应在不暴露原始结果的前提下扩展事件状态。
+- 当前仅覆盖同步 `InvokableTool`。后续若远程 MCP 引入流式或异步 Tool，需要补齐等价的请求级 header 注入、取消传播和错误归一机制。
+
+### 建议 Commit Message（git-cz）
+
+- `refactor(mcp): isolate tool auth and normalize failures`
+
 ## CHANGELOG - 2026-07-28 15:45 - 接入远程 MCP 并为个人数据工具透传请求级凭据
 
 ### 撰写时间
