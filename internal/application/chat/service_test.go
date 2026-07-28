@@ -2,8 +2,9 @@ package chat
 
 import (
 	"context"
-	. "github.com/smartystreets/goconvey/convey"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestChatRequiresInitializedDefaultService(t *testing.T) {
@@ -29,7 +30,7 @@ func TestServiceWithKnowledgeContextWithoutKnowledgeClient(t *testing.T) {
 		service := &Service{}
 
 		Convey("知识库未启用", func() {
-			input, err := service.withKnowledgeContext(context.Background(), "图书馆在哪里？")
+			input, err := service.withKnowledgeContextWithEmitter(context.Background(), "图书馆在哪里？", nil)
 
 			Convey("应原样传递用户问题", func() {
 				So(err, ShouldBeNil)
@@ -43,7 +44,7 @@ func TestServiceChatRequiresRuntime(t *testing.T) {
 	Convey("通过聊天服务执行对话", t, func() {
 		Convey("Runtime 未初始化", func() {
 			service := &Service{}
-			response, err := service.Chat(context.Background(), "你好")
+			response, err := service.Stream(context.Background(), "你好", nil)
 
 			Convey("应返回初始化错误且不访问外部依赖", func() {
 				So(response, ShouldBeBlank)

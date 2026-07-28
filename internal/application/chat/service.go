@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
 	promptconfig "github.com/Charlie-BU/TongjiStudent/internal/application/prompt"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/arkmodel"
@@ -22,9 +24,9 @@ var defaultService *Service
 
 // Service 组装当前单轮聊天所需的 Runtime 与外部适配器。
 type Service struct {
-	runtime         *runtime.Runtime
-	mcpClient       *mcpclient.Client
-	knowledgeClient *knowledge.Client
+	runtime         *runtime.Runtime  // Agent Runtime
+	mcpClient       *mcpclient.Client // MCP Client
+	knowledgeClient *knowledge.Client // 知识库 Client
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -95,6 +97,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	return &Service{runtime: rt, mcpClient: mcpClient, knowledgeClient: knowledgeClient}, nil
 }
 
+// loadSystemInstruction 从环境变量加载 system prompt。
 func loadSystemInstruction(ctx context.Context) (string, error) {
 	if !cozeloop.Enabled() {
 		return "", nil
@@ -117,7 +120,15 @@ func Chat(ctx context.Context, message string) (string, error) {
 	if defaultService == nil {
 		return "", fmt.Errorf("chat service is not initialized")
 	}
-	return defaultService.Chat(ctx, message)
+	return defaultService.Stream(ctx, message, nil)
+}
+
+// Stream 通过默认聊天服务执行单轮对话，并发送安全的运行过程事件。
+func Stream(ctx context.Context, message string, send func(agentevent.Event)) (string, error) {
+	if defaultService == nil {
+		return "", fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.Stream(ctx, message, send)
 }
 
 // Close 释放默认聊天服务持有的资源。
@@ -128,20 +139,31 @@ func Close() error {
 	return defaultService.Close()
 }
 
-// Chat 通过服务 Runtime 执行单轮对话。
-func (s *Service) Chat(ctx context.Context, message string) (string, error) {
+// Stream 通过服务 Runtime 执行对话，并发送运行事件。
+func (s *Service) Stream(ctx context.Context, message string, send func(agentevent.Event)) (string, error) {
 	if s == nil || s.runtime == nil {
 		return "", fmt.Errorf("chat service is not initialized")
 	}
+	emitter := agentevent.NewEmitter("", send)
+	startedAt := time.Now()
+	emitter.Emit(agentevent.RunStarted, map[string]string{"message": "Agent 已开始处理请求"})
+	emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "context", "message": "正在准备回答上下文"})
 
-	input, err := s.withKnowledgeContext(ctx, message)
+	// TODO：使用 tool 调用知识库检索工具，不要直接作为 input
+	input, err := s.withKnowledgeContextWithEmitter(ctx, message, emitter)
 	if err != nil {
+		emitter.Emit(agentevent.RunFailed, map[string]string{"code": "knowledge_search_failed", "message": "知识库检索暂时不可用"})
 		return "", err
 	}
-	response, err := s.runtime.Chat(ctx, input)
+	emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "model", "message": "正在生成回答"})
+	response, err := s.runtime.Stream(ctx, input, func(event agentevent.Event) {
+		emitter.Emit(event.Type, event.Data)
+	})
 	if err != nil {
+		emitter.Emit(agentevent.RunFailed, map[string]string{"code": "agent_execution_failed", "message": "Agent 执行失败"})
 		return "", err
 	}
+	emitter.Emit(agentevent.RunCompleted, map[string]int64{"duration_ms": time.Since(startedAt).Milliseconds()})
 	return response, nil
 }
 
@@ -153,10 +175,14 @@ func (s *Service) Close() error {
 	return s.mcpClient.Close()
 }
 
-// withKnowledgeContext 将可选知识库结果作为非可信参考资料传给 Runtime。
-func (s *Service) withKnowledgeContext(ctx context.Context, message string) (string, error) {
+// withKnowledgeContextWithEmitter 将可选知识库结果作为非可信参考资料传给 Runtime。
+// TODO：肯定不能用这种方式调用知识库
+func (s *Service) withKnowledgeContextWithEmitter(ctx context.Context, message string, emitter *agentevent.Emitter) (string, error) {
 	if s.knowledgeClient == nil {
 		return message, nil
+	}
+	if emitter != nil {
+		emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "knowledge", "message": "正在检索校园知识库"})
 	}
 
 	result, err := s.knowledgeClient.Search(ctx, message)
@@ -165,7 +191,13 @@ func (s *Service) withKnowledgeContext(ctx context.Context, message string) (str
 	}
 	knowledgeContext := knowledge.FormatContext(result)
 	if knowledgeContext == "" {
+		if emitter != nil {
+			emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "knowledge", "message": "未找到相关校园资料，将直接回答"})
+		}
 		return message, nil
+	}
+	if emitter != nil {
+		emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "knowledge", "message": "已获取校园参考资料"})
 	}
 
 	return fmt.Sprintf(`用户问题：%s

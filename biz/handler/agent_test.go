@@ -1,10 +1,17 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
+	"time"
 
+	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
+	"github.com/cloudwego/hertz/pkg/app"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -26,4 +33,60 @@ func TestChatAuthorization(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestChatStream(t *testing.T) {
+	Convey("SSE Chat 接口", t, func() {
+		originalStreamChat := streamChat
+		t.Cleanup(func() { streamChat = originalStreamChat })
+		streamChat = func(_ context.Context, message string, send func(agentevent.Event)) (string, error) {
+			if message != "现在几点？" {
+				return "", errors.New("unexpected message")
+			}
+			send(agentevent.Event{Type: agentevent.RunStarted, RunID: "run-test", Sequence: 1, OccurredAt: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)})
+			send(agentevent.Event{Type: agentevent.RunFailed, RunID: "run-test", Sequence: 2, OccurredAt: time.Date(2026, 7, 28, 0, 0, 1, 0, time.UTC), Data: map[string]string{"code": "agent_execution_failed"}})
+			return "", errors.New("agent failed")
+		}
+
+		Convey("应返回可解析的 SSE 事件及流式响应头", func() {
+			requestContext := newAgentJSONRequest(`{"message":"现在几点？"}`)
+			writer := &testSSEWriter{}
+			requestContext.Response.HijackWriter(writer)
+
+			ChatStream(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
+			So(string(requestContext.Response.Header.ContentType()), ShouldEqual, "text/event-stream; charset=utf-8")
+			So(string(requestContext.Response.Header.Peek("Cache-Control")), ShouldEqual, "no-cache")
+			So(string(requestContext.Response.Header.Peek("X-Accel-Buffering")), ShouldEqual, "no")
+			So(writer.String(), ShouldContainSubstring, "event: run.started")
+			So(writer.String(), ShouldContainSubstring, "event: run.failed")
+			So(writer.String(), ShouldContainSubstring, `"run_id":"run-test"`)
+		})
+
+		Convey("请求体非法时应返回 400 JSON 错误", func() {
+			requestContext := newAgentJSONRequest(`{"message":`)
+
+			ChatStream(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
+			var response struct {
+				Error string `json:"error"`
+			}
+			So(json.Unmarshal(requestContext.Response.Body(), &response), ShouldBeNil)
+			So(response.Error, ShouldEqual, "request body must be valid JSON")
+		})
+	})
+}
+
+type testSSEWriter struct{ bytes.Buffer }
+
+func (w *testSSEWriter) Flush() error    { return nil }
+func (w *testSSEWriter) Finalize() error { return nil }
+
+func newAgentJSONRequest(body string) *app.RequestContext {
+	requestContext := app.NewContext(0)
+	requestContext.Request.Header.Set("Content-Type", "application/json")
+	requestContext.Request.SetBodyString(body)
+	return requestContext
 }
