@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
+	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -43,6 +45,9 @@ func Chat(ctx context.Context, c *app.RequestContext) {
 // ChatStream 以 Server-Sent Events 返回 Agent 的安全运行过程与最终文本 delta。
 func ChatStream(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	// 为流式响应创建独立上下文，用于取消流
+	streamContext, cancel := context.WithCancel(requestContext)
+	defer cancel()
 	message, ok := bindChatMessage(c)
 	if !ok {
 		return
@@ -51,12 +56,26 @@ func ChatStream(ctx context.Context, c *app.RequestContext) {
 	c.Response.Header.Set("X-Accel-Buffering", "no")
 	c.Response.SetStatusCode(consts.StatusOK)
 	writer := sse.NewWriter(c) // Server-Sent Events 写入器
-	_, _ = streamChat(requestContext, message, func(event agentevent.Event) {
-		data, err := json.Marshal(event)
-		if err != nil {
+	var streamStopped atomic.Bool
+	stopStream := func() {
+		if streamStopped.CompareAndSwap(false, true) {
+			cancel()
+		}
+	}
+	_, _ = streamChat(streamContext, message, func(event agentevent.Event) {
+		if streamStopped.Load() {
 			return
 		}
-		_ = writer.WriteEvent(strconv.FormatInt(event.Sequence, 10), event.Type, data)
+		data, err := json.Marshal(event)
+		if err != nil {
+			logs.CtxError(streamContext, "SSE event serialization failed")
+			stopStream()
+			return
+		}
+		if err := writer.WriteEvent(strconv.FormatInt(event.Sequence, 10), event.Type, data); err != nil {
+			logs.CtxInfo(streamContext, "SSE response write failed: %v", err)
+			stopStream()
+		}
 	})
 }
 

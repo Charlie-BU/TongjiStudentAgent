@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-28 12:05 - 为单轮 Agent 增加安全 SSE 运行事件与断连取消
+
+### 撰写时间
+
+- 2026-07-28 12:05
+
+### Base Commit
+
+- 6eef10764f5be419a9c3fac73d13d22ed9445163
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 原有 `POST /v1/agent/chat` 只能在单轮 Agent 完成后返回聚合文本，前端无法展示模型文本增量、知识库检索状态或工具执行进度；同时，直接将运行时内部消息暴露给 HTTP 响应会带来工具参数、工具结果、模型推理内容和 Bearer token 泄露风险。
+- 本次在保持 JSON Chat 协议兼容的前提下，新增单轮 SSE 投影链路。目标是只向调用方发送经过裁剪的运行状态与最终回答文本增量，并在客户端断开导致 SSE 写入失败时取消本次 Agent 执行，避免无消费者的模型和工具调用继续占用资源。
+
+### 改动概览
+
+- 新增 `internal/agentic/event`，用 `run_id`、递增 `seq` 与 UTC `occurred_at` 标识单次运行事件；事件类型覆盖开始、状态、文本增量、工具开始/完成/失败和运行完成/失败。Emitter 只接收调用层准备好的展示数据，不承载凭据、原始工具结果或 reasoning content。
+- `chat.Service`、`runtime.Runtime` 新增 `Stream` 链路：知识库阶段和模型阶段发送状态事件；Runtime 读取 Eino 流时仅发送 Assistant 文本与工具名称/耗时，并在工具结果流、Agent 事件或无文本结果失败时为未完成工具补发 `tool.call.failed`。
+- 新增 `POST /v1/agent/chat/stream`。Handler 复用既有 Bearer context 与 JSON 请求校验，以 Hertz SSE writer 发送事件；普通 `/v1/agent/chat` 仍聚合并返回最终 JSON 文本。
+- SSE 写入或事件序列化失败会取消本次专用 context，阻止后续事件写入，并只记录不包含请求内容的失败日志。README 与开发文档同步新接口、事件边界与当前无会话限制。
+- 新增 Emitter、Runtime 工具失败、SSE 协议/非法请求和 SSE 写入失败取消上下文的离线 GoConvey 测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：Hertz 路由将 `/v1/agent/chat/stream` 分发到 `handler.ChatStream`；Handler 延续 `withChatAccessToken` 的可选 Bearer 透传和 `bindChatMessage` 的 JSON/空消息校验。SSE writer 负责设置 `text/event-stream`、`Cache-Control: no-cache` 与分块刷新。
+- 当前改动：Handler 将请求 context 包装为可取消的 stream context，并把安全事件回调交给 `chat.Stream`。服务层用 Emitter 统一编号，随后将输入交给 Runtime；Runtime 消费 Eino Agent 事件并将工具生命周期、Assistant 可见文本投影为事件，不写出工具参数、工具结果和模型原始推理字段。
+- 下游影响：JSON 调用方继续获得 `{"message":"..."}` 聚合结果；SSE 调用方可按 `run_id` 和 `seq` 消费单次运行过程。模型、知识库与 MCP 调用均收到同一个 stream context，写端断开后可沿既有 context 取消链路停止；尚未实现跨请求 Run 注册、事件重连、心跳或显式取消接口。
+
+### 改动结果与业务影响
+
+- 前端可在不保存会话历史的情况下展示 Agent 已开始、知识库检索、模型生成、工具执行和最终完成/失败状态，同时只消费设计为对外可见的数据字段。
+- SSE 客户端断开或响应流不可写时，Handler 会取消本次运行并抑制后续写入，避免继续向失效连接发送事件；工具流异常也会以明确的工具失败事件收尾，不再只留下已开始状态。
+- 已执行 `go test ./...`、`go test -race ./...`、`go test -race ./biz/handler`、`go vet ./...` 与 `git diff --check`，均通过。测试使用内存 SSE writer、fake Agent 与 Eino stream，不读取 `.env`、不调用真实模型、校园平台、知识库或 MCP。
+
+### 风险与待办
+
+- 当前 `run_id` 仅服务于 SSE 事件关联，没有进程级 Run 注册表；客户端主动取消、断线后的状态查询、重连续传和多实例协调仍需要引入受调用者归属保护的运行记录与存储。
+- 取消依赖下游模型、知识库和 MCP 客户端遵守 context。第三方适配器若忽略取消信号，仍可能完成其已经发起的远程调用；后续应补充各外部适配器的超时与取消契约测试。
+- SSE 仍没有心跳和代理空闲超时策略，长时间无事件的运行可能被中间层关闭；上线前应结合网关超时配置补充 keepalive 与可恢复的事件协议。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add safe SSE run events and cancellation`
+
 ## CHANGELOG - 2026-07-28 01:49 - 收敛 Chat 请求元数据并为后续校园凭据透传预留上下文
 
 ### 撰写时间
