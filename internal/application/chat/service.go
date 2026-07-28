@@ -82,12 +82,14 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	rt, err := runtime.New(ctx, runtime.Config{
-		Name:        "Tongji Student Agent",
-		Description: "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
-		Instruction: instruction,
-		ChatModel:   chatModel,
-		Tools:       tools,
-		Handlers:    handlers,
+		Name:                   "Tongji Student Agent",
+		Description:            "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
+		Instruction:            instruction,
+		ChatModel:              chatModel,
+		Tools:                  tools,
+		Handlers:               handlers,
+		WithoutWriteTodos:      true, // 使用自建 system.manage_task_plan
+		WithoutGeneralSubAgent: false,
 	})
 	if err != nil {
 		_ = mcpClient.Close()
