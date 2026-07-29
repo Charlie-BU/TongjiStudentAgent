@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-30 01:38 - 为 Agent 引入受控的按需 Skill 加载
+
+### 撰写时间
+
+- 2026-07-30 01:38
+
+### Base Commit
+
+- da7a682eef905d1a2b530fd76edc2b350bb62b6c
+
+### Compare Scope
+
+- staged_changes_only
+
+### 背景与改动目标
+
+- Agent 需要能够在用户请求文档生成或优化时获得具体工作手册，但把完整手册直接写入初始 System Prompt 会增加上下文开销，并使所有能力的说明无条件暴露给模型。
+- 本次新增仅由应用 allowlist 管理的 Skill 目录与宿主静态 Tool：初始 Prompt 只注入安全摘要；模型在满足触发条件时，才能通过 `system.load_skill` 读取已批准的完整手册。
+
+### 改动概览
+
+- 新增嵌入式 `internal/agentic/skills` 仓库，将 `doc-generator` 与新增的 `doc-optimizer` 手册随二进制发布。读取接口只接受安全的 Skill ID、固定读取 `SKILL.md`，并限制单份内容为 64 KiB。
+- 新增 Skill manifest 和 catalog。Catalog 根据 Skill allowlist 排序生成不含本地路径与手册正文的摘要，并在服务启动时校验每个已批准 Skill 都有合法 manifest 和可读取手册。
+- 新增静态 `system.load_skill` Tool，严格校验参数与 Tool/Skill allowlist；仅返回固定主手册或脱敏的稳定状态，不允许调用方读取任意文件。
+- Tool allowlist 分为静态系统 Tool 与远程 MCP Tool；聊天服务将已批准的静态 Tool 与远程 MCP Tool 一同注册，并把 Skill catalog 追加到从环境或 PromptHub 取得的 System Prompt。
+- 补充 catalog、嵌入资源、静态 Tool 注册和聊天 Prompt 测试；测试覆盖新增 `doc-optimizer` 以及已批准 Skill 缺少 manifest 时阻止启动的路径。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`chat.NewFromEnv` 仍负责初始化模型、知识库和远程 MCP；随后读取远程 `toolallowlist.MCPTools()`，并取得 `systemtools.Tools()` 中的本地静态 Tool。
+- 当前改动：`loadSystemInstruction` 在取得空指令或 PromptHub 指令后调用 `skills.Catalog()`。Catalog 只写入 Skill ID、触发条件与 `system.load_skill` 使用约束；Agent 实际调用 Tool 后，Tool 再从嵌入文件系统读取对应 `SKILL.md`。
+- 下游影响：Deep Agent 可在单次 Run 内按需使用文档生成与文档优化手册，但不能通过 Tool 探测未批准 Skill、路径或任意嵌入资源；远程 MCP 的成绩 Tool 注册和请求级 token 透传链路保持不变。
+
+### 改动结果与业务影响
+
+- 文档类能力从“全部手册始终进 Prompt”收敛为“安全目录常驻、完整手册按需加载”，降低默认上下文占用并保留明确的能力发现入口。
+- `doc-optimizer` 成为显式批准的 Skill；其 manifest 指明应在文档生成完成后或用户要求不改变原意的润色、优化、重写时加载。
+- 已执行 `go test ./...`、`go test -race ./...`、`go vet ./...`、`git diff --check` 与 `git diff --cached --check`，均通过。测试仅使用嵌入资源与本地 fake Tool，不读取 `.env`，不调用真实模型、校园平台或远程 MCP。
+
+### 风险与待办
+
+- Skill 内容已被编译进二进制；新增或修改手册需要重新构建、发布，并同步维护 allowlist、manifest 与测试，否则启动时会因完整性校验失败。
+- 当前 Runtime 仍设置 `WithoutWriteTodos: true`，但本次仅新增 `system.load_skill`，未注册其注释中提到的任务计划替代 Tool。若依赖多步骤执行计划，需要后续单独补齐或恢复内置待办能力。
+- `system.load_skill` 返回完整手册给模型；未来新增包含敏感示例、凭据或外部链接的手册前，应先审查其内容边界和长度限制。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add allowlisted on-demand skill loading`
+
 ## CHANGELOG - 2026-07-28 16:41 - 收敛远程 MCP 工具注册、请求级鉴权与失败结果边界
 
 ### 撰写时间

@@ -8,30 +8,54 @@ import (
 )
 
 const (
+	// 静态系统 Tool
+	LoadSkillTool = "system.load_skill"
+	// 远程 MCP Tool
 	TongjiStudentScoreTool = "tongji.student.score"
 )
 
 var (
-	mcpTools = []string{TongjiStudentScoreTool}
+	allowedSystemTools = []string{
+		LoadSkillTool,
+	}
+
+	allowedMCPTools = []string{
+		TongjiStudentScoreTool,
+	}
 )
 
-// MCPTools 返回允许注册到 Agent 的远程 MCP Tool 名称。
-func MCPTools() []string {
-	return append([]string(nil), mcpTools...)
+// SystemTools 返回已批准 Tool 名称的副本，调用方修改结果不会影响 allowlist。
+func SystemTools() []string {
+	return append([]string(nil), allowedSystemTools...)
 }
 
-// ValidateToolAllowlist 确保远程 MCP Tool 只能由非空且无重复的 allowlist 注册。
+// MCPTools 返回已批准 Tool 名称的副本，调用方修改结果不会影响 allowlist。
+func MCPTools() []string {
+	return append([]string(nil), allowedMCPTools...)
+}
+
+// IsAllowedTool 判断 Tool 名称是否已被应用 allowlist 明确批准。
+func IsAllowedTool(toolName string) bool {
+	for _, allowedTool := range append(allowedSystemTools, allowedMCPTools...) {
+		if toolName == allowedTool {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateToolAllowlist 确保远程 Tool 只能由非空且无重复的 allowlist 注册。
 func ValidateToolAllowlist(toolNames []string) error {
 	if len(toolNames) == 0 {
-		return errors.New("MCP tool allowlist cannot be empty")
+		return errors.New("Tool allowlist cannot be empty")
 	}
 	seen := make(map[string]struct{}, len(toolNames))
 	for _, toolName := range toolNames {
 		if strings.TrimSpace(toolName) == "" {
-			return errors.New("MCP tool allowlist cannot contain an empty tool name")
+			return errors.New("Tool allowlist cannot contain an empty tool name")
 		}
 		if _, exists := seen[toolName]; exists {
-			return fmt.Errorf("MCP tool allowlist contains duplicate tool %q", toolName)
+			return fmt.Errorf("Tool allowlist contains duplicate tool %q", toolName)
 		}
 		seen[toolName] = struct{}{}
 	}

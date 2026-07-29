@@ -8,6 +8,8 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
+	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	promptallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/prompt"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/arkmodel"
@@ -60,11 +62,12 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
 	}
-	tools, err := mcpintegration.EinoTools(ctx, mcpClient, toolallowlist.MCPTools()...)
+	MCPTools, err := mcpintegration.EinoTools(ctx, mcpClient, toolallowlist.MCPTools()...)
 	if err != nil {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("convert mcp tools: %w", err)
 	}
+	tools := append(systemtools.Tools(), MCPTools...)
 
 	handlers := []adk.ChatModelAgentMiddleware{}
 	sandboxEnabled, err := sandbox.EnabledFromEnv()
@@ -101,8 +104,9 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 
 // loadSystemInstruction 从环境变量加载 system prompt。
 func loadSystemInstruction(ctx context.Context) (string, error) {
+	instruction := ""
 	if !cozeloop.Enabled() {
-		return "", nil
+		return appendSkillCatalog(instruction)
 	}
 
 	messages, err := cozeloop.FetchPrompt(ctx, promptallowlist.TongjiStudentSystemPrompt, "", nil)
@@ -110,11 +114,25 @@ func loadSystemInstruction(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("load system prompt: %w", err)
 	}
 
-	instruction, err := cozeloop.MessageContent(messages, schema.System)
+	instruction, err = cozeloop.MessageContent(messages, schema.System)
 	if err != nil {
 		return "", fmt.Errorf("system prompt %q: %w", promptallowlist.TongjiStudentSystemPrompt, err)
 	}
-	return instruction, nil
+	return appendSkillCatalog(instruction)
+}
+
+func appendSkillCatalog(instruction string) (string, error) {
+	catalog, err := agenticskills.Catalog()
+	if err != nil {
+		return "", fmt.Errorf("build skill catalog: %w", err)
+	}
+	if catalog == "" {
+		return instruction, nil
+	}
+	if instruction == "" {
+		return catalog, nil
+	}
+	return instruction + "\n\n" + catalog, nil
 }
 
 // Chat 通过默认聊天服务执行单轮对话。

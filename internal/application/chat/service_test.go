@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -38,6 +39,33 @@ func TestMCPToolAllowlist(t *testing.T) {
 			tools[0] = "untrusted-tool"
 
 			So(toolallowlist.MCPTools(), ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+		})
+	})
+}
+
+func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
+	Convey("聊天服务的静态系统 Tool 注册", t, func() {
+		tools := systemtools.Tools()
+
+		Convey("应注入已加白的静态系统工具", func() {
+			So(tools, ShouldHaveLength, 1)
+			info, err := tools[0].Info(context.Background())
+
+			So(err, ShouldBeNil)
+			So(info.Name, ShouldEqual, systemtools.LoadSkillToolName)
+		})
+	})
+}
+
+func TestAppendSkillCatalog(t *testing.T) {
+	Convey("聊天服务的初始 System Prompt", t, func() {
+		instruction, err := appendSkillCatalog("You are a helpful assistant.")
+
+		Convey("应追加已批准 Skill 的安全 Catalog", func() {
+			So(err, ShouldBeNil)
+			So(instruction, ShouldStartWith, "You are a helpful assistant.\n\n# Available Skills\n")
+			So(instruction, ShouldContainSubstring, "`doc-generator`")
+			So(instruction, ShouldContainSubstring, "`doc-optimizer`")
 		})
 	})
 }
