@@ -47,6 +47,10 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	skillCatalog, err := agenticskills.Catalog()
+	if err != nil {
+		return nil, fmt.Errorf("build skill catalog: %w", err)
+	}
 
 	chatModel, err := arkmodel.NewFromEnv(ctx)
 	if err != nil {
@@ -88,11 +92,12 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		Name:                   "Tongji Student Agent",
 		Description:            "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
 		Instruction:            instruction,
+		SkillCatalog:           skillCatalog,
 		ChatModel:              chatModel,
 		Tools:                  tools,
 		Handlers:               handlers,
 		WithoutWriteTodos:      true, // 使用自建 system.manage_task_plan
-		WithoutGeneralSubAgent: false,
+		WithoutGeneralSubAgent: true, // 不使用通用 sub-agent
 	})
 	if err != nil {
 		_ = mcpClient.Close()
@@ -104,9 +109,8 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 
 // loadSystemInstruction 从环境变量加载 system prompt。
 func loadSystemInstruction(ctx context.Context) (string, error) {
-	instruction := ""
 	if !cozeloop.Enabled() {
-		return appendSkillCatalog(instruction)
+		return "", nil
 	}
 
 	messages, err := cozeloop.FetchPrompt(ctx, promptallowlist.TongjiStudentSystemPrompt, "", nil)
@@ -114,25 +118,11 @@ func loadSystemInstruction(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("load system prompt: %w", err)
 	}
 
-	instruction, err = cozeloop.MessageContent(messages, schema.System)
+	instruction, err := cozeloop.MessageContent(messages, schema.System)
 	if err != nil {
 		return "", fmt.Errorf("system prompt %q: %w", promptallowlist.TongjiStudentSystemPrompt, err)
 	}
-	return appendSkillCatalog(instruction)
-}
-
-func appendSkillCatalog(instruction string) (string, error) {
-	catalog, err := agenticskills.Catalog()
-	if err != nil {
-		return "", fmt.Errorf("build skill catalog: %w", err)
-	}
-	if catalog == "" {
-		return instruction, nil
-	}
-	if instruction == "" {
-		return catalog, nil
-	}
-	return instruction + "\n\n" + catalog, nil
+	return instruction, nil
 }
 
 // Chat 通过默认聊天服务执行单轮对话。

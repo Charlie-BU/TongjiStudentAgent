@@ -21,6 +21,7 @@ type Config struct {
 	Name                   string
 	Description            string
 	Instruction            string
+	SkillCatalog           string
 	ChatModel              model.BaseChatModel
 	Tools                  []tool.BaseTool
 	Handlers               []adk.ChatModelAgentMiddleware
@@ -30,7 +31,8 @@ type Config struct {
 
 // Runtime 持有已初始化的 Agent。
 type Runtime struct {
-	agent adk.Agent
+	agent        adk.Agent
+	skillCatalog string
 }
 
 type toolCallStartedData struct {
@@ -78,7 +80,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create deep agent: %w", err)
 	}
-	return &Runtime{agent: agent}, nil
+	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog}, nil
 }
 
 // Stream 执行单轮查询，并通过 emit 输出已脱敏的模型文本与工具生命周期事件。
@@ -91,8 +93,12 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 		emit = func(agentevent.Event) {}
 	}
 
+	messages, err := buildInputMessages(query, r.skillCatalog, time.Now())
+	if err != nil {
+		return "", fmt.Errorf("build agent input: %w", err)
+	}
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
-	iter := runner.Query(ctx, query)
+	iter := runner.Run(ctx, messages)
 	var response string
 	pendingTools := make(map[string]toolCallStartedData)
 	toolStartedAt := make(map[string]time.Time)

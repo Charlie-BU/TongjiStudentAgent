@@ -57,15 +57,14 @@ func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
 	})
 }
 
-func TestAppendSkillCatalog(t *testing.T) {
-	Convey("聊天服务的初始 System Prompt", t, func() {
-		instruction, err := appendSkillCatalog("You are a helpful assistant.")
+func TestLoadSystemInstructionDoesNotContainSkillCatalog(t *testing.T) {
+	Convey("未启用 CozeLoop 时的 System Prompt", t, func() {
+		t.Setenv("COZELOOP_ENABLED", "false")
+		instruction, err := loadSystemInstruction(context.Background())
 
-		Convey("应追加已批准 Skill 的安全 Catalog", func() {
+		Convey("应保持为空，Skill Catalog 由独立 User 提醒消息承载", func() {
 			So(err, ShouldBeNil)
-			So(instruction, ShouldStartWith, "You are a helpful assistant.\n\n# Available Skills\n")
-			So(instruction, ShouldContainSubstring, "`doc-generator`")
-			So(instruction, ShouldContainSubstring, "`doc-optimizer`")
+			So(instruction, ShouldBeBlank)
 		})
 	})
 }

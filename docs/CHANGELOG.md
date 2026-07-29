@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-30 02:05 - 将每轮 Agent 输入收敛为动态提醒与结构化请求
+
+### 撰写时间
+
+- 2026-07-30 02:05
+
+### Base Commit
+
+- 6fb3aecba9150cfd0ce74592517284ae6af7c1d0
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 先前 Skill catalog 被拼接进静态 System Prompt，导致运行时日期与按轮提示无法独立更新，也使用户原始请求与运行时附加提醒混在同一段文本中。
+- 当前 Agent 只有主 Agent、静态系统 Tool 和远程 MCP Tool，没有定义具备独立职责或权限边界的专用子代理；保留 Eino 的通用子代理会增加额外模型调用，并使按轮 catalog 难以传递到转交任务中。
+
+### 改动概览
+
+- 新增 `internal/agentic/runtime/input.go`。每次 `Runtime.Stream` 根据当前 `Etc/GMT-8` 时间构建 `<system-reminder>`，并在其中按需附加经过启动校验的 Skill catalog；原始用户 query 独立以 XML `interaction_request/user_query` 消息传入，特殊字符由 XML 编码。
+- Runtime 配置新增 `SkillCatalog`，聊天服务在启动时构建一次 catalog 并传入 Runtime；`loadSystemInstruction` 只负责 CozeLoop PromptHub 的 System 指令，不再拼接 catalog。
+- 调用 Runner 时由单字符串 `Query` 改为显式消息列表 `Run`，从而保留“动态提醒 + 结构化用户请求”的消息边界。
+- 关闭 Eino 内置通用子代理（`WithoutGeneralSubAgent: true`），移除未定义专用职责的 `task` 转交能力；主 Agent 仍直接拥有 `system.load_skill` 和远程 MCP Tool。
+- 新增输入构造测试，并更新聊天服务测试，验证未启用 CozeLoop 时静态 System Prompt 为空、Skill catalog 由本轮提醒消息承载。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP Handler 继续将请求体中的 `message` 作为单轮 query 传给 `chat.Service`；Cozeloop 启用时仍在启动阶段取得 System Prompt，Skill allowlist、manifest 与嵌入手册也仍在启动阶段校验。
+- 当前改动：`chat.NewFromEnv` 将 catalog 保存进 `runtime.Config`。每次 `Runtime.Stream` 调用 `buildInputMessages`，先发送包含当前日期和 catalog 的提醒消息，再发送 XML 转义后的用户请求，随后使用 `Runner.Run` 执行 Deep Agent。
+- 下游影响：模型可在每轮获得当前日期与安全的 Skill 发现信息，同时用户 query 不与运行时提醒直接拼接。因为不再注册通用子代理，复杂请求仍由主 Agent 在同一 Run 中顺序调用已批准 Tool，不会进入缺少 catalog 的泛用子 Agent。
+
+### 改动结果与业务影响
+
+- 动态信息从服务启动期移动到请求执行期；同一长期运行实例中的日期提醒不会因启动时间陈旧而失效。
+- 文档生成、文档优化和成绩查询仍由同一个受 allowlist 约束的主 Agent 执行，避免无专长子代理带来的额外延迟、成本和上下文转交损耗。
+- 新增测试覆盖时区日期、catalog 注入、XML 特殊字符编码以及静态 Prompt 与 catalog 的职责分离。
+
+### 风险与待办
+
+- 当前输入消息中的 `<system-reminder>` 使用 User role 承载，其内容是运行时生成的提示而非访问控制边界；Tool 和 Skill 的实际授权仍必须依赖既有 allowlist 与参数校验，不能依赖模型遵守提醒文本。
+- 关闭通用子代理后不再具备内置 `task` 的隔离、并行与长任务委派能力。将来若引入专用子代理，应为其定义 Tool 范围、上下文传递、取消与结果汇总契约，并显式传递需要的 Skill catalog。
+- `doc-generator` 手册仍要求基于源码与参考文档完成事实核验；公开部署默认关闭 Sandbox，因此该类请求需要在未来明确提供受控的只读工程上下文，不能假定 Agent 一定能访问本地文件。
+
+### 建议 Commit Message（git-cz）
+
+- `refactor(agent): structure per-turn runtime input`
+
 ## CHANGELOG - 2026-07-30 01:38 - 为 Agent 引入受控的按需 Skill 加载
 
 ### 撰写时间
