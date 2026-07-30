@@ -8,6 +8,8 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -22,6 +24,23 @@ func TestNewRequiresChatModel(t *testing.T) {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "chat model is required")
 			})
+		})
+	})
+}
+
+func TestNewBuildsDeepAgent(t *testing.T) {
+	Convey("创建 DeepAgent Runtime", t, func() {
+		runtime, err := New(context.Background(), Config{
+			Name:          "test-agent",
+			Instruction:   "系统提示词",
+			ChatModel:     &fakeToolCallingModel{},
+			MaxIterations: 2,
+		})
+
+		Convey("应使用预构建 DeepAgent 而非自定义 Graph", func() {
+			So(err, ShouldBeNil)
+			So(runtime, ShouldNotBeNil)
+			So(runtime.agent, ShouldNotBeNil)
 		})
 	})
 }
@@ -72,7 +91,7 @@ func TestChatRequiresInitializedRuntime(t *testing.T) {
 
 func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 	Convey("执行 Runtime 流式事件", t, func() {
-		agent := &fakeAgent{events: []*adk.AgentEvent{
+		runtime := &Runtime{agent: &fakeAgent{events: []*adk.AgentEvent{
 			adk.EventFromMessage(nil, schema.StreamReaderFromArray([]*schema.Message{
 				schema.AssistantMessage("同学你好，", nil),
 				schema.AssistantMessage("这里是答案。", nil),
@@ -81,8 +100,7 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 				ID: "call-1", Function: schema.FunctionCall{Name: "get_current_time", Arguments: `{"secret":"must-not-leak"}`},
 			}}), nil, schema.Assistant, ""),
 			adk.EventFromMessage(schema.ToolMessage("sensitive tool result", "call-1", schema.WithToolName("get_current_time")), nil, schema.Tool, "get_current_time"),
-		}}
-		runtime := &Runtime{agent: agent}
+		}}}
 		var events []agentevent.Event
 
 		Convey("应输出文本增量和脱敏工具生命周期", func() {
@@ -111,13 +129,23 @@ type fakeAgent struct {
 	events []*adk.AgentEvent
 }
 
-func (a *fakeAgent) Name(context.Context) string {
-	return "fake-agent"
+type fakeToolCallingModel struct{}
+
+func (*fakeToolCallingModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+	return nil, errors.New("Generate should not be called")
 }
 
-func (a *fakeAgent) Description(context.Context) string {
-	return "fake agent for streaming tests"
+func (*fakeToolCallingModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, errors.New("Stream should not be called")
 }
+
+func (m *fakeToolCallingModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+func (a *fakeAgent) Name(context.Context) string { return "fake-agent" }
+
+func (a *fakeAgent) Description(context.Context) string { return "fake agent for streaming tests" }
 
 func (a *fakeAgent) Run(_ context.Context, _ *adk.AgentInput, _ ...adk.AgentRunOption) *adk.AsyncIterator[*adk.AgentEvent] {
 	iterator, generator := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
@@ -128,4 +156,12 @@ func (a *fakeAgent) Run(_ context.Context, _ *adk.AgentInput, _ ...adk.AgentRunO
 		}
 	}()
 	return iterator
+}
+
+var _ tool.BaseTool = (*fakeInvokableTool)(nil)
+
+type fakeInvokableTool struct{}
+
+func (*fakeInvokableTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "unused"}, nil
 }

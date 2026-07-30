@@ -18,45 +18,22 @@ import (
 
 // Config 描述运行时所需的通用 Agent 依赖。
 type Config struct {
-	Name                   string
-	Description            string
-	Instruction            string
-	SkillCatalog           string
-	ChatModel              model.BaseChatModel
-	Tools                  []tool.BaseTool
-	Handlers               []adk.ChatModelAgentMiddleware
-	WithoutWriteTodos      bool
-	WithoutGeneralSubAgent bool
+	Name          string
+	Description   string
+	Instruction   string
+	SkillCatalog  string
+	ChatModel     model.BaseChatModel
+	Tools         []tool.BaseTool
+	MaxIterations int
 }
 
-// Runtime 持有已初始化的 Agent。
+// Runtime 持有已初始化的 DeepAgent。
 type Runtime struct {
 	agent        adk.Agent
 	skillCatalog string
 }
 
-type toolCallStartedData struct {
-	CallID      string `json:"call_id"`
-	Tool        string `json:"tool"`
-	DisplayName string `json:"display_name"`
-}
-
-type toolCallCompletedData struct {
-	CallID     string `json:"call_id"`
-	Tool       string `json:"tool"`
-	DurationMS int64  `json:"duration_ms"`
-}
-
-type toolCallFailedData struct {
-	CallID     string `json:"call_id"`
-	Tool       string `json:"tool"`
-	DurationMS int64  `json:"duration_ms"`
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-}
-
 // New 根据通用依赖创建当前单 Agent Runtime。
-// TODO：不合理，使用自建 Agent Graph
 func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if cfg.ChatModel == nil {
 		return nil, fmt.Errorf("chat model is required")
@@ -67,9 +44,9 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		Description:            cfg.Description,
 		Instruction:            cfg.Instruction,
 		ChatModel:              cfg.ChatModel,
-		Handlers:               cfg.Handlers,
-		WithoutWriteTodos:      cfg.WithoutWriteTodos,
-		WithoutGeneralSubAgent: cfg.WithoutGeneralSubAgent,
+		MaxIteration:           cfg.MaxIterations,
+		WithoutWriteTodos:      true,
+		WithoutGeneralSubAgent: true,
 		ToolsConfig: adk.ToolsConfig{
 			EmitInternalEvents: true,
 			ToolsNodeConfig: compose.ToolsNodeConfig{
@@ -100,7 +77,7 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
 	iter := runner.Run(ctx, messages)
 	var response string
-	pendingTools := make(map[string]toolCallStartedData)
+	pendingTools := make(map[string]agentevent.ToolCallStartedData)
 	toolStartedAt := make(map[string]time.Time)
 	for {
 		event, ok := iter.Next()
@@ -132,22 +109,20 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 				if _, exists := pendingTools[toolCall.ID]; exists {
 					continue
 				}
-				toolData := toolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name}
+				toolData := agentevent.ToolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name}
 				pendingTools[toolCall.ID] = toolData
 				toolStartedAt[toolCall.ID] = time.Now()
 				emit(agentevent.Event{Type: agentevent.ToolCallStarted, Data: toolData})
 			}
 			if output.Content != "" {
-				// 每个 Assistant 输出代表一次模型回合；保留最后一次文本，
-				// 与原 JSON 接口的最终回答语义保持一致。
 				response = output.Content
 			}
 		case schema.Tool:
 			toolData, exists := pendingTools[output.ToolCallID]
 			if !exists {
-				toolData = toolCallStartedData{CallID: output.ToolCallID, Tool: output.ToolName, DisplayName: output.ToolName}
+				toolData = agentevent.ToolCallStartedData{CallID: output.ToolCallID, Tool: output.ToolName, DisplayName: output.ToolName}
 			}
-			emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: toolCallCompletedData{
+			emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: agentevent.ToolCallCompletedData{
 				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]),
 			}})
 			delete(pendingTools, output.ToolCallID)
@@ -161,9 +136,9 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 	return response, nil
 }
 
-func failPendingTools(emit func(agentevent.Event), pendingTools map[string]toolCallStartedData, toolStartedAt map[string]time.Time) {
+func failPendingTools(emit func(agentevent.Event), pendingTools map[string]agentevent.ToolCallStartedData, toolStartedAt map[string]time.Time) {
 	for callID, toolCall := range pendingTools {
-		emit(agentevent.Event{Type: agentevent.ToolCallFailed, Data: toolCallFailedData{
+		emit(agentevent.Event{Type: agentevent.ToolCallFailed, Data: agentevent.ToolCallFailedData{
 			CallID: callID, Tool: toolCall.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[callID]),
 			Code: "agent_execution_failed", Message: "工具调用未完成",
 		}})
@@ -173,7 +148,7 @@ func failPendingTools(emit func(agentevent.Event), pendingTools map[string]toolC
 func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*schema.Message, error) {
 	if !output.IsStreaming {
 		if output.Message != nil && output.Role == schema.Assistant && output.Message.Content != "" {
-			emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: map[string]string{"text": output.Message.Content}})
+			emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: agentevent.AssistantDeltaData{Text: output.Message.Content}})
 		}
 		return output.Message, nil
 	}
@@ -190,7 +165,7 @@ func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*sche
 		if message != nil {
 			messages = append(messages, message)
 			if output.Role == schema.Assistant && message.Content != "" {
-				emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: map[string]string{"text": message.Content}})
+				emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: agentevent.AssistantDeltaData{Text: message.Content}})
 			}
 		}
 	}
