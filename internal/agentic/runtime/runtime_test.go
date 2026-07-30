@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
+	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -109,6 +112,29 @@ func TestRuntimeStreamCreatesIsolatedSkillRunState(t *testing.T) {
 	})
 }
 
+func TestRuntimeStreamContinuesAfterLoadingSkill(t *testing.T) {
+	Convey("模型调用 system.load_skill", t, func() {
+		chatModel := &scriptedToolCallingModel{}
+		runtime, err := New(context.Background(), Config{
+			Name:          "test-agent",
+			Instruction:   "按需调用工具。",
+			ChatModel:     chatModel,
+			Tools:         systemtools.Tools(),
+			MaxIterations: 3,
+		})
+
+		Convey("加载 Skill 后应继续 ReAct 并生成最终回答", func() {
+			response, streamErr := runtime.Stream(context.Background(), "请生成文档", nil)
+
+			So(err, ShouldBeNil)
+			So(streamErr, ShouldBeNil)
+			So(response, ShouldEqual, "Skill 已加载，继续执行。")
+			So(chatModel.calls, ShouldEqual, 2)
+			So(chatModel.sawLoadSkillResult, ShouldBeTrue)
+		})
+	})
+}
+
 func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 	Convey("执行 Runtime 流式事件", t, func() {
 		runtime := &Runtime{agent: &fakeAgent{events: []*adk.AgentEvent{
@@ -161,6 +187,43 @@ func (*fakeToolCallingModel) Stream(context.Context, []*schema.Message, ...model
 }
 
 func (m *fakeToolCallingModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+type scriptedToolCallingModel struct {
+	calls              int
+	sawLoadSkillResult bool
+}
+
+func (m *scriptedToolCallingModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	m.calls++
+	if m.calls == 1 {
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID:   "load-skill-1",
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      toolallowlist.LoadSkillTool,
+				Arguments: `{"skill_id":"doc-generator","reason":"需要依据文档工作说明完成请求"}`,
+			},
+		}}), nil
+	}
+	for _, message := range messages {
+		if message.Role == schema.Tool && message.ToolName == toolallowlist.LoadSkillTool && strings.Contains(message.Content, `"status":"ok"`) {
+			m.sawLoadSkillResult = true
+		}
+	}
+	return schema.AssistantMessage("Skill 已加载，继续执行。", nil), nil
+}
+
+func (m *scriptedToolCallingModel) Stream(ctx context.Context, messages []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, messages, options...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func (m *scriptedToolCallingModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	return m, nil
 }
 
