@@ -66,6 +66,11 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 // Stream 执行单轮查询，并通过 emit 输出已脱敏的模型文本与工具生命周期事件。
 // 它不会输出模型 reasoning content、工具参数或工具原始响应。
 func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent.Event)) (string, error) {
+	return r.StreamWithUserInfo(ctx, query, "", emit)
+}
+
+// StreamWithUserInfo 执行单轮查询，并将调用方已获取的个人基础信息作为可信上下文注入输入。
+func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string, emit func(agentevent.Event)) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")
 	}
@@ -73,7 +78,7 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 		emit = func(agentevent.Event) {}
 	}
 
-	messages, err := buildInputMessages(query, r.skillCatalog, time.Now())
+	messages, err := buildInputMessages(query, userInfo, r.skillCatalog, time.Now())
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}
