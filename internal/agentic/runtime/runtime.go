@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/components/model"
@@ -76,8 +77,9 @@ func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
-	iter := runner.Run(ctx, messages)
+	runCtx := agenticskills.WithRunState(ctx, agenticskills.NewRunState())
+	runner := adk.NewRunner(runCtx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
+	iter := runner.Run(runCtx, messages)
 	var response string
 	pendingTools := make(map[string]agentevent.ToolCallStartedData)
 	toolStartedAt := make(map[string]time.Time)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -89,6 +90,25 @@ func TestChatRequiresInitializedRuntime(t *testing.T) {
 	})
 }
 
+func TestRuntimeStreamCreatesIsolatedSkillRunState(t *testing.T) {
+	Convey("连续执行 Agent Run", t, func() {
+		agent := &fakeAgent{events: []*adk.AgentEvent{
+			adk.EventFromMessage(schema.AssistantMessage("完成", nil), nil, schema.Assistant, ""),
+		}}
+		runtime := &Runtime{agent: agent}
+
+		Convey("每一轮都应使用独立的 Skill Run State", func() {
+			_, firstErr := runtime.Stream(context.Background(), "第一轮", nil)
+			_, secondErr := runtime.Stream(context.Background(), "第二轮", nil)
+
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(agent.runStates, ShouldHaveLength, 2)
+			So(agent.runStates[0] == agent.runStates[1], ShouldBeFalse)
+		})
+	})
+}
+
 func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 	Convey("执行 Runtime 流式事件", t, func() {
 		runtime := &Runtime{agent: &fakeAgent{events: []*adk.AgentEvent{
@@ -126,7 +146,8 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 }
 
 type fakeAgent struct {
-	events []*adk.AgentEvent
+	events    []*adk.AgentEvent
+	runStates []*agenticskills.RunState
 }
 
 type fakeToolCallingModel struct{}
@@ -147,7 +168,10 @@ func (a *fakeAgent) Name(context.Context) string { return "fake-agent" }
 
 func (a *fakeAgent) Description(context.Context) string { return "fake agent for streaming tests" }
 
-func (a *fakeAgent) Run(_ context.Context, _ *adk.AgentInput, _ ...adk.AgentRunOption) *adk.AsyncIterator[*adk.AgentEvent] {
+func (a *fakeAgent) Run(ctx context.Context, _ *adk.AgentInput, _ ...adk.AgentRunOption) *adk.AsyncIterator[*adk.AgentEvent] {
+	if state, ok := agenticskills.RunStateFromContext(ctx); ok {
+		a.runStates = append(a.runStates, state)
+	}
 	iterator, generator := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
 	go func() {
 		defer generator.Close()

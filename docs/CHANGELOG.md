@@ -1,3 +1,51 @@
+## CHANGELOG - 2026-07-30 18:17 - 将 Skill 加载状态隔离到单次 Agent Run
+
+### 撰写时间
+
+- 2026-07-30 18:17
+
+### Base Commit
+
+- f6d05cc468d15c2d64b958069182b323a04d558e
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- `system.load_skill` 此前每次调用都会重新返回完整手册。需要在不扩大 Skill allowlist 和文件访问边界的前提下，避免同一 Agent Run 重复加载相同内容，并确保状态不会泄漏到下一次请求。
+- 原系统工具实现与注册逻辑位于同一包，新增按 Run 状态的协作后需要拆分 Tool 实现与注册入口，同时保持聊天服务的静态 Tool 注册契约可用。
+
+### 改动概览
+
+- 新增 `skills.RunState`，以互斥锁维护单次 Run 已成功加载的 Skill；首次加载返回手册，重复加载返回稳定的 `already_loaded` 状态，加载失败不记录并允许后续重试。
+- `Runtime.Stream` 为每次执行创建新的 RunState 并写入派生 context，再将该 context 同时交给 Runner 与 `Run`，使静态 Tool 能获得与当前请求绑定的状态。
+- `system.load_skill` 移入独立子包，保留原有 Tool/Skill allowlist、严格 JSON 参数校验和嵌入手册读取边界；未携带 RunState 的调用改为返回 `skill_run_unavailable`，避免脱离 Agent Run 使用该工具。
+- 更新系统 Tool 注册和聊天服务测试的导入路径，并补充 RunState、重复加载、失败重试、跨 Run 隔离及缺失状态的离线测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP 聊天入口仍将请求 context 传递到 `chat.Service` 与 Runtime；Runtime 在构建动态输入后派生该 context，不修改取消、deadline 或请求级鉴权信息。
+- 当前改动：DeepAgent 在一次 `Runtime.Stream` 内调用 `system.load_skill` 时，Tool 通过 context 取得 RunState，并经 allowlist 校验后调用嵌入式 `skills.Load`。同一 Skill 成功加载后不再重复返回完整内容。
+- 下游影响：模型仍只可发现和调用应用 allowlist 中的静态 Tool；聊天服务测试已同步使用拆分后的 `load_skill` 包常量，避免包重构导致编译断链。不同 Run 使用独立状态，互不共享已加载标记。
+
+### 改动结果与业务影响
+
+- 单轮多次请求同一 Skill 不会重复增加模型上下文，降低无效 Token 消耗；首次失败仍可恢复重试，避免短暂读取错误永久阻断该 Run。
+- RunState 仅存储允许的 Skill ID，不持久化手册内容或用户数据；状态在每次 `Runtime.Stream` 新建，适用于并发请求隔离。
+- 已执行 `go test ./...`、`go vet ./...` 与 `git diff --check`，均通过。测试仅使用嵌入式资源和 fake Agent，不访问真实模型、校园服务或宿主机 Shell。
+
+### 风险与待办
+
+- 当前重复加载返回状态而非手册全文，依赖模型已保留首次 Tool 结果；若未来引入 Tool 结果裁剪、跨节点上下文压缩或 Run 恢复，需要明确该状态与实际模型上下文的一致性策略。
+- `RunState.LoadOnce` 为保证同一 Skill 不重复读取而持锁执行 loader。现有嵌入式读取很短；若 loader 未来变为网络或重 I/O，应改为按 Skill 粒度的并发控制，避免无关 Skill 串行等待。
+- `system.load_skill` 的直接调用现在必须携带 RunState。未来新增非 Runtime 的调用入口时，应显式创建受控状态或维持当前拒绝语义，不能绕过单 Run 隔离。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): isolate skill loading per run`
+
 ## CHANGELOG - 2026-07-30 17:26 - 以开关受控恢复 Agent 文件系统 middleware
 
 ### 撰写时间

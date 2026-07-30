@@ -6,6 +6,7 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
+	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -53,7 +54,7 @@ func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
 			info, err := tools[0].Info(context.Background())
 
 			So(err, ShouldBeNil)
-			So(info.Name, ShouldEqual, systemtools.LoadSkillToolName)
+			So(info.Name, ShouldEqual, loadskill.LoadSkillToolName)
 		})
 	})
 }
