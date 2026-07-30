@@ -16,6 +16,8 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/cozeloop"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	mcpintegration "github.com/Charlie-BU/TongjiStudent/internal/integration/mcp"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 )
@@ -45,21 +47,20 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillCatalog, err := agenticskills.Catalog()
-	if err != nil {
-		return nil, fmt.Errorf("build skill catalog: %w", err)
-	}
 
+	// 模型相关
 	chatModel, err := arkmodel.NewFromEnv(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize chat model: %w", err)
 	}
 
+	// 知识库相关
 	knowledgeClient, err := knowledge.NewFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
 
+	// 工具相关
 	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
@@ -71,6 +72,28 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 	tools := append(systemtools.Tools(), MCPTools...)
 
+	// skill 相关
+	skillCatalog, err := agenticskills.Catalog()
+	if err != nil {
+		return nil, fmt.Errorf("build skill catalog: %w", err)
+	}
+
+	handlers := []adk.ChatModelAgentMiddleware{}
+	// 沙箱相关
+	sandboxEnabled, err := sandbox.EnabledFromEnv()
+	if err != nil {
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("read sandbox configuration: %w", err)
+	}
+	if sandboxEnabled {
+		filesystemMiddleware, err := sandbox.NewFileSystemMiddleware(ctx)
+		if err != nil {
+			_ = mcpClient.Close()
+			return nil, fmt.Errorf("create filesystem middleware: %w", err)
+		}
+		handlers = append(handlers, filesystemMiddleware)
+	}
+
 	rt, err := runtime.New(ctx, runtime.Config{
 		Name:          "Tongji Student Agent",
 		Description:   "Campus assistant that answers questions using approved Tongji services.",
@@ -79,6 +102,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		ChatModel:     chatModel,
 		Tools:         tools,
 		MaxIterations: 12,
+		Handlers:      handlers,
 	})
 	if err != nil {
 		_ = mcpClient.Close()

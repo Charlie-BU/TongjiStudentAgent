@@ -25,6 +25,7 @@ type Config struct {
 	ChatModel     model.BaseChatModel
 	Tools         []tool.BaseTool
 	MaxIterations int
+	Handlers      []adk.ChatModelAgentMiddleware
 }
 
 // Runtime 持有已初始化的 DeepAgent。
@@ -45,7 +46,8 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		Instruction:            cfg.Instruction,
 		ChatModel:              cfg.ChatModel,
 		MaxIteration:           cfg.MaxIterations,
-		WithoutWriteTodos:      true,
+		Handlers:               cfg.Handlers,
+		WithoutWriteTodos:      true, // 使用 system.manage_task_plan 管理任务计划
 		WithoutGeneralSubAgent: true,
 		ToolsConfig: adk.ToolsConfig{
 			EmitInternalEvents: true,

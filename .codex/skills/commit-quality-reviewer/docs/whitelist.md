@@ -12,6 +12,17 @@
 ## 当前豁免
 
 ```yaml
+- id: WL-20260730-001
+  enabled: true
+  severity: CRITICAL
+  type: local_sandbox_host_access
+  match:
+    file: internal/integration/sandbox/local.go
+    contains: "local.NewBackend(ctx, &local.Config{})"
+  reason: "AgentKit 远程沙箱替换前，SANDBOX_ENABLED 始终保持 false，本地 Backend 不会被装配。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-07-30"
+  expires_at: "2026-08-30"
 - id: WL-20260719-001
   enabled: true
   severity: CRITICAL

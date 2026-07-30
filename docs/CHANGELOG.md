@@ -1,3 +1,51 @@
+## CHANGELOG - 2026-07-30 17:26 - 以开关受控恢复 Agent 文件系统 middleware
+
+### 撰写时间
+
+- 2026-07-30 17:26
+
+### Base Commit
+
+- 914f07e1f9b20918e2b7f1c201baff8ed6b4cdbc
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- DeepAgent Runtime 已具备标准 Handler 扩展点；本次需要让开发环境可按配置接入文件系统 middleware，同时使默认聊天链路继续不具备宿主机文件或 Shell 能力。
+- 本地 Backend 不能作为公开部署的安全沙箱。远程 AgentKit 沙箱替换完成前，部署约定要求 `SANDBOX_ENABLED` 始终为 `false`，并将该风险登记为有时限的审查豁免。
+
+### 改动概览
+
+- `runtime.Config` 新增并透传 `Handlers` 到 `deep.New`，使应用层可以在不改变 Runtime 主循环、Tool 配置和事件投影的前提下注入 Eino middleware。
+- `chat.NewFromEnv` 在模型、知识库和受 allowlist 约束的 MCP Tool 初始化后读取 `SANDBOX_ENABLED`：关闭时传入空 Handler 列表；开启时创建文件系统 middleware。配置非法或 middleware 创建失败时关闭已创建的 MCP Client 后返回错误。
+- 本地 sandbox 适配代码标注后续替换为 Ark AgentKit 远程沙箱；审查白名单新增临时豁免，匹配本地 Backend 空配置路径，失效时间为 2026-08-30。
+- 新增离线测试，验证文件系统 middleware 可完成 Backend 装配并在 `BeforeAgent` 阶段注入工具，测试不执行本机 Shell。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：进程环境提供 `SANDBOX_ENABLED`，`sandbox.EnabledFromEnv` 负责解析并在非法值时返回可定位错误；模型、知识库和 MCP 初始化顺序保持不变。
+- 当前改动：聊天服务将条件创建的 `adk.ChatModelAgentMiddleware` 放入 `runtime.Config`，Runtime 原样传给 `deep.Config.Handlers`。启用时 filesystem middleware 在 Agent 执行前追加文件系统工具；关闭时不会注册此类工具。
+- 下游影响：DeepAgent 的既有主 Agent、静态 `system.load_skill`、远程 MCP Tool、流式事件和 12 次迭代上限均保持不变。只有显式启用开关的实例才获得本地文件与 Shell 相关能力。
+
+### 改动结果与业务影响
+
+- 默认配置继续关闭 sandbox，公开环境的 Agent 能力面不因本次改动扩大；受控开发环境可以通过开关验证文件处理链路，无需改动 Runtime 实现。
+- Sandbox 初始化异常不会遗留已建立的 MCP Client；新增测试覆盖 middleware 的装配和工具注入结果。
+- 已执行 `go test ./internal/integration/sandbox ./internal/application/chat ./internal/agentic/runtime` 与 `go vet ./internal/integration/sandbox ./internal/application/chat ./internal/agentic/runtime`，均通过。
+
+### 风险与待办
+
+- `SANDBOX_ENABLED=true` 会使用本地 Backend，能够访问宿主机文件系统并通过 Shell 执行命令；在 AgentKit 远程沙箱替换完成前，部署配置必须保持该变量为 `false`。
+- 白名单豁免仅覆盖当前过渡期，须在 2026-08-30 前复核；替换后应移除本地 Backend、对应豁免和过渡性 TODO。
+- 新增测试只验证离线装配与工具注册，不调用本机 Shell；远程沙箱接入时需补充其隔离边界、权限策略和失败清理的集成测试。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): gate filesystem middleware by sandbox config`
+
 ## CHANGELOG - 2026-07-30 12:25 - 收敛单 Agent 运行时并固化 SSE 事件契约
 
 ### 撰写时间
