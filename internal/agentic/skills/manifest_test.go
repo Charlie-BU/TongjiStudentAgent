@@ -17,23 +17,23 @@ func TestCatalog(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(catalog, ShouldStartWith, "# Available Skills\n")
 			So(catalog, ShouldContainSubstring, "`doc-generator`")
-			So(catalog, ShouldContainSubstring, "`doc-optimizer`")
+			So(catalog, ShouldNotContainSubstring, "`doc-optimizer`")
 			So(catalog, ShouldNotContainSubstring, "SKILL.md")
 			So(catalog, ShouldNotContainSubstring, "internal/agentic/skills")
 		})
 
 		Convey("已批准但缺少 Manifest 的 Skill 应阻止启动", func() {
-			manifest := manifests[skillallowlist.DocOptimizerSkill]
-			delete(manifests, skillallowlist.DocOptimizerSkill)
+			manifest := manifests[skillallowlist.DocGeneratorSkill]
+			delete(manifests, skillallowlist.DocGeneratorSkill)
 			t.Cleanup(func() {
-				manifests[skillallowlist.DocOptimizerSkill] = manifest
+				manifests[skillallowlist.DocGeneratorSkill] = manifest
 			})
 
 			catalog, err := Catalog()
 
 			So(catalog, ShouldBeBlank)
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldEqual, "approved skill \"doc-optimizer\" has no manifest")
+			So(err.Error(), ShouldEqual, "approved skill \"doc-generator\" has no manifest")
 		})
 	})
 }

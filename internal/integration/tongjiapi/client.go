@@ -185,28 +185,6 @@ func (c *Client) RefreshAccessToken(ctx context.Context, refreshToken string) (*
 	})
 }
 
-// GetSingleInfo 调用个人基础信息接口。
-func (c *Client) GetSingleInfo(ctx context.Context, accessToken string) (*APIResponse, error) {
-	return c.Get(ctx, "/v1/dc/user/single_info", accessToken)
-}
-
-// Get 调用同源开放平台 GET 数据接口。
-func (c *Client) Get(ctx context.Context, resourcePath, accessToken string) (*APIResponse, error) {
-	if strings.TrimSpace(accessToken) == "" {
-		return nil, fmt.Errorf("access token is required")
-	}
-	if !strings.HasPrefix(resourcePath, "/") {
-		return nil, fmt.Errorf("resource path must start with /")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.APIBaseURL+resourcePath, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create Open Platform request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	return c.doAPIRequest(req)
-}
-
 // signState 为 state 载荷生成 HMAC-SHA256 签名。
 func (c *Client) signState(encodedPayload string) string {
 	mac := hmac.New(sha256.New, []byte(c.config.StateSecret))

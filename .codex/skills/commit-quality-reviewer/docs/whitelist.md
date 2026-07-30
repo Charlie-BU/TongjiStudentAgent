@@ -12,6 +12,17 @@
 ## 当前豁免
 
 ```yaml
+- id: WL-20260730-002
+  enabled: true
+  severity: CRITICAL
+  type: personal_data_model_context
+  match:
+    file: internal/integration/tongjiapi/user_info.go
+    contains: "appendField(\"家庭地址\", userInfo.MailingAddress)"
+  reason: "当前 Agent 需要完整个人资料作为回答上下文，已由变更负责人确认；后续按模型数据处理边界实施最小化。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-07-30"
+  expires_at: "2026-08-30"
 - id: WL-20260730-001
   enabled: true
   severity: CRITICAL
