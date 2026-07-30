@@ -3,11 +3,10 @@ package skill
 
 const (
 	DocGeneratorSkill = "doc-generator"
-	DocOptimizerSkill = "doc-optimizer"
 )
 
 var (
-	allowedSkills = []string{DocGeneratorSkill, DocOptimizerSkill}
+	allowedSkills = []string{DocGeneratorSkill}
 )
 
 // Skills 返回已批准 Skill 标识的副本，调用方修改结果不会影响 allowlist。
