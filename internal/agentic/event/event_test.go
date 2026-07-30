@@ -25,3 +25,21 @@ func TestEmitterAssignsRunIDAndIncreasingSequence(t *testing.T) {
 		})
 	})
 }
+
+func TestEmitterRejectsEventsAfterTerminalEvent(t *testing.T) {
+	Convey("发送 Run 终态事件", t, func() {
+		var events []Event
+		emitter := NewEmitter("run-test", func(event Event) {
+			events = append(events, event)
+		})
+
+		Convey("终态事件必须是同一次 Run 的最后一个事件", func() {
+			So(emitter.Emit(RunCompleted, RunCompletedData{DurationMS: 1}), ShouldBeTrue)
+			So(emitter.Emit(AssistantDelta, AssistantDeltaData{Text: "不应发送"}), ShouldBeFalse)
+
+			So(events, ShouldHaveLength, 1)
+			So(events[0].Type, ShouldEqual, RunCompleted)
+			So(IsTerminal(events[0].Type), ShouldBeTrue)
+		})
+	})
+}

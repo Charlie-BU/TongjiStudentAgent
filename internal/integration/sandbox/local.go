@@ -1,3 +1,4 @@
+// TODO：使用 Ark AgentKit 远程沙箱代替本地沙箱
 // Package sandbox 封装 Agent 使用的沙箱能力适配。
 package sandbox
 

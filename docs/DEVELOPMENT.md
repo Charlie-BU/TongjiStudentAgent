@@ -62,7 +62,7 @@ HTTP /v1/agent/chat 或 /v1/agent/chat/stream
 
 | 能力 | 现状 | 影响 |
 | --- | --- | --- |
-| Agent 编排 | 依赖 `deep.New` 默认行为，项目没有自己的 Graph 和节点契约 | 无法精确控制 Loop、持久化、事件和错误恢复 |
+| Agent 编排 | 使用 `deep.New` 的标准模型—工具循环，禁用内置待办和通用子 Agent | CozeLoop 可识别 Agent 与 Tool 节点；Loop、持久化与完整工具策略仍待补齐 |
 | 上下文工程 | 只把知识切片拼入当前问题 | 没有身份、历史、摘要、来源和动态提醒的稳定装配顺序 |
 | 短期记忆 | 请求不带 `session_id`，Runner 没有 CheckPointStore | 多轮对话无法延续 |
 | MCP | 启动时连接远程 `TongjiStudentMCPServer`，并只发现 application allowlist 中的工具；调用时转发请求 context 中的 Bearer token，缺失 token 时本地拒绝 | 远程 MCP/开放平台仍需验证 token 有效性、用户绑定和 scope |
@@ -70,7 +70,7 @@ HTTP /v1/agent/chat 或 /v1/agent/chat/stream
 | HITL | 未实现 | 无法确认高风险操作，也无法中断后恢复 |
 | 流式协议 | 已提供单轮 SSE，包含状态、文本增量、工具开始/结束/失败、运行完成/失败；尚无会话事件重连、心跳和 HITL | 前端可展示首期执行过程，但尚不能恢复中断 Run 或展示确认请求 |
 | 身份与鉴权 | Chat 接口可将格式正确的 Bearer 凭据写入请求上下文；当前不因缺失或无效格式拒绝调用，也未验证 token、绑定用户或审核 scope | 不能安全访问课表、成绩等个人数据 |
-| 安全 | DeepAgent 挂载本地文件和 `/bin/sh` | 暴露后可能读 `.env`、写文件或执行命令 |
+| 安全 | 生产调用链不注册宿主机文件或 Shell 工具 | 未来新增此类能力时必须采用隔离沙箱与最小权限接口 |
 | 隐私 | 普通 HTTP 日志仅记录 Request ID、方法、路径、状态码和耗时；Chat 不再记录完整回复 | 仍需补充审计、字段级脱敏和受限诊断日志 |
 | 评测 | 只有局部单测 | 无法证明回答准确性、工具选择和来源完整性 |
 
@@ -296,7 +296,7 @@ type RuntimeConfig struct {
 
 ### 5.3 单 Agent Graph 与 Loop
 
-首期采用显式 Eino Graph，替代项目对 `deep.New` 隐式编排的依赖：
+当前采用 Eino `deep.New` 预构建 Agent；如未来需要 HITL、Checkpoint 或自定义循环策略，再评估显式 Eino Graph：
 
 ```mermaid
 flowchart TD
@@ -798,7 +798,7 @@ run
 
 ### 12.4 必须移除的能力
 
-本地 Sandbox 实现已收敛到 `internal/integration/sandbox`，`internal/agentic` 不再了解本地 Backend、文件系统或 Shell 的具体实现。应用装配层仅在 `SANDBOX_ENABLED=true` 时注入其 middleware；变量未设置或为 `false` 时不会注册文件系统或 `StreamingShell`。该开关只允许在受控本地开发环境使用，公开部署必须保持关闭。未来若出现文档处理场景，应在 `internal/integration/sandbox` 提供受控文件服务或隔离 Sandbox Adapter，并通过显式配置注入，不能恢复宿主机 Shell。
+DeepAgent 保留，但聊天调用链不注册宿主机文件系统或 Shell middleware。未来若出现文档处理场景，应在 `internal/integration/sandbox` 提供受控文件服务或隔离 Sandbox Adapter；不得恢复宿主机 Shell。
 
 ## 13. 测试与评测
 
