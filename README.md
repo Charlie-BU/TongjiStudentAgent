@@ -9,7 +9,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - 开源 Hertz HTTP 服务，默认监听 `8080` 端口。
 - 健康检查接口：`GET /`、`GET /ping`、`GET /v1/ping`。
 - Agent 调用接口：兼容 JSON 的 `POST /v1/agent/chat` 与 SSE 的 `POST /v1/agent/chat/stream`，均可选传入短期 Bearer access token。
-- 基于 Ark 兼容配置初始化 Eino DeepAgent。
+- 基于 Ark 兼容配置初始化 Eino Agent Graph。
 - 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
 - 本地日志模块，不直接使用项目业务代码中的字节内部日志库。
@@ -68,9 +68,6 @@ ARK_KNOWLEDGE_ENABLED=false
 MCP_SERVER_URL=http://127.0.0.1:3000/mcp
 MCP_TIMEOUT=12s
 
-# 本地文件系统与 Shell 工具；默认关闭，仅限受控本地开发环境
-SANDBOX_ENABLED=false
-
 # 同济开放平台 OAuth 2.0 授权码模式
 TONGJI_OPEN_PLATFORM_CLIENT_ID=your-client-id
 TONGJI_OPEN_PLATFORM_CLIENT_SECRET=your-client-secret
@@ -84,8 +81,6 @@ TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 
 启用知识库时，必须配置 `ARK_AK`、`ARK_SK`，以及
 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。主 Agent 会先检索知识库，再将命中的内容作为非可信参考资料传入同一次模型调用；不会再启动独立的知识库模型调用链。
-
-`SANDBOX_ENABLED` 未设置或为 `false` 时，Agent 不会注册文件系统或 Shell middleware。设为 `true` 会让 Agent 使用本机 Backend 执行文件操作和命令，仅可用于受控本地开发环境，禁止在公开部署环境开启。
 
 ## 同济开放平台浏览器授权
 
@@ -170,7 +165,7 @@ go test ./...
 
 ## 调用 Agent
 
-服务启动后，可用以下请求调用 DeepAgent：
+服务启动后，可用以下请求调用 Agent：
 
 ```bash
 curl --request POST http://127.0.0.1:8080/v1/agent/chat \
@@ -195,7 +190,20 @@ curl --request POST http://127.0.0.1:8080/v1/agent/chat \
 
 ## 流式调用 Agent
 
-`POST /v1/agent/chat/stream` 使用 Server-Sent Events 返回单轮 Run 的安全可见过程：`run.started`、`agent.status`、`assistant.delta`、`tool.call.started`、`tool.call.completed`、`tool.call.failed`、`run.completed` 与 `run.failed`。每个事件包含同一次运行的 `run_id`、递增 `seq` 和 UTC `occurred_at`。事件不会包含模型原始推理内容、工具参数、工具原始结果或 Bearer token。
+`POST /v1/agent/chat/stream` 使用 Server-Sent Events 返回单轮 Run 的安全可见过程。所有事件都包含同一次运行的 `run_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。事件不会包含模型原始推理内容、工具参数、工具原始结果或 Bearer token。
+
+| 事件 | `data` 契约 | 含义 |
+| --- | --- | --- |
+| `run.started` | `message` | Run 已接受并开始处理。 |
+| `agent.status` | `phase`, `message` | 可展示的执行阶段。 |
+| `assistant.delta` | `text` | 最终自然语言回答的增量文本。 |
+| `tool.call.started` | `call_id`, `tool`, `display_name` | 模型已选择该工具，调用即将执行。 |
+| `tool.call.completed` | `call_id`, `tool`, `duration_ms` | Agent 已收到工具结果；不代表上游业务一定成功。 |
+| `tool.call.failed` | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。 |
+| `run.completed` | `duration_ms` | Run 成功结束。 |
+| `run.failed` | `code`, `message` | Run 无法完成。 |
+
+`run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
 ```bash
 curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
@@ -208,7 +216,7 @@ curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
 
 启动过程中会依次创建模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
 
-`POST /v1/agent/chat` 与 `POST /v1/agent/chat/stream` 都会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；`/ping` 系列接口只用于服务存活检查。当前仍是无会话的单轮运行；后续可在此基础上加入 Session、取消与 HITL Resume。
+`POST /v1/agent/chat` 与 `POST /v1/agent/chat/stream` 都会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 系列接口只用于服务存活检查。当前仍是无会话的单轮运行；后续可在此基础上加入 Session、取消与 HITL Resume。
 
 当前允许暴露给 Agent 的远程 MCP 工具为：
 
@@ -225,7 +233,7 @@ curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
 | `GET` | `/` | 基础服务响应 |
 | `GET` | `/ping` | 健康检查 |
 | `GET` | `/v1/ping` | 兼容部署平台的存活检查 |
-| `POST` | `/v1/agent/chat` | 单轮调用 DeepAgent |
+| `POST` | `/v1/agent/chat` | 单轮调用 Agent |
 | `POST` | `/v1/agent/chat/stream` | 以 SSE 返回单轮 Agent 运行事件 |
 
 ## 说明

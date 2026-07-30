@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
+	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -52,7 +54,7 @@ func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
 			info, err := tools[0].Info(context.Background())
 
 			So(err, ShouldBeNil)
-			So(info.Name, ShouldEqual, systemtools.LoadSkillToolName)
+			So(info.Name, ShouldEqual, loadskill.LoadSkillToolName)
 		})
 	})
 }
@@ -73,12 +75,18 @@ func TestServiceChatRequiresRuntime(t *testing.T) {
 	Convey("通过聊天服务执行对话", t, func() {
 		Convey("Runtime 未初始化", func() {
 			service := &Service{}
-			response, err := service.Stream(context.Background(), "你好", nil)
+			var events []agentevent.Event
+			response, err := service.Stream(context.Background(), "你好", func(event agentevent.Event) {
+				events = append(events, event)
+			})
 
-			Convey("应返回初始化错误且不访问外部依赖", func() {
+			Convey("应返回初始化错误且以失败终态收尾", func() {
 				So(response, ShouldBeBlank)
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "chat service is not initialized")
+				So(events, ShouldHaveLength, 2)
+				So(events[0].Type, ShouldEqual, agentevent.RunStarted)
+				So(events[1].Type, ShouldEqual, agentevent.RunFailed)
 			})
 		})
 	})

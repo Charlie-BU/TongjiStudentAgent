@@ -47,21 +47,20 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillCatalog, err := agenticskills.Catalog()
-	if err != nil {
-		return nil, fmt.Errorf("build skill catalog: %w", err)
-	}
 
+	// 模型相关
 	chatModel, err := arkmodel.NewFromEnv(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize chat model: %w", err)
 	}
 
+	// 知识库相关
 	knowledgeClient, err := knowledge.NewFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
 
+	// 工具相关
 	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
@@ -73,7 +72,14 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 	tools := append(systemtools.Tools(), MCPTools...)
 
+	// skill 相关
+	skillCatalog, err := agenticskills.Catalog()
+	if err != nil {
+		return nil, fmt.Errorf("build skill catalog: %w", err)
+	}
+
 	handlers := []adk.ChatModelAgentMiddleware{}
+	// 沙箱相关
 	sandboxEnabled, err := sandbox.EnabledFromEnv()
 	if err != nil {
 		_ = mcpClient.Close()
@@ -89,15 +95,14 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	rt, err := runtime.New(ctx, runtime.Config{
-		Name:                   "Tongji Student Agent",
-		Description:            "This is a Deep Agent powered by the AI Pass platform. It analyzes user input and dispatches tasks to the appropriate sub-agents for execution.",
-		Instruction:            instruction,
-		SkillCatalog:           skillCatalog,
-		ChatModel:              chatModel,
-		Tools:                  tools,
-		Handlers:               handlers,
-		WithoutWriteTodos:      true, // 使用自建 system.manage_task_plan
-		WithoutGeneralSubAgent: true, // 不使用通用 sub-agent
+		Name:          "Tongji Student Agent",
+		Description:   "Campus assistant that answers questions using approved Tongji services.",
+		Instruction:   instruction,
+		SkillCatalog:  skillCatalog,
+		ChatModel:     chatModel,
+		Tools:         tools,
+		MaxIterations: 12,
+		Handlers:      handlers,
 	})
 	if err != nil {
 		_ = mcpClient.Close()
@@ -136,6 +141,9 @@ func Chat(ctx context.Context, query string) (string, error) {
 // Stream 通过默认聊天服务执行单轮对话，并发送安全的运行过程事件。
 func Stream(ctx context.Context, query string, send func(agentevent.Event)) (string, error) {
 	if defaultService == nil {
+		emitter := agentevent.NewEmitter("", send)
+		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
+		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_unavailable", Message: "Agent 服务暂不可用"})
 		return "", fmt.Errorf("chat service is not initialized")
 	}
 	return defaultService.Stream(ctx, query, send)
@@ -151,13 +159,15 @@ func Close() error {
 
 // Stream 通过服务 Runtime 执行对话，并发送运行事件。
 func (s *Service) Stream(ctx context.Context, query string, send func(agentevent.Event)) (string, error) {
+	emitter := agentevent.NewEmitter("", send)
 	if s == nil || s.runtime == nil {
+		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
+		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_unavailable", Message: "Agent 服务暂不可用"})
 		return "", fmt.Errorf("chat service is not initialized")
 	}
-	emitter := agentevent.NewEmitter("", send)
 	startedAt := time.Now()
-	emitter.Emit(agentevent.RunStarted, map[string]string{"message": "Agent 已开始处理请求"})
-	emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "context", "message": "正在准备回答上下文"})
+	emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
+	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "context", Message: "正在准备回答上下文"})
 
 	// TODO：使用 tool 调用知识库检索工具，不要直接作为 input
 	// input, err := s.withKnowledgeContextWithEmitter(ctx, query, emitter)
@@ -166,15 +176,15 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 	// 	return "", err
 	// }
 
-	emitter.Emit(agentevent.AgentStatus, map[string]string{"phase": "model", "message": "正在生成回答"})
+	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "model", Message: "正在生成回答"})
 	response, err := s.runtime.Stream(ctx, query, func(event agentevent.Event) {
 		emitter.Emit(event.Type, event.Data)
 	})
 	if err != nil {
-		emitter.Emit(agentevent.RunFailed, map[string]string{"code": "agent_execution_failed", "message": "Agent 执行失败"})
+		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_execution_failed", Message: "Agent 执行失败"})
 		return "", err
 	}
-	emitter.Emit(agentevent.RunCompleted, map[string]int64{"duration_ms": time.Since(startedAt).Milliseconds()})
+	emitter.Emit(agentevent.RunCompleted, agentevent.RunCompletedData{DurationMS: time.Since(startedAt).Milliseconds()})
 	return response, nil
 }
 

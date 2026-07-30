@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"context"
 	"testing"
 
+	"github.com/cloudwego/eino/adk"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -42,5 +44,20 @@ func TestEnabledFromEnv(t *testing.T) {
 				})
 			})
 		}
+	})
+}
+
+func TestNewFileSystemMiddleware(t *testing.T) {
+	Convey("创建文件系统中间件", t, func() {
+		middleware, err := NewFileSystemMiddleware(context.Background())
+
+		Convey("应完成本地 Backend 装配且不执行 Shell", func() {
+			So(err, ShouldBeNil)
+			So(middleware, ShouldNotBeNil)
+
+			_, agentContext, beforeErr := middleware.BeforeAgent(context.Background(), &adk.ChatModelAgentContext{})
+			So(beforeErr, ShouldBeNil)
+			So(agentContext.Tools, ShouldNotBeEmpty)
+		})
 	})
 }

@@ -1,3 +1,148 @@
+## CHANGELOG - 2026-07-30 18:17 - 将 Skill 加载状态隔离到单次 Agent Run
+
+### 撰写时间
+
+- 2026-07-30 18:17
+
+### Base Commit
+
+- f6d05cc468d15c2d64b958069182b323a04d558e
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- `system.load_skill` 此前每次调用都会重新返回完整手册。需要在不扩大 Skill allowlist 和文件访问边界的前提下，避免同一 Agent Run 重复加载相同内容，并确保状态不会泄漏到下一次请求。
+- 原系统工具实现与注册逻辑位于同一包，新增按 Run 状态的协作后需要拆分 Tool 实现与注册入口，同时保持聊天服务的静态 Tool 注册契约可用。
+
+### 改动概览
+
+- 新增 `skills.RunState`，以互斥锁维护单次 Run 已成功加载的 Skill；首次加载返回手册，重复加载返回稳定的 `already_loaded` 状态，加载失败不记录并允许后续重试。
+- `Runtime.Stream` 为每次执行创建新的 RunState 并写入派生 context，再将该 context 同时交给 Runner 与 `Run`，使静态 Tool 能获得与当前请求绑定的状态。
+- `system.load_skill` 移入独立子包，保留原有 Tool/Skill allowlist、严格 JSON 参数校验和嵌入手册读取边界；未携带 RunState 的调用改为返回 `skill_run_unavailable`，避免脱离 Agent Run 使用该工具。
+- 更新系统 Tool 注册和聊天服务测试的导入路径，并补充 RunState、重复加载、失败重试、跨 Run 隔离及缺失状态的离线测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP 聊天入口仍将请求 context 传递到 `chat.Service` 与 Runtime；Runtime 在构建动态输入后派生该 context，不修改取消、deadline 或请求级鉴权信息。
+- 当前改动：DeepAgent 在一次 `Runtime.Stream` 内调用 `system.load_skill` 时，Tool 通过 context 取得 RunState，并经 allowlist 校验后调用嵌入式 `skills.Load`。同一 Skill 成功加载后不再重复返回完整内容。
+- 下游影响：模型仍只可发现和调用应用 allowlist 中的静态 Tool；聊天服务测试已同步使用拆分后的 `load_skill` 包常量，避免包重构导致编译断链。不同 Run 使用独立状态，互不共享已加载标记。
+
+### 改动结果与业务影响
+
+- 单轮多次请求同一 Skill 不会重复增加模型上下文，降低无效 Token 消耗；首次失败仍可恢复重试，避免短暂读取错误永久阻断该 Run。
+- RunState 仅存储允许的 Skill ID，不持久化手册内容或用户数据；状态在每次 `Runtime.Stream` 新建，适用于并发请求隔离。
+- 已执行 `go test ./...`、`go vet ./...` 与 `git diff --check`，均通过。测试仅使用嵌入式资源和 fake Agent，不访问真实模型、校园服务或宿主机 Shell。
+
+### 风险与待办
+
+- 当前重复加载返回状态而非手册全文，依赖模型已保留首次 Tool 结果；若未来引入 Tool 结果裁剪、跨节点上下文压缩或 Run 恢复，需要明确该状态与实际模型上下文的一致性策略。
+- `RunState.LoadOnce` 为保证同一 Skill 不重复读取而持锁执行 loader。现有嵌入式读取很短；若 loader 未来变为网络或重 I/O，应改为按 Skill 粒度的并发控制，避免无关 Skill 串行等待。
+- `system.load_skill` 的直接调用现在必须携带 RunState。未来新增非 Runtime 的调用入口时，应显式创建受控状态或维持当前拒绝语义，不能绕过单 Run 隔离。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): isolate skill loading per run`
+
+## CHANGELOG - 2026-07-30 17:26 - 以开关受控恢复 Agent 文件系统 middleware
+
+### 撰写时间
+
+- 2026-07-30 17:26
+
+### Base Commit
+
+- 914f07e1f9b20918e2b7f1c201baff8ed6b4cdbc
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- DeepAgent Runtime 已具备标准 Handler 扩展点；本次需要让开发环境可按配置接入文件系统 middleware，同时使默认聊天链路继续不具备宿主机文件或 Shell 能力。
+- 本地 Backend 不能作为公开部署的安全沙箱。远程 AgentKit 沙箱替换完成前，部署约定要求 `SANDBOX_ENABLED` 始终为 `false`，并将该风险登记为有时限的审查豁免。
+
+### 改动概览
+
+- `runtime.Config` 新增并透传 `Handlers` 到 `deep.New`，使应用层可以在不改变 Runtime 主循环、Tool 配置和事件投影的前提下注入 Eino middleware。
+- `chat.NewFromEnv` 在模型、知识库和受 allowlist 约束的 MCP Tool 初始化后读取 `SANDBOX_ENABLED`：关闭时传入空 Handler 列表；开启时创建文件系统 middleware。配置非法或 middleware 创建失败时关闭已创建的 MCP Client 后返回错误。
+- 本地 sandbox 适配代码标注后续替换为 Ark AgentKit 远程沙箱；审查白名单新增临时豁免，匹配本地 Backend 空配置路径，失效时间为 2026-08-30。
+- 新增离线测试，验证文件系统 middleware 可完成 Backend 装配并在 `BeforeAgent` 阶段注入工具，测试不执行本机 Shell。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：进程环境提供 `SANDBOX_ENABLED`，`sandbox.EnabledFromEnv` 负责解析并在非法值时返回可定位错误；模型、知识库和 MCP 初始化顺序保持不变。
+- 当前改动：聊天服务将条件创建的 `adk.ChatModelAgentMiddleware` 放入 `runtime.Config`，Runtime 原样传给 `deep.Config.Handlers`。启用时 filesystem middleware 在 Agent 执行前追加文件系统工具；关闭时不会注册此类工具。
+- 下游影响：DeepAgent 的既有主 Agent、静态 `system.load_skill`、远程 MCP Tool、流式事件和 12 次迭代上限均保持不变。只有显式启用开关的实例才获得本地文件与 Shell 相关能力。
+
+### 改动结果与业务影响
+
+- 默认配置继续关闭 sandbox，公开环境的 Agent 能力面不因本次改动扩大；受控开发环境可以通过开关验证文件处理链路，无需改动 Runtime 实现。
+- Sandbox 初始化异常不会遗留已建立的 MCP Client；新增测试覆盖 middleware 的装配和工具注入结果。
+- 已执行 `go test ./internal/integration/sandbox ./internal/application/chat ./internal/agentic/runtime` 与 `go vet ./internal/integration/sandbox ./internal/application/chat ./internal/agentic/runtime`，均通过。
+
+### 风险与待办
+
+- `SANDBOX_ENABLED=true` 会使用本地 Backend，能够访问宿主机文件系统并通过 Shell 执行命令；在 AgentKit 远程沙箱替换完成前，部署配置必须保持该变量为 `false`。
+- 白名单豁免仅覆盖当前过渡期，须在 2026-08-30 前复核；替换后应移除本地 Backend、对应豁免和过渡性 TODO。
+- 新增测试只验证离线装配与工具注册，不调用本机 Shell；远程沙箱接入时需补充其隔离边界、权限策略和失败清理的集成测试。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): gate filesystem middleware by sandbox config`
+
+## CHANGELOG - 2026-07-30 12:25 - 收敛单 Agent 运行时并固化 SSE 事件契约
+
+### 撰写时间
+
+- 2026-07-30 12:25
+
+### Base Commit
+
+- a4d3db7cf063dd56d3c9d727d2dabdf7fb1c3bde
+
+### Compare Scope
+
+- staged_changes_only
+
+### 背景与改动目标
+
+- 当前服务只暴露经 allowlist 管理的 `system.load_skill` 与远程校园 MCP Tool，没有具备独立职责、权限或上下文契约的专用子 Agent。本地文件系统与 Shell middleware 也不应出现在公开 Agent 调用链中。
+- SSE 已可投影 Run 生命周期，但事件 `data` 仍是松散 map，且终态后没有统一阻止继续发送的机制，难以稳定地对接客户端状态机。
+
+### 改动概览
+
+- Runtime 收敛为 DeepAgent 的标准模型—工具循环：统一关闭内置待办和通用子 Agent，移除应用层可变的 middleware/Agent 编排参数，并将单轮最大模型迭代显式设为 12。
+- 聊天服务不再读取 `SANDBOX_ENABLED` 或装配宿主机文件系统、Shell middleware；远程 MCP Tool、静态 `system.load_skill`、Cozeloop 全局回调和请求级 token 透传保持不变。
+- `internal/agentic/event` 为每类对外 SSE 事件新增具名数据结构，并让 Emitter 在发送 `run.completed` 或 `run.failed` 后拒绝后续事件，保证单个 Run 只有一个终态。
+- 服务未初始化时，`chat.Stream` 与 `Service.Stream` 也会发送 `run.started` 后以 `agent_unavailable` 的 `run.failed` 收尾，使流式调用拥有完整可解析的生命周期。
+- README、开发说明和风险文档同步运行时边界、12 次迭代上限、SSE `data` 契约与终态规则；移除对已不进入聊天调用链的 Sandbox 开关描述。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP `ChatStream` 继续创建请求专属可取消 context，并将 Emitter 生成的事件序号写入 SSE `id`。Cozeloop 继续通过 Eino 全局 callback 提供观测，不依赖聊天 Runtime middleware。
+- 当前改动：`chat.NewFromEnv` 将已批准的静态与 MCP Tool 传入 Runtime；Runtime 用 `deep.New` 建立单 Agent，并以 12 次模型—工具循环作为单轮资源上限。服务层在 Runtime 前后投影 `run.started`、阶段状态和唯一终态。
+- 下游影响：客户端可使用 `run_id`、`seq`/SSE `id` 及具名 `data` 字段驱动界面，收到终态后无需等待额外事件。任何公开调用均不会获得宿主机文件、命令执行或通用 `task` 子代理能力。
+
+### 改动结果与业务影响
+
+- 运行时能力面缩小为主 Agent 直接调用受批准 Tool，避免无专长通用子 Agent 带来的额外模型成本、延迟和上下文转交。
+- SSE 对外协议从约定式 map 收敛为可维护的字段契约，并对服务不可用与正常执行失败提供一致的失败终态。
+- 已执行 `go test ./...`、`go test -race ./...`、`go vet ./...` 与 `git diff --cached --check`，均通过。测试不读取 `.env`，不调用真实模型、校园平台或远程 MCP。
+
+### 风险与待办
+
+- 远程 MCP 与同济开放平台仍承担 token 有效性、用户绑定和 scope 审核；当前 Agent 仅在请求内透传格式正确的 Bearer token，不能替代身份鉴权。
+- 当前 SSE 不支持断线重连、心跳、跨请求取消或 HITL Resume。客户端断开会取消当前 Run，但不会持久化或恢复中间状态。
+- `internal/integration/sandbox` 仍保留为未接入聊天链路的本地适配代码；后续若重新引入文件处理，应替换为受控文件服务或隔离 Sandbox Adapter，而非恢复宿主机 Shell。
+
+### 建议 Commit Message（git-cz）
+
+- `refactor(agent): harden runtime and SSE contract`
+
 ## CHANGELOG - 2026-07-30 02:05 - 将每轮 Agent 输入收敛为动态提醒与结构化请求
 
 ### 撰写时间

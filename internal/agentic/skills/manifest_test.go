@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"path"
+	"sort"
 	"testing"
 
 	skillallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/skill"
@@ -34,4 +36,50 @@ func TestCatalog(t *testing.T) {
 			So(err.Error(), ShouldEqual, "approved skill \"doc-optimizer\" has no manifest")
 		})
 	})
+}
+
+func TestSkillCatalogAllowlistAndEmbeddedFilesStayConsistent(t *testing.T) {
+	Convey("Skill Catalog、allowlist 与嵌入手册", t, func() {
+		catalog, err := Catalog()
+		allowlistedIDs := skillallowlist.Skills()
+		embeddedIDs, embeddedErr := embeddedSkillIDs()
+		manifestIDs := make([]string, 0, len(manifests))
+		for skillID := range manifests {
+			manifestIDs = append(manifestIDs, skillID)
+		}
+		sort.Strings(allowlistedIDs)
+		sort.Strings(manifestIDs)
+
+		Convey("三处注册集合必须完全一致", func() {
+			So(err, ShouldBeNil)
+			So(embeddedErr, ShouldBeNil)
+			So(manifestIDs, ShouldResemble, allowlistedIDs)
+			So(embeddedIDs, ShouldResemble, allowlistedIDs)
+		})
+
+		Convey("每个已批准 Skill 必须出现在 Catalog 中", func() {
+			for _, skillID := range allowlistedIDs {
+				So(catalog, ShouldContainSubstring, "- `"+skillID+"`")
+			}
+		})
+	})
+}
+
+func embeddedSkillIDs() ([]string, error) {
+	entries, err := Files.ReadDir(".")
+	if err != nil {
+		return nil, err
+	}
+
+	skillIDs := make([]string, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := Files.ReadFile(path.Join(entry.Name(), "SKILL.md")); err == nil {
+			skillIDs = append(skillIDs, entry.Name())
+		}
+	}
+	sort.Strings(skillIDs)
+	return skillIDs, nil
 }
