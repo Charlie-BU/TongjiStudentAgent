@@ -119,6 +119,32 @@ func TestTongjiOpenPlatformClientRejectsInvalidInput(t *testing.T) {
 	})
 }
 
+func TestGetUserBasicInfo(t *testing.T) {
+	Convey("查询用户基础信息", t, func() {
+		var captured capturedRequest
+		client := newTestClient(t, func(request *http.Request) (*http.Response, error) {
+			captured = capturedRequest{
+				method:        request.Method,
+				path:          request.URL.Path,
+				contentType:   request.Header.Get("Content-Type"),
+				authorization: request.Header.Get("Authorization"),
+			}
+			return jsonResponse(http.StatusOK, `{"code":"A00000","msg":"操作成功","data":{"count":1,"list":[{"deptName":"计算机科学与技术学院","name":"测试同学","userId":"2350939","userTypeName":"本科生"}],"sinceUserId":"2350939"}}`), nil
+		})
+
+		info, err := client.GetUserBasicInfo(context.Background(), "test-access-token")
+
+		Convey("应以 GET 请求读取 data.list 中的首条基础信息", func() {
+			So(err, ShouldBeNil)
+			So(captured.method, ShouldEqual, http.MethodGet)
+			So(captured.path, ShouldEqual, userBasicInfoPath)
+			So(captured.contentType, ShouldBeBlank)
+			So(captured.authorization, ShouldEqual, "Bearer test-access-token")
+			So(info, ShouldResemble, &UserBasicInfo{Name: "测试同学", UserId: "2350939", UserTypeName: "本科生"})
+		})
+	})
+}
+
 func TestTongjiOpenPlatformClientHandlesUpstreamFailure(t *testing.T) {
 	Convey("同济开放平台客户端处理上游异常", t, func() {
 		tests := []struct {

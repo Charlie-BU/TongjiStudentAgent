@@ -9,8 +9,23 @@ import (
 	"strings"
 )
 
+// userBasicInfoPath 是 Agent 工作前读取用户授权个人信息的边界豁免接口。
+const userBasicInfoPath = "/v2/rt/user/all_info"
+
 // studentInfoPath 是 Agent 在模型运行前读取当前授权学生资料的边界豁免接口。
 const studentInfoPath = "/v1/rt/user/all_student"
+
+// UserBasicInfo 表示本项目所需用户个人信息。
+type UserBasicInfo struct {
+	Name         string `json:"name"`
+	UserId       string `json:"userId"`
+	UserTypeName string `json:"userTypeName"`
+}
+
+// userBasicInfoData 表示用户基础信息接口的 data 载荷。
+type userBasicInfoData struct {
+	List []UserBasicInfo `json:"list"`
+}
 
 // StudentInfo 表示 Agent 上下文所需的当前授权学生基础资料。
 // 未列出的上游字段不得向上层传递或注入模型输入。
@@ -42,6 +57,33 @@ type StudentInfo struct {
 	StudentID              string `json:"studentId"`
 	TrainingCategory       string `json:"trainingCategory"`
 	TrainingLevel          string `json:"trainingLevel"`
+}
+
+// GetUserBasicInfo 调用边界豁免的当前授权用户基础信息接口。
+func (c *Client) GetUserBasicInfo(ctx context.Context, accessToken string) (*UserBasicInfo, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return nil, fmt.Errorf("access token is required")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.APIBaseURL+userBasicInfoPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create user basic info request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	response, err := c.doAPIRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	var data userBasicInfoData
+	if err := json.Unmarshal(response.Data, &data); err != nil {
+		return nil, fmt.Errorf("unmarshal user basic info response: %w", err)
+	}
+	if len(data.List) == 0 {
+		return nil, fmt.Errorf("user basic info response is empty")
+	}
+	return &data.List[0], nil
 }
 
 // GetStudentInfo 调用边界豁免的当前授权学生资料接口。

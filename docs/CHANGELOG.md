@@ -1,3 +1,49 @@
+## CHANGELOG - 2026-07-31 01:06 - 为授权请求上下文补充校园用户 ID
+
+### 撰写时间
+
+- 2026-07-31 01:06
+
+### Base Commit
+
+- a513c6303ef8c3179616f4e488284a3d63d730bd
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 请求 context 原先仅保存 Bearer access token，后续需要以校园账户的稳定 `user_id` 支持会话归属和用户身份相关能力。本次在保留既有 token 传递语义的基础上，补充用户 ID 的获取与读取入口。
+
+### 改动概览
+
+- 新增同济开放平台用户基础信息适配器：以 Bearer token 调用 `/v2/rt/user/all_info`，解析 `data.list` 并返回首个用户的 `userId`。
+- `platformauth.WithAccessToken` 在写入非空 token 后同步解析用户 ID；解析成功时写入同一 request context，新增 `UserIDFromContext` 供下游读取。解析失败仍保留 token，不改变现有聊天调用的降级行为。
+- 补充客户端和 context 单元测试，并将运行时资料输入测试同步为 `user-profile-data/user-info` 数据边界。
+- 在风险登记和审阅白名单中记录同步身份查询的临时 HIGH 风险豁免，豁免有效至 2026-08-30。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP Agent Handler 从 Authorization Header 提取 token，并在 JSON 请求体校验前调用 `WithAccessToken`；用户基础信息请求依赖 Tongji Open Platform 的环境配置和调用凭据。
+- 当前改动：context setter 先规范化并保存 access token，再调用用户基础信息接口；仅在获得非空 `userId` 时追加该值。上游失败或数据不完整时不会阻断原有 token 流程。
+- 下游影响：既有聊天、MCP 和 token 读取链路保持兼容；后续会话归属或授权能力可从 context 读取用户 ID。当前生产代码尚未消费该字段。
+
+### 改动结果与业务影响
+
+- 已授权请求可携带与校园账户对应的稳定用户 ID，为后续按用户维度的能力提供基础，且不会改变无 token 请求或上游失败时的聊天可用性。
+- 本次为每个携带 token 的调用方增加一次用户基础信息查询；该查询是 `WithAccessToken` 的隐式网络副作用。
+
+### 风险与待办
+
+- 同步查询发生在请求体校验之前，可能使无效请求也访问上游，且会为 Handler、MCP、测试及未来调用方增加网络等待。该 HIGH 风险已按 `WL-20260731-001` 明确豁免至 2026-08-30，届时必须将查询移至显式应用层步骤、调整到校验后，或拆分无副作用的 token setter。
+- 当前 user ID 尚无生产消费者，身份查询失败会静默回退为仅保留 token；接入会话归属或用户级授权前，应明确失败策略与调用时机。
+- 审阅阶段已执行 `go test ./...`、`go vet ./...` 与 `git diff --check`，均通过。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(auth): resolve user ID from access token`
+
 ## CHANGELOG - 2026-07-30 20:54 - 在聊天上下文中注入当前授权学生资料
 
 ### 撰写时间
