@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-07-30 12:25 - 收敛单 Agent 运行时并固化 SSE 事件契约
+
+### 撰写时间
+
+- 2026-07-30 12:25
+
+### Base Commit
+
+- a4d3db7cf063dd56d3c9d727d2dabdf7fb1c3bde
+
+### Compare Scope
+
+- staged_changes_only
+
+### 背景与改动目标
+
+- 当前服务只暴露经 allowlist 管理的 `system.load_skill` 与远程校园 MCP Tool，没有具备独立职责、权限或上下文契约的专用子 Agent。本地文件系统与 Shell middleware 也不应出现在公开 Agent 调用链中。
+- SSE 已可投影 Run 生命周期，但事件 `data` 仍是松散 map，且终态后没有统一阻止继续发送的机制，难以稳定地对接客户端状态机。
+
+### 改动概览
+
+- Runtime 收敛为 DeepAgent 的标准模型—工具循环：统一关闭内置待办和通用子 Agent，移除应用层可变的 middleware/Agent 编排参数，并将单轮最大模型迭代显式设为 12。
+- 聊天服务不再读取 `SANDBOX_ENABLED` 或装配宿主机文件系统、Shell middleware；远程 MCP Tool、静态 `system.load_skill`、Cozeloop 全局回调和请求级 token 透传保持不变。
+- `internal/agentic/event` 为每类对外 SSE 事件新增具名数据结构，并让 Emitter 在发送 `run.completed` 或 `run.failed` 后拒绝后续事件，保证单个 Run 只有一个终态。
+- 服务未初始化时，`chat.Stream` 与 `Service.Stream` 也会发送 `run.started` 后以 `agent_unavailable` 的 `run.failed` 收尾，使流式调用拥有完整可解析的生命周期。
+- README、开发说明和风险文档同步运行时边界、12 次迭代上限、SSE `data` 契约与终态规则；移除对已不进入聊天调用链的 Sandbox 开关描述。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP `ChatStream` 继续创建请求专属可取消 context，并将 Emitter 生成的事件序号写入 SSE `id`。Cozeloop 继续通过 Eino 全局 callback 提供观测，不依赖聊天 Runtime middleware。
+- 当前改动：`chat.NewFromEnv` 将已批准的静态与 MCP Tool 传入 Runtime；Runtime 用 `deep.New` 建立单 Agent，并以 12 次模型—工具循环作为单轮资源上限。服务层在 Runtime 前后投影 `run.started`、阶段状态和唯一终态。
+- 下游影响：客户端可使用 `run_id`、`seq`/SSE `id` 及具名 `data` 字段驱动界面，收到终态后无需等待额外事件。任何公开调用均不会获得宿主机文件、命令执行或通用 `task` 子代理能力。
+
+### 改动结果与业务影响
+
+- 运行时能力面缩小为主 Agent 直接调用受批准 Tool，避免无专长通用子 Agent 带来的额外模型成本、延迟和上下文转交。
+- SSE 对外协议从约定式 map 收敛为可维护的字段契约，并对服务不可用与正常执行失败提供一致的失败终态。
+- 已执行 `go test ./...`、`go test -race ./...`、`go vet ./...` 与 `git diff --cached --check`，均通过。测试不读取 `.env`，不调用真实模型、校园平台或远程 MCP。
+
+### 风险与待办
+
+- 远程 MCP 与同济开放平台仍承担 token 有效性、用户绑定和 scope 审核；当前 Agent 仅在请求内透传格式正确的 Bearer token，不能替代身份鉴权。
+- 当前 SSE 不支持断线重连、心跳、跨请求取消或 HITL Resume。客户端断开会取消当前 Run，但不会持久化或恢复中间状态。
+- `internal/integration/sandbox` 仍保留为未接入聊天链路的本地适配代码；后续若重新引入文件处理，应替换为受控文件服务或隔离 Sandbox Adapter，而非恢复宿主机 Shell。
+
+### 建议 Commit Message（git-cz）
+
+- `refactor(agent): harden runtime and SSE contract`
+
 ## CHANGELOG - 2026-07-30 02:05 - 将每轮 Agent 输入收敛为动态提醒与结构化请求
 
 ### 撰写时间
