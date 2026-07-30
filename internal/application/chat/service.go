@@ -26,15 +26,15 @@ import (
 
 var defaultService *Service
 
-// infoLoader 按当前请求凭据获取用户基础信息。
-type infoLoader func(ctx context.Context, accessToken string) (*tongjiapi.UserInfo, error)
+// studentInfoLoader 按当前请求凭据获取学生基础信息。
+type studentInfoLoader func(ctx context.Context, accessToken string) (*tongjiapi.StudentInfo, error)
 
 // Service 组装当前单轮聊天所需的 Runtime 与外部适配器。
 type Service struct {
-	runtime         *runtime.Runtime  // Agent Runtime
-	mcpClient       *mcpclient.Client // MCP Client
-	knowledgeClient *knowledge.Client // 知识库 Client
-	userInfoLoader  infoLoader        // 个人基础信息加载器
+	runtime           *runtime.Runtime  // Agent Runtime
+	mcpClient         *mcpclient.Client // MCP Client
+	knowledgeClient   *knowledge.Client // 知识库 Client
+	studentInfoLoader studentInfoLoader // 个人信息加载器
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -116,10 +116,10 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	return &Service{
-		runtime:         rt,
-		mcpClient:       mcpClient,
-		knowledgeClient: knowledgeClient,
-		userInfoLoader:  loadUserInfo,
+		runtime:           rt,
+		mcpClient:         mcpClient,
+		knowledgeClient:   knowledgeClient,
+		studentInfoLoader: loadStudentInfo,
 	}, nil
 }
 
@@ -179,9 +179,9 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 	startedAt := time.Now()
 	emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "context", Message: "正在准备回答上下文"})
-	userInfo, err := s.loadFormattedUserInfo(ctx)
+	studentInfo, err := s.loadFormattedStudentInfo(ctx)
 	if err != nil {
-		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "user_info_unavailable", Message: "个人基础信息暂时不可用，请稍后重试"})
+		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "student_info_unavailable", Message: "学生基础信息暂时不可用，请稍后重试"})
 		return "", err
 	}
 
@@ -193,7 +193,7 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 	// }
 
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "model", Message: "正在生成回答"})
-	response, err := s.runtime.StreamWithUserInfo(ctx, query, userInfo, func(event agentevent.Event) {
+	response, err := s.runtime.StreamWithStudentInfo(ctx, query, studentInfo, func(event agentevent.Event) {
 		emitter.Emit(event.Type, event.Data)
 	})
 	if err != nil {
@@ -204,31 +204,30 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 	return response, nil
 }
 
-// loadFormattedUserInfo 仅在请求上下文携带 access token 时读取个人基础信息。
-func (s *Service) loadFormattedUserInfo(ctx context.Context) (string, error) {
+// loadFormattedStudentInfo 仅在请求上下文携带 access token 时读取学生基础信息。
+func (s *Service) loadFormattedStudentInfo(ctx context.Context) (string, error) {
 	accessToken, ok := platformauth.AccessTokenFromContext(ctx)
-	if !ok || s.userInfoLoader == nil {
+	if !ok || s.studentInfoLoader == nil {
 		return "", nil
 	}
-	userInfo, err := s.userInfoLoader(ctx, accessToken)
+	studentInfo, err := s.studentInfoLoader(ctx, accessToken)
 	if err != nil {
 		return "", err
 	}
-	return tongjiapi.FormatUserInfo(userInfo), nil
+	return tongjiapi.FormatStudentInfo(studentInfo), nil
 }
 
-// loadUserInfo 通过同济开放平台获取当前授权学生的个人基础信息。
-func loadUserInfo(ctx context.Context, accessToken string) (*tongjiapi.UserInfo, error) {
+// loadStudentInfo 通过同济开放平台获取当前授权学生的基础信息。
+func loadStudentInfo(ctx context.Context, accessToken string) (*tongjiapi.StudentInfo, error) {
 	client, err := tongjiapi.NewFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("create Tongji Open Platform client: %w", err)
 	}
-	userInfo, err := client.GetUserInfo(ctx, accessToken)
+	studentInfo, err := client.GetStudentInfo(ctx, accessToken)
 	if err != nil {
-		return nil, fmt.Errorf("get Tongji user info: %w", err)
+		return nil, fmt.Errorf("get Tongji student info: %w", err)
 	}
-	return userInfo, nil
-
+	return studentInfo, nil
 }
 
 // Close 释放 MCP Client。

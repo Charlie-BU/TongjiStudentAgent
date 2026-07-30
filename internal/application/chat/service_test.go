@@ -36,12 +36,12 @@ func TestServiceLoadUserInfo(t *testing.T) {
 	Convey("加载个人基础信息", t, func() {
 		Convey("请求未携带 access token", func() {
 			called := false
-			service := &Service{userInfoLoader: func(context.Context, string) (*tongjiapi.UserInfo, error) {
+			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
 				called = true
 				return nil, nil
 			}}
 
-			info, err := service.loadFormattedUserInfo(context.Background())
+			info, err := service.loadFormattedStudentInfo(context.Background())
 
 			So(err, ShouldBeNil)
 			So(info, ShouldBeBlank)
@@ -49,9 +49,9 @@ func TestServiceLoadUserInfo(t *testing.T) {
 		})
 
 		Convey("请求携带 access token", func() {
-			service := &Service{userInfoLoader: func(_ context.Context, accessToken string) (*tongjiapi.UserInfo, error) {
+			service := &Service{studentInfoLoader: func(_ context.Context, accessToken string) (*tongjiapi.StudentInfo, error) {
 				So(accessToken, ShouldEqual, "test-access-token")
-				return &tongjiapi.UserInfo{
+				return &tongjiapi.StudentInfo{
 					Name:          "测试同学",
 					TrainingLevel: "本科",
 					CurrentGrade:  2023,
@@ -60,27 +60,27 @@ func TestServiceLoadUserInfo(t *testing.T) {
 				}, nil
 			}}
 
-			info, err := service.loadFormattedUserInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
+			info, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
 
 			So(err, ShouldBeNil)
 			So(info, ShouldEqual, "当前年级：2023\n学院：计算机科学与技术学院\n在校状态：校内在读\n姓名：测试同学\n培养层次：本科")
 		})
 
 		Convey("上游获取失败", func() {
-			service := &Service{userInfoLoader: func(context.Context, string) (*tongjiapi.UserInfo, error) {
+			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
 				return nil, errors.New("upstream unavailable")
 			}}
 
-			_, err := service.loadFormattedUserInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
+			_, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
 
 			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestFormatUserInfo(t *testing.T) {
+func TestFormatStudentInfo(t *testing.T) {
 	Convey("裁剪个人基础信息", t, func() {
-		info := tongjiapi.FormatUserInfo(&tongjiapi.UserInfo{
+		info := tongjiapi.FormatStudentInfo(&tongjiapi.StudentInfo{
 			Birthday:               "2004-12-09 00:00:00",
 			ChinaSon:               "非港澳台",
 			CultureProfession:      "软件工程(42014）",

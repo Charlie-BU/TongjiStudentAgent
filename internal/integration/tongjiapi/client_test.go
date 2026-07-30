@@ -51,7 +51,7 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 			switch request.URL.Path {
 			case "/token":
 				return jsonResponse(http.StatusOK, `{"access_token":"test-access-token","token_type":"Bearer","expires_in":300,"scope":"openid user"}`), nil
-			case userInfoPath:
+			case studentInfoPath:
 				return jsonResponse(http.StatusOK, `{"code":"A00000","msg":"ok","data":[{"birthday":"2004-12-09 00:00:00","cultureProfession":"软件工程(42014）","currentGrade":2023,"faculty":"计算机科学与技术学院","majorDirection":"嵌入式软件与系统","name":"测试同学","studentId":"2350939","trainingLevel":"本科"}]}`), nil
 			default:
 				return jsonResponse(http.StatusNotFound, `{"error":"not found"}`), nil
@@ -74,12 +74,12 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		token, err := client.ExchangeAuthorizationCode(context.Background(), "code-from-callback")
 		So(err, ShouldBeNil)
 		So(token.AccessToken, ShouldEqual, "test-access-token")
-		userInfo, err := client.GetUserInfo(context.Background(), token.AccessToken)
+		studentInfo, err := client.GetStudentInfo(context.Background(), token.AccessToken)
 		So(err, ShouldBeNil)
-		So(userInfo.Name, ShouldEqual, "测试同学")
-		So(userInfo.Faculty, ShouldEqual, "计算机科学与技术学院")
-		So(userInfo.CurrentGrade, ShouldEqual, 2023)
-		So(userInfo.StudentID, ShouldEqual, "2350939")
+		So(studentInfo.Name, ShouldEqual, "测试同学")
+		So(studentInfo.Faculty, ShouldEqual, "计算机科学与技术学院")
+		So(studentInfo.CurrentGrade, ShouldEqual, 2023)
+		So(studentInfo.StudentID, ShouldEqual, "2350939")
 
 		tokenRequest := <-requests
 		So(tokenRequest.method, ShouldEqual, http.MethodPost)
@@ -92,7 +92,7 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		So(tokenRequest.form.Get("redirect_uri"), ShouldEqual, "https://app.tongji.edu.cn/wallbreakerAuth/callback.html")
 		apiRequest := <-requests
 		So(apiRequest.method, ShouldEqual, http.MethodPost)
-		So(apiRequest.path, ShouldEqual, userInfoPath)
+		So(apiRequest.path, ShouldEqual, studentInfoPath)
 		So(apiRequest.contentType, ShouldEqual, "application/json")
 		So(apiRequest.body, ShouldEqual, "{}")
 		So(apiRequest.authorization, ShouldEqual, "Bearer test-access-token")
@@ -113,7 +113,7 @@ func TestTongjiOpenPlatformClientRejectsInvalidInput(t *testing.T) {
 		Convey("空授权码和空 access token", func() {
 			_, err := client.ExchangeAuthorizationCode(context.Background(), " ")
 			So(err, ShouldNotBeNil)
-			_, err = client.GetUserInfo(context.Background(), " ")
+			_, err = client.GetStudentInfo(context.Background(), " ")
 			So(err, ShouldNotBeNil)
 		})
 	})
@@ -144,7 +144,7 @@ func TestTongjiOpenPlatformClientHandlesUpstreamFailure(t *testing.T) {
 				if test.exchange {
 					_, err = client.ExchangeAuthorizationCode(context.Background(), "code")
 				} else {
-					_, err = client.GetUserInfo(context.Background(), "access-token")
+					_, err = client.GetStudentInfo(context.Background(), "access-token")
 				}
 
 				So(err, ShouldNotBeNil)
