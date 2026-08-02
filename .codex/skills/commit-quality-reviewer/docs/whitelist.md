@@ -12,6 +12,28 @@
 ## 当前豁免
 
 ```yaml
+- id: WL-20260731-001
+  enabled: true
+  severity: HIGH
+  type: synchronous_user_identity_lookup_in_context_setter
+  match:
+    file: internal/platform/auth/context.go
+    contains: "userID, err := resolveUserID(ctx, accessToken)"
+  reason: "当前版本要求在将合法校园 access token 写入请求 context 时同步查询用户基础信息并补充 user_id。该查询发生在 HTTP JSON 请求体校验之前，且 WithAccessToken 因此具有网络副作用；产品负责人已确认短期接受。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-07-31"
+  expires_at: "2026-08-30"
+- id: WL-20260730-002
+  enabled: true
+  severity: CRITICAL
+  type: personal_data_model_context
+  match:
+    file: internal/integration/tongjiapi/user_info.go
+    contains: "appendField(\"家庭地址\", studentInfo.MailingAddress)"
+  reason: "当前 Agent 需要完整个人资料作为回答上下文，已由变更负责人确认；后续按模型数据处理边界实施最小化。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-07-30"
+  expires_at: "2026-08-30"
 - id: WL-20260730-001
   enabled: true
   severity: CRITICAL

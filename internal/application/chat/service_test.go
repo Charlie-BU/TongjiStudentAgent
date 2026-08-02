@@ -2,12 +2,15 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
+	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -29,18 +32,134 @@ func TestChatRequiresInitializedDefaultService(t *testing.T) {
 	})
 }
 
+func TestServiceLoadUserInfo(t *testing.T) {
+	Convey("加载个人基础信息", t, func() {
+		Convey("请求未携带 access token", func() {
+			called := false
+			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
+				called = true
+				return nil, nil
+			}}
+
+			info, err := service.loadFormattedStudentInfo(context.Background())
+
+			So(err, ShouldBeNil)
+			So(info, ShouldBeBlank)
+			So(called, ShouldBeFalse)
+		})
+
+		Convey("请求携带 access token", func() {
+			service := &Service{studentInfoLoader: func(_ context.Context, accessToken string) (*tongjiapi.StudentInfo, error) {
+				So(accessToken, ShouldEqual, "test-access-token")
+				return &tongjiapi.StudentInfo{
+					Name:          "测试同学",
+					TrainingLevel: "本科",
+					CurrentGrade:  2023,
+					Faculty:       "计算机科学与技术学院",
+					LeaveSchool:   "校内在读",
+				}, nil
+			}}
+
+			info, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
+
+			So(err, ShouldBeNil)
+			So(info, ShouldEqual, "当前年级：2023\n学院：计算机科学与技术学院\n在校状态：校内在读\n姓名：测试同学\n培养层次：本科")
+		})
+
+		Convey("上游获取失败", func() {
+			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
+				return nil, errors.New("upstream unavailable")
+			}}
+
+			_, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
+
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestFormatStudentInfo(t *testing.T) {
+	Convey("裁剪个人基础信息", t, func() {
+		info := tongjiapi.FormatStudentInfo(&tongjiapi.StudentInfo{
+			Birthday:               "2004-12-09 00:00:00",
+			ChinaSon:               "非港澳台",
+			CultureProfession:      "软件工程(42014）",
+			CurrentGrade:           2023,
+			EnrolDate:              "2023-09-01 00:00:00",
+			EnrolMethods:           "一般统考",
+			EnrolSeason:            "秋季",
+			ExpectedGraduationDate: "2027-07-01 00:00:00",
+			Faculty:                "计算机科学与技术学院",
+			FormLearning:           "普通全日制",
+			HouseholdRegister:      "内蒙古自治区",
+			IsDobleDegree:          "否",
+			IsOverseas:             "否",
+			LeaveSchool:            "校内在读",
+			LengthSchooling:        "4",
+			MailingAddress:         "测试家庭地址",
+			MajorDirection:         "嵌入式软件与系统",
+			Name:                   "测试同学",
+			NameSpelling:           "TEST TONGXUE",
+			Nation:                 "汉族",
+			PoliticalStatus:        "群众",
+			Sex:                    "男",
+			SpcialPlan:             "无专项计划",
+			State:                  "中国",
+			StudentID:              "2350939",
+			TrainingCategory:       "学历学位生",
+			TrainingLevel:          "本科",
+		})
+
+		Convey("应以字段含义作为键名返回指定资料", func() {
+			So(info, ShouldContainSubstring, "姓名：测试同学")
+			So(info, ShouldContainSubstring, "生日：2004-12-09 00:00:00")
+			So(info, ShouldContainSubstring, "家庭地址：测试家庭地址")
+			So(info, ShouldContainSubstring, "学（工）号：2350939")
+			So(info, ShouldContainSubstring, "专业方向：嵌入式软件与系统")
+			So(info, ShouldNotContainSubstring, "mailingAddress")
+			So(info, ShouldNotContainSubstring, "studentId")
+		})
+	})
+}
+
 func TestMCPToolAllowlist(t *testing.T) {
 	Convey("聊天服务的远程 MCP Tool 白名单", t, func() {
 		tools := toolallowlist.MCPTools()
+		expectedTools := []string{
+			toolallowlist.TongjiAnnualBillTool,
+			toolallowlist.TongjiCardSpendingFlowTool,
+			toolallowlist.TongjiStudentTimetableTool,
+			toolallowlist.TongjiStudentDetailedInfoTool,
+			toolallowlist.TongjiStudentScoreTool,
+			toolallowlist.TongjiTermCalendarTool,
+			toolallowlist.TongjiCurrentTermCalendarTool,
+			toolallowlist.TongjiCETScoreTool,
+			toolallowlist.TongjiBookLendInfoTool,
+			toolallowlist.TongjiStatisticsInfoTool,
+			toolallowlist.TongjiStipendInfoTool,
+			toolallowlist.TongjiAccommodationInfoTool,
+			toolallowlist.TongjiCompetitionPrizeTool,
+			toolallowlist.TongjiHonoraryTitleTool,
+			toolallowlist.TongjiScholarshipInfoTool,
+			toolallowlist.TongjiSchoolAccessTool,
+			toolallowlist.TongjiLibraryAccessTool,
+			toolallowlist.TongjiUserBasicInfoTool,
+			toolallowlist.TongjiCourseDetailTool,
+			toolallowlist.TongjiCourseRelatedTool,
+			toolallowlist.TongjiFindMajorByGradeTool,
+			toolallowlist.TongjiCourseCatalogTool,
+			toolallowlist.TongjiCalendarListTool,
+			toolallowlist.TongjiGradeListTool,
+		}
 
 		Convey("只注册维护在 allowlist 中的远程工具", func() {
-			So(tools, ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+			So(tools, ShouldResemble, expectedTools)
 		})
 
 		Convey("调用方修改返回值不应影响后续服务初始化", func() {
 			tools[0] = "untrusted-tool"
 
-			So(toolallowlist.MCPTools(), ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+			So(toolallowlist.MCPTools(), ShouldResemble, expectedTools)
 		})
 	})
 }

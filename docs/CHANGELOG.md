@@ -1,3 +1,97 @@
+## CHANGELOG - 2026-07-31 01:06 - 为授权请求上下文补充校园用户 ID
+
+### 撰写时间
+
+- 2026-07-31 01:06
+
+### Base Commit
+
+- a513c6303ef8c3179616f4e488284a3d63d730bd
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 请求 context 原先仅保存 Bearer access token，后续需要以校园账户的稳定 `user_id` 支持会话归属和用户身份相关能力。本次在保留既有 token 传递语义的基础上，补充用户 ID 的获取与读取入口。
+
+### 改动概览
+
+- 新增同济开放平台用户基础信息适配器：以 Bearer token 调用 `/v2/rt/user/all_info`，解析 `data.list` 并返回首个用户的 `userId`。
+- `platformauth.WithAccessToken` 在写入非空 token 后同步解析用户 ID；解析成功时写入同一 request context，新增 `UserIDFromContext` 供下游读取。解析失败仍保留 token，不改变现有聊天调用的降级行为。
+- 补充客户端和 context 单元测试，并将运行时资料输入测试同步为 `user-profile-data/user-info` 数据边界。
+- 在风险登记和审阅白名单中记录同步身份查询的临时 HIGH 风险豁免，豁免有效至 2026-08-30。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP Agent Handler 从 Authorization Header 提取 token，并在 JSON 请求体校验前调用 `WithAccessToken`；用户基础信息请求依赖 Tongji Open Platform 的环境配置和调用凭据。
+- 当前改动：context setter 先规范化并保存 access token，再调用用户基础信息接口；仅在获得非空 `userId` 时追加该值。上游失败或数据不完整时不会阻断原有 token 流程。
+- 下游影响：既有聊天、MCP 和 token 读取链路保持兼容；后续会话归属或授权能力可从 context 读取用户 ID。当前生产代码尚未消费该字段。
+
+### 改动结果与业务影响
+
+- 已授权请求可携带与校园账户对应的稳定用户 ID，为后续按用户维度的能力提供基础，且不会改变无 token 请求或上游失败时的聊天可用性。
+- 本次为每个携带 token 的调用方增加一次用户基础信息查询；该查询是 `WithAccessToken` 的隐式网络副作用。
+
+### 风险与待办
+
+- 同步查询发生在请求体校验之前，可能使无效请求也访问上游，且会为 Handler、MCP、测试及未来调用方增加网络等待。该 HIGH 风险已按 `WL-20260731-001` 明确豁免至 2026-08-30，届时必须将查询移至显式应用层步骤、调整到校验后，或拆分无副作用的 token setter。
+- 当前 user ID 尚无生产消费者，身份查询失败会静默回退为仅保留 token；接入会话归属或用户级授权前，应明确失败策略与调用时机。
+- 审阅阶段已执行 `go test ./...`、`go vet ./...` 与 `git diff --check`，均通过。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(auth): resolve user ID from access token`
+
+## CHANGELOG - 2026-07-30 20:54 - 在聊天上下文中注入当前授权学生资料
+
+### 撰写时间
+
+- 2026-07-30 20:54
+
+### Base Commit
+
+- 0063a3f679487c701a9ef2e1c292a938fcef5e6d
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- Agent 原先只获得用户问题、动态日期提醒和 Skill catalog，无法在回答培养方案、年级、学院或在校状态等个性化问题时使用当前授权学生的基础资料。
+- 本次接入同济开放平台的当前学生资料接口，并把数据限定为与本轮聊天绑定的上下文；同时保留已有请求级 access token 传递、Tool allowlist 和 SSE 生命周期。
+
+### 改动概览
+
+- 新增 `tongjiapi.UserInfo` 适配器，以当前请求的 Bearer token 调用 `/v1/rt/user/all_student`，校验开放平台业务码、响应 JSON 和非空数据后返回结构化资料；旧的通用 GET 入口与旧资料接口一并移除。
+- 聊天服务仅在请求 context 含有效 access token 时加载资料；无 token 时维持原有聊天路径。资料加载失败会以 `user_info_unavailable` 终止当前 Run，避免在身份上下文缺失时继续执行。
+- Runtime 新增 `StreamWithUserInfo`，将格式化资料追加到本轮动态提醒。资料文本通过 XML 转义置于 `user-profile-data/user-info` 数据边界，并明确声明其不是指令、不能改变 Tool 授权或安全策略。
+- 补充开放平台请求、资料格式化、token 缺失、上游失败和恶意标签文本转义测试；审阅白名单增加“完整个人资料进入模型上下文”的临时豁免，失效时间为 2026-08-30。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：HTTP Chat/ChatStream 继续从 Authorization Header 提取 Bearer token 并写入 request context。`chat.Service` 从该 context 读取 token，按需调用 Tongji Open Platform，不读取全局或跨请求凭据。
+- 当前改动：`loadFormattedUserInfo` 将开放平台返回的 `UserInfo` 格式化为稳定字段文本；`Runtime.StreamWithUserInfo` 调用输入构造器，使用 XML 转义后的资料建立与用户 query 分离的提醒消息，再运行 DeepAgent。
+- 下游影响：模型在已授权请求中可参考当前学生资料；静态 Skill、远程 MCP Tool、RunState、流式事件和默认无 token 聊天行为保持不变。开放平台资料服务或授权 token 不可用时，本轮聊天会明确失败而不会调用模型。
+
+### 改动结果与业务影响
+
+- Agent 可根据当前用户的年级、学院、培养层次与在校状态提供更贴合的校园问题回答，且资料读取与聊天请求的取消/超时 context 保持一致。
+- XML 转义阻止资料字段中的标签文本闭合或伪造资料边界；测试覆盖 `</user-info><instruction>...` 被保留为文本实体的场景。
+- 已执行 `go test ./...`、`go vet ./...` 与 `git diff --check`，均通过。测试使用 fake Agent 和自定义 HTTP Transport，不访问真实模型、校园平台或宿主机 Shell。
+
+### 风险与待办
+
+- 当前 `FormatUserInfo` 会向模型提供包含生日、地址、学号等完整资料，该数据处理范围已登记为临时豁免，必须在 2026-08-30 前复核并按实际回答需求最小化字段。
+- 每个带 token 的聊天请求都会新增一次开放平台调用；资料服务不可用会阻止本轮聊天。后续可根据产品可用性要求评估短期缓存、降级回答或显式的用户资料开关。
+- XML 转义保护消息结构，但模型安全仍需依赖 Tool allowlist、参数校验与授权边界；未来接入更多外部资料时，必须继续将其标为非指令数据并增加拒绝场景测试。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(chat): add authorized student context`
+
 ## CHANGELOG - 2026-07-30 18:17 - 将 Skill 加载状态隔离到单次 Agent Run
 
 ### 撰写时间

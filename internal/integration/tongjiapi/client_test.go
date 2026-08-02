@@ -25,6 +25,7 @@ type capturedRequest struct {
 	path          string
 	contentType   string
 	authorization string
+	body          string
 	form          url.Values
 }
 
@@ -41,14 +42,17 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 			if request.URL.Path == "/token" {
 				body, _ := io.ReadAll(request.Body)
 				capture.form, _ = url.ParseQuery(string(body))
+			} else if request.Body != nil {
+				body, _ := io.ReadAll(request.Body)
+				capture.body = string(body)
 			}
 			requests <- capture
 
 			switch request.URL.Path {
 			case "/token":
 				return jsonResponse(http.StatusOK, `{"access_token":"test-access-token","token_type":"Bearer","expires_in":300,"scope":"openid user"}`), nil
-			case "/v1/dc/user/single_info":
-				return jsonResponse(http.StatusOK, `{"code":"A00000","msg":"ok","data":[{"userid":"student-001"}]}`), nil
+			case studentInfoPath:
+				return jsonResponse(http.StatusOK, `{"code":"A00000","msg":"ok","data":[{"birthday":"2004-12-09 00:00:00","cultureProfession":"软件工程(42014）","currentGrade":2023,"faculty":"计算机科学与技术学院","majorDirection":"嵌入式软件与系统","name":"测试同学","studentId":"2350939","trainingLevel":"本科"}]}`), nil
 			default:
 				return jsonResponse(http.StatusNotFound, `{"error":"not found"}`), nil
 			}
@@ -70,9 +74,12 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		token, err := client.ExchangeAuthorizationCode(context.Background(), "code-from-callback")
 		So(err, ShouldBeNil)
 		So(token.AccessToken, ShouldEqual, "test-access-token")
-		response, err := client.GetSingleInfo(context.Background(), token.AccessToken)
+		studentInfo, err := client.GetStudentInfo(context.Background(), token.AccessToken)
 		So(err, ShouldBeNil)
-		So(string(response.Data), ShouldEqual, `[{"userid":"student-001"}]`)
+		So(studentInfo.Name, ShouldEqual, "测试同学")
+		So(studentInfo.Faculty, ShouldEqual, "计算机科学与技术学院")
+		So(studentInfo.CurrentGrade, ShouldEqual, 2023)
+		So(studentInfo.StudentID, ShouldEqual, "2350939")
 
 		tokenRequest := <-requests
 		So(tokenRequest.method, ShouldEqual, http.MethodPost)
@@ -84,8 +91,10 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		So(tokenRequest.form.Get("client_secret"), ShouldEqual, "client-secret")
 		So(tokenRequest.form.Get("redirect_uri"), ShouldEqual, "https://app.tongji.edu.cn/wallbreakerAuth/callback.html")
 		apiRequest := <-requests
-		So(apiRequest.method, ShouldEqual, http.MethodGet)
-		So(apiRequest.path, ShouldEqual, "/v1/dc/user/single_info")
+		So(apiRequest.method, ShouldEqual, http.MethodPost)
+		So(apiRequest.path, ShouldEqual, studentInfoPath)
+		So(apiRequest.contentType, ShouldEqual, "application/json")
+		So(apiRequest.body, ShouldEqual, "{}")
 		So(apiRequest.authorization, ShouldEqual, "Bearer test-access-token")
 	})
 }
@@ -104,8 +113,34 @@ func TestTongjiOpenPlatformClientRejectsInvalidInput(t *testing.T) {
 		Convey("空授权码和空 access token", func() {
 			_, err := client.ExchangeAuthorizationCode(context.Background(), " ")
 			So(err, ShouldNotBeNil)
-			_, err = client.GetSingleInfo(context.Background(), " ")
+			_, err = client.GetStudentInfo(context.Background(), " ")
 			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestGetUserBasicInfo(t *testing.T) {
+	Convey("查询用户基础信息", t, func() {
+		var captured capturedRequest
+		client := newTestClient(t, func(request *http.Request) (*http.Response, error) {
+			captured = capturedRequest{
+				method:        request.Method,
+				path:          request.URL.Path,
+				contentType:   request.Header.Get("Content-Type"),
+				authorization: request.Header.Get("Authorization"),
+			}
+			return jsonResponse(http.StatusOK, `{"code":"A00000","msg":"操作成功","data":{"count":1,"list":[{"deptName":"计算机科学与技术学院","name":"测试同学","userId":"2350939","userTypeName":"本科生"}],"sinceUserId":"2350939"}}`), nil
+		})
+
+		info, err := client.GetUserBasicInfo(context.Background(), "test-access-token")
+
+		Convey("应以 GET 请求读取 data.list 中的首条基础信息", func() {
+			So(err, ShouldBeNil)
+			So(captured.method, ShouldEqual, http.MethodGet)
+			So(captured.path, ShouldEqual, userBasicInfoPath)
+			So(captured.contentType, ShouldBeBlank)
+			So(captured.authorization, ShouldEqual, "Bearer test-access-token")
+			So(info, ShouldResemble, &UserBasicInfo{Name: "测试同学", UserId: "2350939", UserTypeName: "本科生"})
 		})
 	})
 }
@@ -135,7 +170,7 @@ func TestTongjiOpenPlatformClientHandlesUpstreamFailure(t *testing.T) {
 				if test.exchange {
 					_, err = client.ExchangeAuthorizationCode(context.Background(), "code")
 				} else {
-					_, err = client.GetSingleInfo(context.Background(), "access-token")
+					_, err = client.GetStudentInfo(context.Background(), "access-token")
 				}
 
 				So(err, ShouldNotBeNil)

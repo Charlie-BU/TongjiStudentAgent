@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,12 +28,42 @@ func TestExtractBearerToken(t *testing.T) {
 
 func TestAccessTokenContext(t *testing.T) {
 	Convey("校园访问凭据请求上下文", t, func() {
-		Convey("应只从写入后的上下文读取凭据", func() {
-			accessToken, ok := AccessTokenFromContext(WithAccessToken(context.Background(), "test-access-token"))
+		Convey("用户基础信息查询成功", func() {
+			originalResolver := resolveUserID
+			resolveUserID = func(_ context.Context, accessToken string) (string, error) {
+				So(accessToken, ShouldEqual, "test-access-token")
+				return "student-001", nil
+			}
+			t.Cleanup(func() { resolveUserID = originalResolver })
+
+			requestContext := WithAccessToken(context.Background(), "test-access-token")
+			accessToken, ok := AccessTokenFromContext(requestContext)
 			So(ok, ShouldBeTrue)
 			So(accessToken, ShouldEqual, "test-access-token")
+			userID, ok := UserIDFromContext(requestContext)
+			So(ok, ShouldBeTrue)
+			So(userID, ShouldEqual, "student-001")
+		})
 
-			_, ok = AccessTokenFromContext(context.Background())
+		Convey("用户基础信息查询失败", func() {
+			originalResolver := resolveUserID
+			resolveUserID = func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("upstream unavailable")
+			}
+			t.Cleanup(func() { resolveUserID = originalResolver })
+
+			requestContext := WithAccessToken(context.Background(), "test-access-token")
+			accessToken, ok := AccessTokenFromContext(requestContext)
+			So(ok, ShouldBeTrue)
+			So(accessToken, ShouldEqual, "test-access-token")
+			_, ok = UserIDFromContext(requestContext)
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("凭据缺失", func() {
+			requestContext := WithAccessToken(context.Background(), " ")
+
+			_, ok := AccessTokenFromContext(requestContext)
 			So(ok, ShouldBeFalse)
 		})
 	})

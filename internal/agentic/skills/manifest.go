@@ -18,11 +18,7 @@ type Manifest struct {
 var manifests = map[string]Manifest{
 	skillallowlist.DocGeneratorSkill: {
 		ID:          skillallowlist.DocGeneratorSkill,
-		Description: "将用户提供的项目碎片信息整理为结构化中文 Markdown 文档。触发于用户提供零散片段并要求成文时；完成后必须调用 doc-optimizer。",
-	},
-	skillallowlist.DocOptimizerSkill: {
-		ID:          skillallowlist.DocOptimizerSkill,
-		Description: "对既有 Markdown 文档做结构化增强与可读性优化，保持原意与作者语气不变。触发于用户要求“润色 / 优化 / 重写文档但不改含义”时。",
+		Description: "生成、补写或优化中文 Markdown 文档，保持事实准确和作者语气。触发于用户要求成文、局部改写、润色或在不改原意前提下优化文档时。",
 	},
 }
 
