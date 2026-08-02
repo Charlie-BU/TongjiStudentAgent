@@ -125,15 +125,41 @@ func TestFormatStudentInfo(t *testing.T) {
 func TestMCPToolAllowlist(t *testing.T) {
 	Convey("聊天服务的远程 MCP Tool 白名单", t, func() {
 		tools := toolallowlist.MCPTools()
+		expectedTools := []string{
+			toolallowlist.TongjiAnnualBillTool,
+			toolallowlist.TongjiCardSpendingFlowTool,
+			toolallowlist.TongjiStudentTimetableTool,
+			toolallowlist.TongjiStudentDetailedInfoTool,
+			toolallowlist.TongjiStudentScoreTool,
+			toolallowlist.TongjiTermCalendarTool,
+			toolallowlist.TongjiCurrentTermCalendarTool,
+			toolallowlist.TongjiCETScoreTool,
+			toolallowlist.TongjiBookLendInfoTool,
+			toolallowlist.TongjiStatisticsInfoTool,
+			toolallowlist.TongjiStipendInfoTool,
+			toolallowlist.TongjiAccommodationInfoTool,
+			toolallowlist.TongjiCompetitionPrizeTool,
+			toolallowlist.TongjiHonoraryTitleTool,
+			toolallowlist.TongjiScholarshipInfoTool,
+			toolallowlist.TongjiSchoolAccessTool,
+			toolallowlist.TongjiLibraryAccessTool,
+			toolallowlist.TongjiUserBasicInfoTool,
+			toolallowlist.TongjiCourseDetailTool,
+			toolallowlist.TongjiCourseRelatedTool,
+			toolallowlist.TongjiFindMajorByGradeTool,
+			toolallowlist.TongjiCourseCatalogTool,
+			toolallowlist.TongjiCalendarListTool,
+			toolallowlist.TongjiGradeListTool,
+		}
 
 		Convey("只注册维护在 allowlist 中的远程工具", func() {
-			So(tools, ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+			So(tools, ShouldResemble, expectedTools)
 		})
 
 		Convey("调用方修改返回值不应影响后续服务初始化", func() {
 			tools[0] = "untrusted-tool"
 
-			So(toolallowlist.MCPTools(), ShouldResemble, []string{toolallowlist.TongjiStudentScoreTool})
+			So(toolallowlist.MCPTools(), ShouldResemble, expectedTools)
 		})
 	})
 }
