@@ -1,3 +1,51 @@
+## CHANGELOG - 2026-08-03 17:32 - 建立 Agent 多轮会话领域基础与历史上下文装配
+
+### 撰写时间
+
+- 2026-08-03 17:32
+
+### Base Commit
+
+- a56895b17ded28dee06739d5b4a81964a5f86c19
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- Agent 当前仍按单轮请求运行，但后续多轮能力需要先有稳定的会话归属、消息顺序、幂等写入和模型上下文边界。直接在聊天服务中拼接历史会把存储语义和模型输入格式耦合在一起，也难以独立验证并发与重放行为。
+- 因此这次先提交领域层基础设施：定义不依赖 HTTP、数据库或 Agent 实现的会话契约，并让 Runtime 能接收已经规范化的历史消息。聊天入口的会话创建、读取和写入不在本次范围内。
+
+### 改动概览
+
+- 新增 `internal/agentic/session`：定义 `Session`、`Message`、`Store`、消息角色、持久化类型及输入校验错误；`InMemoryStore` 提供本地开发和单元测试使用的互斥访问、消息递增序号、用户消息 `client_turn_id` 幂等与最近消息读取能力。
+- 新增 `ContextAssembler`，按“动态提醒 → canonical 历史 → 当前用户请求”的固定顺序转换为 Eino 消息；历史仅接受用户与助手角色，并校验内容和严格递增序号。
+- Runtime 新增 `StreamWithHistory`，由 `buildInputMessagesWithHistory` 统一装配提醒、学生资料、Skill catalog、历史和当前 XML 请求。保留 `Stream` 与 `StreamWithStudentInfo` 的既有单轮兼容行为。
+- 补充会话存储、上下文装配和运行时历史顺序测试；恢复 `trustedStudentInfoReminder` 对资料中标签/指令文本的 XML 转义回归测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：调用方需要先完成认证和会话归属校验，再从 `Store.ListMessages` 读取同一用户拥有的 canonical 消息。当前聊天服务仍调用 `StreamWithStudentInfo`，因此继续传入空历史，原有请求协议和单轮语义不变。
+- 当前改动：应用层未来可把经过归属校验的历史传给 `Runtime.StreamWithHistory`；Runtime 将其交给 `ContextAssembler`，再交由 Deep Agent 执行。动态提醒和本轮 query 均保持用户消息角色，历史中的助手回复则保留助手角色，避免把多轮记录拼接成不具备角色语义的文本。
+- 下游影响：后续接入持久化 Store、会话 API 或聊天服务时可以复用同一领域契约与装配器，无需改变模型运行主循环、Skill allowlist、MCP Tool 或 SSE 事件协议。由于本次未接入调用入口，不会立即启用多轮对话。
+
+### 改动结果与业务影响
+
+- 现在已经具备可独立测试的会话最小模型：用户消息重试可通过 `client_turn_id` 返回已保存记录，并发追加仍产生连续的 `Sequence`；模型输入只接受经过角色和顺序校验的历史。
+- 保持现有 `Stream`/`StreamWithStudentInfo` API 的行为不变，现有聊天继续作为无状态单轮运行。这个取舍是本次仅提交领域层基础设施的明确边界，而不是遗漏的生产接入。
+- 已执行 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session`、`go vet ./...` 与 `git diff --check`，均通过；本次恢复测试后再次执行 `go test ./internal/agentic/runtime`，通过。
+
+### 风险与待办
+
+- `InMemoryStore` 仅适用于本地开发和测试，进程重启后不会保留消息；虽然领域类型包含 `PersistenceDurable`，真正跨进程恢复仍需要后续接入持久化 Store。
+- 生产接入时必须以当前授权用户 ID 做会话所有权校验，并在模型调用前读取有限长度历史、在成功生成后追加最终助手文本；不能直接接受客户端传入的任意历史消息。
+- 当前测试覆盖存储并发、幂等、角色/顺序校验、历史插入位置和资料 XML 边界；后续接入聊天服务后应补充会话 API、取消、失败写入策略和完整多轮链路测试。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add session domain foundation`
+
 ## CHANGELOG - 2026-07-31 01:06 - 为授权请求上下文补充校园用户 ID
 
 ### 撰写时间
@@ -267,7 +315,7 @@
 ### 关键链路解析（含上下游）
 
 - 上游依赖：HTTP Handler 继续将请求体中的 `message` 作为单轮 query 传给 `chat.Service`；Cozeloop 启用时仍在启动阶段取得 System Prompt，Skill allowlist、manifest 与嵌入手册也仍在启动阶段校验。
-- 当前改动：`chat.NewFromEnv` 将 catalog 保存进 `runtime.Config`。每次 `Runtime.Stream` 调用 `buildInputMessages`，先发送包含当前日期和 catalog 的提醒消息，再发送 XML 转义后的用户请求，随后使用 `Runner.Run` 执行 Deep Agent。
+- 当前改动：`chat.NewFromEnv` 将 catalog 保存进 `runtime.Config`。每次 `Runtime.Stream` 调用 `buildInputMessagesWithHistory`，先发送包含当前日期和 catalog 的提醒消息，再发送 XML 转义后的用户请求，随后使用 `Runner.Run` 执行 Deep Agent。
 - 下游影响：模型可在每轮获得当前日期与安全的 Skill 发现信息，同时用户 query 不与运行时提醒直接拼接。因为不再注册通用子代理，复杂请求仍由主 Agent 在同一 Run 中顺序调用已批准 Tool，不会进入缺少 catalog 的泛用子 Agent。
 
 ### 改动结果与业务影响
