@@ -67,6 +67,11 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 // TODO：待拆解 tool call 处理
 // StreamWithHistory 执行单轮查询，并将 canonical 会话历史作为模型上下文注入输入。
 func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error) {
+	return r.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emit, nil)
+}
+
+// StreamWithHistoryAndMessages 执行查询，并将运行时输出逐条交给调用方持久化。
+func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")
 	}
@@ -105,8 +110,16 @@ func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo stri
 		if output == nil {
 			continue
 		}
+		if record != nil {
+			if err := record(ctx, output); err != nil {
+				return "", fmt.Errorf("record agent message: %w", err)
+			}
+		}
 		switch event.Output.MessageOutput.Role {
 		case schema.Assistant:
+			if output.ReasoningContent != "" {
+				emit(agentevent.Event{Type: agentevent.AssistantReasoning, Data: agentevent.AssistantReasoningData{Text: output.ReasoningContent}})
+			}
 			for _, toolCall := range output.ToolCalls {
 				if toolCall.ID == "" || toolCall.Function.Name == "" {
 					continue
@@ -114,7 +127,7 @@ func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo stri
 				if _, exists := pendingTools[toolCall.ID]; exists {
 					continue
 				}
-				toolData := agentevent.ToolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name}
+				toolData := agentevent.ToolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}
 				pendingTools[toolCall.ID] = toolData
 				toolStartedAt[toolCall.ID] = time.Now()
 				emit(agentevent.Event{Type: agentevent.ToolCallStarted, Data: toolData})
@@ -128,7 +141,7 @@ func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo stri
 				toolData = agentevent.ToolCallStartedData{CallID: output.ToolCallID, Tool: output.ToolName, DisplayName: output.ToolName}
 			}
 			emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: agentevent.ToolCallCompletedData{
-				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]),
+				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]), Result: output.Content,
 			}})
 			delete(pendingTools, output.ToolCallID)
 			delete(toolStartedAt, output.ToolCallID)

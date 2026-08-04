@@ -1,3 +1,59 @@
+## CHANGELOG - 2026-08-05 02:26 - 记录并回放 Agent 工具调用与推理轨迹
+
+### 撰写时间
+
+- 2026-08-05 02:26
+
+### Base Commit
+
+- ca79459eb67f07a734c665ae2581e9fb14f91105
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 已持久化的多轮会话此前只保存 user 消息与最终 assistant 文本。Agent 一旦在某轮调用工具，后续轮次恢复历史时既看不到 assistant 发起的 `ToolCalls`，也看不到对应的 tool result；模型无法重新建立「这条工具结果属于哪个调用」的关联，工具驱动的任务在跨请求续聊时会退化为不完整上下文。
+- 产品同时需要在 SSE 中展示模型 reasoning、工具入参和工具结果，用于让前端呈现 Agent 的实际执行过程。这与原先“安全事件不暴露 Eino 内部结构”的约束相冲突。本次不将其伪装为默认安全行为，而是在审阅白名单中明确登记为 `WL-20260805-002`：该暴露由产品确认并接受，白名单于 2026-09-05 到期，届时必须重新审查数据范围与前端访问控制。
+- 本次目标是在不改变现有会话归属、Redis/PostgreSQL 存储选择和 Tool allowlist 的前提下，将一轮 Agent 处理过的 canonical `schema.Message` 完整记录下来，并在下一轮以相同角色语义回放；同时让实时 SSE 与历史消息都能表达 reasoning、工具调用及工具结果。
+
+### 改动概览
+
+- `internal/agentic/event` 新增 `assistant.reasoning` 事件与 `AssistantReasoningData`；`tool.started` 新增 `arguments`，`tool.completed` 新增 `result`。事件包注释同步改为公共 SSE 协议，并明确数据可包含 reasoning、工具参数和结果，但不得放入 Bearer token、数据库连接串或服务端凭据。
+- `runtime.Runtime` 在原有 `StreamWithHistory` 之上新增 `StreamWithHistoryAndMessages`。它在处理每个 `*schema.Message` 时调用记录回调：assistant 的 `ReasoningContent` 投影为 `assistant.reasoning`，tool call 的函数参数写入 `tool.started.arguments`，工具输出写入 `tool.completed.result`。旧方法继续委托新方法，保持现有调用方兼容。
+- 会话 canonical 消息扩展 `tool` role、`ToolCalls`、`ToolCallID`、`ToolName` 与 `ReasoningContent`。`NewMessageFromSchema` 现在可保留 assistant tool call/reasoning 和 tool result；校验规则允许携带工具调用或 reasoning 的无正文 assistant 消息，并要求 tool 消息必须带 `tool_call_id`。
+- `ContextAssembler` 恢复历史时不再只拼接 user/assistant 文本：它会按 sequence 回放 assistant 的 tool calls 与 reasoning，再回放关联的 tool 消息。下一次 `buildInputMessagesWithHistory` 因而能向 Agent 还原完整的「assistant 调用工具 -> tool 返回 -> assistant 继续回答」链路。
+- PostgreSQL 的 `agent_session_messages` 增加 `tool_calls JSONB`、`tool_call_id`、`tool_name`、`reasoning_content`，迁移同时放宽 role 约束以接受 `tool`。Redis 消息 JSON 与 Lua append 参数同步携带这些字段；两种存储的 `Append`/`ListMessages` 都保留完整结构化消息。
+- `chat.Service.StreamSession` 识别支持记录回调的 runtime，并将每条处理过的 schema 消息交给 `appendAgentMessage` 写入 durable 或 ephemeral store；启用该路径时不再在结束阶段重复追加 final assistant 文本，避免同一轮最终回复出现两份。
+- `PostgresStore.pool` 收敛为只含 `Close`、`Exec`、`Query`、`QueryRow`、`BeginTx` 的内部接口，生产仍使用 `pgxpool.Pool`，测试则通过新增的 `pgxmock/v4` 精确验证建表迁移、事务写入和读取反序列化。运行时、上下文、handler、PostgreSQL 测试一并补齐工具轨迹断言。
+- `README.md` 与 `docs/DEVELOPMENT.md` 更新为当前协议：前端会接收 reasoning、工具入参与工具结果，必须按会话归属处理；文档同样列出不应传输的 Bearer token、数据库连接串和服务端凭据。
+
+### 关键链路解析（含上下游）
+
+- 上游输入仍由 `biz/handler` 的会话 SSE 接口进入 `chat.Service.StreamSession`。服务先依据用户身份选择 PostgreSQL durable store 或 Redis ephemeral store，并在既有 turn lock 保护下读取 canonical 历史、写入本轮 user 消息；身份校验、会话归属和工具 allowlist 并未因本次改动放宽。
+- 当前执行链变为 `chat.Service.StreamSession` -> `Runtime.StreamWithHistoryAndMessages` -> `Runtime.readMessage`。Runtime 一边把 assistant reasoning、tool started、tool completed 等事件投影到 SSE，一边把原始 `schema.Message` 交给记录回调；服务层将其映射为 `session.Message` 后追加到与该会话匹配的持久化或临时存储。最终 assistant 消息也由同一回调保存，避免旧的 after-model 分支再写一次。
+- 持久化与恢复链为 `PostgresStore`/`RedisEphemeralStore` -> `ListMessages` -> `ContextAssembler` -> `buildInputMessagesWithHistory`。消息中的 `ToolCalls`、`ToolCallID`、`ToolName` 和 `ReasoningContent` 均按 sequence 读取并映射回 Eino schema，所以下游 Agent 看到的是具备调用关联的历史，而不是脱离来源的纯文本摘要。
+- PostgreSQL 迁移先创建包含新字段的新表定义，再对已部署表执行 role check 替换和 `ADD COLUMN IF NOT EXISTS`；写入时将 `ToolCalls` 序列化到 JSONB，读取时反序列化。Redis 仍以 Lua 保证追加、序号分配、窗口裁剪和 TTL 刷新的原子性，只是消息 payload 扩展为同一套字段。
+- SSE 下游从“只看最终回答和工具状态”变为可消费原始 reasoning、函数 arguments 与工具 result。字段属于显式产品协议而非服务端脱敏视图；前端、网关日志和任何事件转发消费者必须以当前会话的 owner/capability 为边界，不得把这些 payload 当作可公开广播的数据。
+
+### 改动结果与业务影响
+
+- 工具型对话现在可跨请求继续：下一轮模型能同时获得发起调用的 assistant 消息、对应的 tool result 以及后续 assistant 输出，不会因历史缺少 `tool_call_id` 关联而丢失执行上下文。
+- 前端可在运行中呈现模型 reasoning、实际工具参数和工具结果；历史接口也会返回可表达同一轨迹的 canonical 消息字段。`Message` 的 JSON tag 统一为 lower snake case，handler 测试已按新输出更新。
+- 已执行并通过 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session ./internal/application/chat ./biz/handler`、`go vet ./...` 与 `git diff --check`。新增 PostgreSQL 测试覆盖 schema SQL、assistant 工具调用/reasoning 写入以及 tool result 读回后的顺序恢复。
+
+### 风险、边界与后续建议
+
+- `assistant.reasoning`、工具 arguments 与 result 是原始 Agent 轨迹，可能含用户输入、工具返回的敏感业务数据或第三方内容。本次由 `WL-20260805-002` 明确豁免，不代表数据天然安全；白名单到期前应复核前端会话授权、SSE/日志采集脱敏、持久化数据分级与删除策略。
+- 当前测试使用 `pgxmock` 验证 SQL 调用契约和消息编解码，未在真实 PostgreSQL 实例执行迁移。应在 CI 或预发布环境补充真实 PG migration/round-trip 集成测试，特别验证已存在 `agent_session_messages` 表的约束替换与列补齐。
+- 原始 tool payload 会增加 PostgreSQL/Redis 存储量及后续模型上下文长度；当前仅受会话消息窗口限制，尚无对 reasoning/arguments/results 的摘要、截断或单条大小上限。需要结合实际工具输出量设定容量和保留策略。
+- 记录回调在模型流式过程中失败会使本轮运行失败，但此前已经记录的部分轨迹可能保留在会话中。若产品要求严格的整轮原子可见性，后续应引入 turn 状态或提交标记，并在历史读取时过滤未完成轮次。
+
+### 建议提交信息
+
+- `feat(session): persist agent tool traces`
+
 ## CHANGELOG - 2026-08-05 00:35 - 将 Agent 调用链切换为持久化多轮会话
 
 ### 撰写时间

@@ -560,7 +560,7 @@ console.log(historyPayload.messages);
 
 响应会包含用于问题排查的 `X-Request-ID`；普通日志只记录该 ID、方法、路径、状态码和耗时，不记录请求或响应内容。
 
-所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。事件不会包含模型原始推理内容、工具参数、工具原始结果或 Bearer token。
+所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。当前协议会发送模型 reasoning、工具参数和工具结果，前端必须按会话归属处理这些内容；事件不会包含 Bearer token、数据库连接串或其他服务端凭据。
 
 | 事件 | `data` 契约 | 含义 |
 | --- | --- | --- |

@@ -37,15 +37,25 @@ func (a *ContextAssembler) AssembleForTurn(ctx context.Context, input TurnInput)
 	messages = append(messages, cloneMessage(input.DynamicReminder))
 	var previousSequence int64
 	for _, historyMessage := range input.History {
-		if historyMessage.Sequence <= previousSequence || strings.TrimSpace(historyMessage.Content) == "" {
-			return nil, fmt.Errorf("%w: history sequence or content is invalid", ErrInvalidTurnInput)
+		if historyMessage.Sequence <= previousSequence {
+			return nil, fmt.Errorf("%w: history sequence is invalid", ErrInvalidTurnInput)
+		}
+		if strings.TrimSpace(historyMessage.Content) == "" && len(historyMessage.ToolCalls) == 0 && strings.TrimSpace(historyMessage.ReasoningContent) == "" {
+			return nil, fmt.Errorf("%w: history content is invalid", ErrInvalidTurnInput)
 		}
 		previousSequence = historyMessage.Sequence
 		switch historyMessage.Role {
 		case MessageRoleUser:
 			messages = append(messages, schema.UserMessage(historyMessage.Content))
 		case MessageRoleAssistant:
-			messages = append(messages, schema.AssistantMessage(historyMessage.Content, nil))
+			message := schema.AssistantMessage(historyMessage.Content, historyMessage.ToolCalls)
+			message.ReasoningContent = historyMessage.ReasoningContent
+			messages = append(messages, message)
+		case MessageRoleTool:
+			if strings.TrimSpace(historyMessage.ToolCallID) == "" {
+				return nil, fmt.Errorf("%w: tool call ID is invalid", ErrInvalidTurnInput)
+			}
+			messages = append(messages, schema.ToolMessage(historyMessage.Content, historyMessage.ToolCallID, schema.WithToolName(historyMessage.ToolName)))
 		default:
 			return nil, fmt.Errorf("%w: history role is invalid", ErrInvalidTurnInput)
 		}

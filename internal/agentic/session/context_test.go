@@ -51,5 +51,21 @@ func TestContextAssembler(t *testing.T) {
 			_, err = assembler.AssembleForTurn(context.Background(), outOfOrder)
 			So(errors.Is(err, ErrInvalidTurnInput), ShouldBeTrue)
 		})
+
+		Convey("应恢复工具调用、工具结果与模型 reasoning", func() {
+			fullHistory := []Message{
+				{Sequence: 1, Role: MessageRoleAssistant, ToolCalls: []schema.ToolCall{{ID: "call-001", Function: schema.FunctionCall{Name: "tongji.student.score", Arguments: `{"term":"2025-1"}`}}}, ReasoningContent: "需要先查询成绩"},
+				{Sequence: 2, Role: MessageRoleTool, Content: `{"gpa":4.0}`, ToolCallID: "call-001", ToolName: "tongji.student.score"},
+				{Sequence: 3, Role: MessageRoleAssistant, Content: "你的绩点是 4.0。"},
+			}
+			messages, err := assembler.AssembleForTurn(context.Background(), TurnInput{DynamicReminder: input.DynamicReminder, History: fullHistory, UserMessage: input.UserMessage})
+
+			So(err, ShouldBeNil)
+			So(messages[1].ToolCalls[0].Function.Arguments, ShouldEqual, `{"term":"2025-1"}`)
+			So(messages[1].ReasoningContent, ShouldEqual, "需要先查询成绩")
+			So(messages[2].Role, ShouldEqual, schema.Tool)
+			So(messages[2].ToolCallID, ShouldEqual, "call-001")
+			So(messages[2].Content, ShouldEqual, `{"gpa":4.0}`)
+		})
 	})
 }

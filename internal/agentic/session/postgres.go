@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,7 +18,16 @@ const postgresDSNEnv = "POSTGRES_DSN"
 
 // PostgresStore 将已认证用户的会话和 canonical 消息持久化到 PostgreSQL。
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool postgresPool
+}
+
+// postgresPool 收敛 PostgresStore 实际使用的连接池能力，便于隔离数据库回归测试。
+type postgresPool interface {
+	Close()
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
 
 // NewPostgresStoreFromEnv 根据 POSTGRES_DSN 创建 PostgreSQL 会话存储。
@@ -103,8 +114,12 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID strin
 		return AppendResult{}, fmt.Errorf("allocate durable message sequence: %w", err)
 	}
 	now := time.Now().UTC()
-	message := Message{ID: newID("msg"), SessionID: sessionID, Sequence: sequence, Role: input.Role, Content: input.Content, CreatedAt: now}
-	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, sequence, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`, message.ID, message.SessionID, message.Sequence, message.Role, message.Content, message.CreatedAt)
+	toolCalls, err := json.Marshal(input.ToolCalls)
+	if err != nil {
+		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
+	}
+	message := Message{ID: newID("msg"), SessionID: sessionID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, CreatedAt: now}
+	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, message.ID, message.SessionID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.CreatedAt)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("insert durable message: %w", err)
 	}
@@ -128,7 +143,7 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	if limit <= 0 {
 		return []Message{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, session_id, sequence, role, content, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
+	rows, err := s.pool.Query(ctx, `SELECT id, session_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list durable messages: %w", err)
 	}
@@ -136,8 +151,12 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	messages := make([]Message, 0, limit)
 	for rows.Next() {
 		var message Message
-		if err := rows.Scan(&message.ID, &message.SessionID, &message.Sequence, &message.Role, &message.Content, &message.CreatedAt); err != nil {
+		var toolCalls []byte
+		if err := rows.Scan(&message.ID, &message.SessionID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan durable message: %w", err)
+		}
+		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
+			return nil, fmt.Errorf("unmarshal durable tool calls: %w", err)
 		}
 		messages = append(messages, message)
 	}
@@ -187,11 +206,33 @@ CREATE TABLE IF NOT EXISTS agent_session_messages (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
     sequence BIGINT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
     content TEXT NOT NULL,
+    tool_calls JSONB NOT NULL DEFAULT '[]',
+    tool_call_id TEXT NOT NULL DEFAULT '',
+    tool_name TEXT NOT NULL DEFAULT '',
+    reasoning_content TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE (session_id, sequence)
 );
+`,
+	`
+ALTER TABLE agent_session_messages DROP CONSTRAINT IF EXISTS agent_session_messages_role_check;
+`,
+	`
+ALTER TABLE agent_session_messages ADD CONSTRAINT agent_session_messages_role_check CHECK (role IN ('user', 'assistant', 'tool'));
+`,
+	`
+ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS tool_calls JSONB NOT NULL DEFAULT '[]';
+`,
+	`
+ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS tool_call_id TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS tool_name TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS reasoning_content TEXT NOT NULL DEFAULT '';
 `,
 	`
 CREATE INDEX IF NOT EXISTS agent_session_messages_session_sequence_index

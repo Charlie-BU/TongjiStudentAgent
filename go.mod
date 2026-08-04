@@ -62,6 +62,7 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/nikolalohinski/gonja/v2 v2.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.0.71 // indirect
+	github.com/pashagolub/pgxmock/v4 v4.8.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.2-0.20201214064552-5dd12d0cfe7f // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect

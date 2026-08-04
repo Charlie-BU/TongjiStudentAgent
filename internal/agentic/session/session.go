@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 var (
@@ -47,6 +49,8 @@ const (
 	MessageRoleUser MessageRole = "user"
 	// MessageRoleAssistant 表示最终助手文本。
 	MessageRoleAssistant MessageRole = "assistant"
+	// MessageRoleTool 表示工具调用结果。
+	MessageRoleTool MessageRole = "tool"
 )
 
 // Session 表示一个已认证用户拥有的持久会话。
@@ -60,18 +64,26 @@ type Session struct {
 
 // Message 表示可作为后续模型输入的 canonical 对话消息。
 type Message struct {
-	ID        string
-	SessionID string
-	Sequence  int64
-	Role      MessageRole
-	Content   string
-	CreatedAt time.Time
+	ID               string            `json:"id"`
+	SessionID        string            `json:"session_id"`
+	Sequence         int64             `json:"sequence"`
+	Role             MessageRole       `json:"role"`
+	Content          string            `json:"content"`
+	ToolCalls        []schema.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	ToolName         string            `json:"tool_name,omitempty"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
 }
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
-	Role    MessageRole
-	Content string
+	Role             MessageRole
+	Content          string
+	ToolCalls        []schema.ToolCall
+	ToolCallID       string
+	ToolName         string
+	ReasoningContent string
 }
 
 // AppendResult 表示追加消息的结果。
@@ -107,10 +119,33 @@ type TurnLocker interface {
 // validateMessage 规范化并校验待写入的 canonical 消息。
 func validateMessage(input NewMessage) (NewMessage, error) {
 	input.Content = strings.TrimSpace(input.Content)
-	if input.Content == "" || (input.Role != MessageRoleUser && input.Role != MessageRoleAssistant) {
+	if input.Role != MessageRoleUser && input.Role != MessageRoleAssistant && input.Role != MessageRoleTool {
+		return NewMessage{}, ErrInvalidMessage
+	}
+	if input.Content == "" && len(input.ToolCalls) == 0 && input.ReasoningContent == "" {
+		return NewMessage{}, ErrInvalidMessage
+	}
+	if input.Role == MessageRoleTool && strings.TrimSpace(input.ToolCallID) == "" {
 		return NewMessage{}, ErrInvalidMessage
 	}
 	return input, nil
+}
+
+// NewMessageFromSchema 将 Agent 输出转换为可持久化的会话消息。
+func NewMessageFromSchema(message *schema.Message) (NewMessage, error) {
+	if message == nil {
+		return NewMessage{}, ErrInvalidMessage
+	}
+	input := NewMessage{Content: message.Content, ToolCalls: message.ToolCalls, ToolCallID: message.ToolCallID, ToolName: message.ToolName, ReasoningContent: message.ReasoningContent}
+	switch message.Role {
+	case schema.Assistant:
+		input.Role = MessageRoleAssistant
+	case schema.Tool:
+		input.Role = MessageRoleTool
+	default:
+		return NewMessage{}, ErrInvalidMessage
+	}
+	return validateMessage(input)
 }
 
 // newID 创建不包含用户身份的随机存储标识。

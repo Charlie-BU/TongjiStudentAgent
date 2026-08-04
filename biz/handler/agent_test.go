@@ -106,7 +106,7 @@ func TestSessionMessages(t *testing.T) {
 			SessionMessages(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
-			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"Content":"你好"`)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"content":"你好"`)
 		})
 
 		Convey("会话不存在时返回 404", func() {

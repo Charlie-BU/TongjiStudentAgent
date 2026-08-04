@@ -135,7 +135,7 @@ func TestRuntimeStreamContinuesAfterLoadingSkill(t *testing.T) {
 	})
 }
 
-func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
+func TestRuntimeStreamPublishesAssistantAndToolEvents(t *testing.T) {
 	Convey("执行 Runtime 流式事件", t, func() {
 		runtime := &Runtime{agent: &fakeAgent{events: []*adk.AgentEvent{
 			adk.EventFromMessage(nil, schema.StreamReaderFromArray([]*schema.Message{
@@ -149,7 +149,7 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 		}}}
 		var events []agentevent.Event
 
-		Convey("应输出文本增量和脱敏工具生命周期", func() {
+		Convey("应输出文本增量和完整工具生命周期", func() {
 			response, err := runtime.StreamWithHistory(context.Background(), "现在几点？", "", nil, func(event agentevent.Event) {
 				events = append(events, event)
 			})
@@ -165,8 +165,8 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 			completedData, completedMarshalErr := json.Marshal(events[3].Data)
 			So(marshalErr, ShouldBeNil)
 			So(completedMarshalErr, ShouldBeNil)
-			So(string(startedData), ShouldNotContainSubstring, "must-not-leak")
-			So(string(completedData), ShouldNotContainSubstring, "sensitive tool result")
+			So(string(startedData), ShouldContainSubstring, "must-not-leak")
+			So(string(completedData), ShouldContainSubstring, "sensitive tool result")
 		})
 	})
 }

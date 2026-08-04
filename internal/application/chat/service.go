@@ -36,6 +36,11 @@ type sessionRuntime interface {
 	StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error)
 }
 
+type messageRecordingRuntime interface {
+	sessionRuntime
+	StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error)
+}
+
 // Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
 	runtime               sessionRuntime                      // Agent Runtime
@@ -254,6 +259,8 @@ func (s *Service) StreamSession(ctx context.Context, sessionID, query string, se
 	}, func(response string) error {
 		_, err := appendAssistant(response) // 在 Agent 执行后追加 AI 消息到 session
 		return err
+	}, func(ctx context.Context, message *schema.Message) error {
+		return s.appendAgentMessage(ctx, sessionID, message)
 	}, send)
 }
 
@@ -332,6 +339,19 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query st
 		}, nil
 }
 
+func (s *Service) appendAgentMessage(ctx context.Context, sessionID string, message *schema.Message) error {
+	input, err := agenticsession.NewMessageFromSchema(message)
+	if err != nil {
+		return err
+	}
+	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
+		_, err = s.durableSessionStore.Append(ctx, sessionID, ownerUserID, input)
+		return err
+	}
+	_, err = s.ephemeralSessionStore.Append(ctx, sessionID, input)
+	return err
+}
+
 // historyLimit 返回有效的上下文历史消息数量。
 func (s *Service) historyLimit() int {
 	if s.historyMessageLimit > 0 {
@@ -341,7 +361,7 @@ func (s *Service) historyLimit() int {
 }
 
 // stream 执行一次模型调用，并在成功后可选持久化最终回答。
-func (s *Service) stream(ctx context.Context, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, send func(agentevent.Event)) (string, error) {
+func (s *Service) stream(ctx context.Context, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
 	emitter := agentevent.NewEmitter("", send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
@@ -376,14 +396,25 @@ func (s *Service) stream(ctx context.Context, query string, history []agenticses
 	// }
 
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "model", Message: "正在生成回答"})
-	response, err := s.runtime.StreamWithHistory(ctx, query, studentInfo, history, func(event agentevent.Event) {
+	emitRuntimeEvent := func(event agentevent.Event) {
 		emitter.Emit(event.Type, event.Data)
-	})
+	}
+	var response string
+	if runtimeWithRecorder, ok := s.runtime.(messageRecordingRuntime); ok {
+		response, err = runtimeWithRecorder.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emitRuntimeEvent, record)
+	} else {
+		response, err = s.runtime.StreamWithHistory(ctx, query, studentInfo, history, emitRuntimeEvent)
+	}
 	if err != nil {
 		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_execution_failed", Message: "Agent 执行失败"})
 		return "", err
 	}
 	// Agent 执行后
+	if afterModel != nil {
+		if _, supportsRecorder := s.runtime.(messageRecordingRuntime); supportsRecorder {
+			afterModel = nil
+		}
+	}
 	if afterModel != nil {
 		if err := afterModel(response); err != nil {
 			emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "session_write_failed", Message: "回答已生成，但会话暂时无法保存"})

@@ -164,7 +164,11 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 	}
 	now := time.Now().UTC()
 	messageID := newID("msg")
-	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID)}, string(input.Role), input.Content, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
+	toolCalls, err := json.Marshal(input.ToolCalls)
+	if err != nil {
+		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
+	}
+	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("append ephemeral message: %w", err)
 	}
@@ -231,13 +235,17 @@ local messages = KEYS[2]
 if redis.call('EXISTS', meta) == 0 then return {0, ''} end
 local role = ARGV[1]
 local content = ARGV[2]
-local messageID = ARGV[3]
-local now = ARGV[4]
-local ttl = tonumber(ARGV[5])
-local maxItems = tonumber(ARGV[6])
+local toolCalls = ARGV[3]
+local toolCallID = ARGV[4]
+local toolName = ARGV[5]
+local reasoningContent = ARGV[6]
+local messageID = ARGV[7]
+local now = ARGV[8]
+local ttl = tonumber(ARGV[9])
+local maxItems = tonumber(ARGV[10])
 local sequence = redis.call('HINCRBY', meta, 'next_sequence', 1)
 redis.call('HSET', meta, 'last_active_at', now)
-local item = cjson.encode({ID=messageID, SessionID=string.match(meta, '([^:]+):meta$'), Sequence=sequence, Role=role, Content=content, CreatedAt=now})
+local item = cjson.encode({ID=messageID, SessionID=string.match(meta, '([^:]+):meta$'), Sequence=sequence, Role=role, Content=content, ToolCalls=cjson.decode(toolCalls), ToolCallID=toolCallID, ToolName=toolName, ReasoningContent=reasoningContent, CreatedAt=now})
 redis.call('LPUSH', messages, item)
 redis.call('LTRIM', messages, 0, maxItems - 1)
 redis.call('PEXPIRE', meta, ttl)
