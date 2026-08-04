@@ -1,3 +1,63 @@
+## CHANGELOG - 2026-08-05 00:35 - 将 Agent 调用链切换为持久化多轮会话
+
+### 撰写时间
+
+- 2026-08-05 00:35
+
+### Base Commit
+
+- acb6bd12b3c9b3365703661c5f3a0593c6a0249a
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 上一次改动只完成了 `Session`、canonical 消息和 `Runtime.StreamWithHistory` 的领域边界，HTTP 调用仍是无状态的 `/v1/agent/chat` 与 `/v1/agent/chat/stream`。这意味着历史消息无法跨请求保存，已认证用户的会话归属、匿名用户的自动过期以及同一会话的并发执行都没有真正进入生产链路。
+- 一开始可以继续沿用进程内 `InMemoryStore`，用它快速把 API 接起来；但它在进程重启、Pod 扩缩容和多实例路由下都不能恢复同一段对话，也无法成为身份会话的唯一事实源。因此本次将认证与匿名两类生命周期拆开：前者落 PostgreSQL，后者放带 TTL 的 Redis；模型仍只消费服务端读取、校验后的 canonical 历史。
+- 目标不是为旧接口附加一个可选 `session_id`，而是明确一条新的会话协议：先创建会话，再提交消息，最后按归属读取历史。为避免多请求同时写入造成消息顺序混乱，本次也把跨实例的单会话执行锁一并接入。
+
+### 改动概览
+
+- 对外路由由单轮 `POST /v1/agent/chat`、`POST /v1/agent/chat/stream` 切换为三个会话接口：`POST /v1/sessions` 创建会话，`POST /v1/sessions/:session_id/messages` 以 SSE 执行并保存一轮消息，`GET /v1/sessions/:session_id/messages?limit=...` 读取 canonical 历史。SSE `Event` 新增 `session_id` 字段，使同一客户端可将运行事件与会话关联。
+- `chat.Service` 新增 `CreateSession`、`StreamSession`、`ListSessionMessages`，并从原先直接调用 Runtime 的单轮 `Stream` 改为“取历史 -> 写用户消息 -> 调模型 -> 写最终助手消息”的编排。运行成功前后分别执行 append；模型失败时不写助手回复，写入失败时向 SSE 发送稳定的 `session_write_failed` 终态。
+- 新增 `PostgresStore`：从 `POSTGRES_DSN` 建立并 Ping `pgxpool`，启动时通过 `EnsurePostgresSchema` 创建 `agent_sessions`、`agent_session_messages`、唯一顺序约束与查询索引。认证会话的 `Get`、`Append`、`ListMessages` 始终带 `owner_user_id`；追加消息在事务中对会话行 `FOR UPDATE`，再分配连续 `sequence` 并更新 `last_active_at`。
+- 新增 `RedisEphemeralStore`：从 `REDIS_URL` 连接 Redis，使用 `SESSION_ANONYMOUS_TTL`（默认 24h）与 `SESSION_ANONYMOUS_MAX_MESSAGES`（默认 20）管理匿名会话。Lua 脚本原子地校验 meta key、分配序号、写入消息、裁剪最近消息并刷新两个 key 的 TTL；`miniredis` 测试覆盖了上限裁剪和过期行为。
+- 新增 Redis `TurnLocker`。`AcquireTurn` 以 `SET NX PX` 获得 30 秒锁，持锁期间每 10 秒以 token 校验方式续租，释放时只删除自己持有的锁。`chat.Service.StreamSession` 在读写历史前持锁；锁冲突会以 `turn_in_progress` 结束本轮 SSE，避免两个 Run 并发插入同一会话。
+- 删除此前只用于领域阶段的 `memory.go` / `memory_test.go`，同时移除 `Message.ClientTurnID` 与 `NewMessage.ClientTurnID`。当前生产链路尚未实现客户端重试幂等键，文档与测试不再宣称该能力已经存在。
+- `runtime.Runtime` 收敛到 `StreamWithHistory`，应用层以最小 `sessionRuntime` 接口注入该能力。Runtime、动态提醒、学生资料、Skill catalog、历史和当前请求仍由 `buildInputMessagesWithHistory` 统一装配，既不允许客户端提交任意历史，也不改变 Tool allowlist、RunState 或安全事件裁剪边界。
+- `README.md`、`docs/DEVELOPMENT.md` 同步了新 API、`POSTGRES_DSN`、`REDIS_URL` 与三个会话容量配置；`go.mod` / `go.sum` 新增 `pgx/v5`、`go-redis/v9` 及仅测试使用的 `miniredis`。
+- 补充配置解析、Redis 会话、PostgreSQL 输入/DDL、服务编排和 HTTP handler 测试。handler 覆盖创建成功与 503、历史读取和 404、SSE 中的 `session_id` 投影、缺失 `session_id` 的 400；同时在审阅白名单中登记了旧 Agent API 的有意下线，`WL-20260805-001` 于 2026-09-05 到期，届时必须复核迁移是否完成。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`biz/handler` 仍通过 `withChatAccessToken` 从 `Authorization` 中提取 Bearer token。该上下文会沿用已有的 `UserIDFromContext`：存在用户 ID 时，服务选择 PostgreSQL durable store；缺失用户 ID 时，服务只创建和访问 Redis ephemeral store。服务启动新增两个必填基础设施依赖，因此模型、MCP 初始化成功不再足以代表服务可用，PostgreSQL schema 与 Redis Ping 也必须成功。
+- 当前改动：创建接口只调用 `chat.CreateSession` 并返回 `session_id`、`persistence`。提交接口先校验 JSON 消息和 path `session_id`，再将 HTTP context 派生为可取消的 SSE context；`StreamSession` 取得 Redis 锁、按当前身份读取有限窗口历史、写入用户消息，随后调用 `Runtime.StreamWithHistory`。模型返回非空最终回答后才追加 assistant 消息，最后由事件发送器输出 `run.completed`。每个写给 SSE 的事件由 handler 补入当前 `session_id`，但不暴露 token、工具参数、原始工具响应或模型 reasoning。
+- 持久化路径：认证请求的 `ListMessages` 和每次 `Append` 都将 `session_id + owner_user_id` 作为查询条件；`Append` 还在同一事务中锁住 session row，使 `MAX(sequence) + 1` 不会被同一会话的并发写入竞争。匿名请求不包含 owner，而是把随机 `anon_` 标识作为短期 capability；Redis meta/messages key 同时续期，消息列表按时间正序返回最近窗口。
+- 下游影响：DeepAgent 现在首次获得前轮 user/assistant 的结构化消息，而不是只收到当前 XML `interaction_request`；静态 Skill、远程 MCP 工具和学生资料读取仍从同一 request context 获取必要状态。调用方必须先保存 `POST /v1/sessions` 的结果，再使用新路径提交或读取；原先直接调用旧 `/v1/agent/chat*` 的客户端不会自动兼容。
+
+### 改动结果与业务影响
+
+- 已认证用户的会话可以跨进程通过 PostgreSQL 恢复，且读取与写入都受 `owner_user_id` 限制；这为多实例部署提供了最小的所有权边界。匿名对话不落 PostgreSQL，默认会在 24 小时后自动过期，并且每个会话只保存最近 20 条消息，避免无身份调用无限积累。
+- 模型上下文现在由服务端规范化的历史驱动。历史窗口由 `SESSION_HISTORY_MAX_MESSAGES` 控制，默认 20；当前轮 user 消息会在模型开始前持久化，assistant 最终文本只在生成成功后持久化。因此失败 Run 会留下用户输入但不会伪造一条成功助手回复，这既保留了可追踪的用户动作，也要求前端能处理“最后一条 user 消息尚无回复”的状态。
+- 同会话的并发提交不再同时进入模型运行。锁冲突不会静默覆盖历史，而是以 SSE `run.failed` / `turn_in_progress` 明确返回。数据库侧的事务锁和 Redis 侧的分布式执行锁分工不同：前者保障 durable 消息序号，后者保障完整 Run 生命周期。
+- 这次将旧单轮接口直接替换为会话接口，是有意的破坏性 API 变更。审阅时已识别该风险，产品确认客户端会随发布迁移，因此通过 `WL-20260805-001` 进行短期豁免；该条目不是永久兼容策略。
+- 已验证：`go test ./...`、`go test -race ./internal/agentic/session ./internal/application/chat ./biz/handler`、`go vet ./...`、`git diff --check` 均通过。测试使用 fake Runtime、内存 SSE writer 和 `miniredis`，不访问真实模型、校园平台、共享 Redis、PostgreSQL 或宿主机 Shell。
+
+### 风险与待办
+
+- `POSTGRES_DSN` 与 `REDIS_URL` 现在都是启动必填项。任一基础设施不可达都会令 Agent 服务初始化失败；当前没有 feature flag、降级到无状态聊天或延迟连接策略。发布前需要确认部署环境的网络、凭据、数据库权限以及 schema 创建权限已经就绪。
+- 匿名会话以随机 `session_id` 作为访问能力，不额外绑定 Cookie、设备或匿名身份；拿到该 ID 的调用方可以继续读取和提交这段匿名会话。当前随机 ID 足以避免枚举，但前端、日志、浏览器存储和链接传播都不应泄漏它。若匿名历史将承载敏感内容，后续应增加匿名会话绑定或显式的访问令牌设计。
+- Redis 锁的续租在 Redis 临时不可用时会停止；若模型运行超过剩余 TTL，另一个请求理论上可重新获得锁。当前实现仍保留 PostgreSQL append 的顺序安全，但不能保证整个模型 Run 绝对单活跃。后续应补充续租失败的观测、Run 超时上限与失锁后的 fail-closed 策略。
+- PostgreSQL 生产操作目前只有输入与 DDL 单测，没有独立临时 PostgreSQL 的 Create/Get/Append/所有权/事务并发集成测试；Redis 的 Lua 和 TTL 行为已经由 `miniredis` 覆盖，但也应在 CI 或预发布环境增加真实 Redis/PG 契约验证。
+- 当前 `Message` 对外 JSON 仍使用 Go 默认字段名（例如 `Content`），而创建会话和 SSE 已使用 snake_case 协议字段。文档只描述了 canonical 历史，不应据此假定其 JSON 字段风格；在客户端接入前应明确 history response DTO 与字段兼容策略。
+- `docs/DEVELOPMENT.md` 中有关未来 `client_turn_id` 幂等、CAS 和回滚开关的规划已调整，但本次没有实现请求重试幂等、断线重连、取消、HITL Resume、历史摘要或分页 cursor。长会话仍依赖固定条数窗口，不能保证 token 长度上界。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): persist multi-turn chat sessions`
+
 ## CHANGELOG - 2026-08-03 17:32 - 建立 Agent 多轮会话领域基础与历史上下文装配
 
 ### 撰写时间
