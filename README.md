@@ -8,7 +8,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 - 开源 Hertz HTTP 服务，默认监听 `8080` 端口。
 - 健康检查接口：`GET /`、`GET /ping`、`GET /v1/ping`。
-- Agent 调用接口：兼容 JSON 的 `POST /v1/agent/chat` 与 SSE 的 `POST /v1/agent/chat/stream`，均可选传入短期 Bearer access token。
+- Agent 调用接口：创建会话后，通过 `POST /v1/sessions/:session_id/messages` 以 SSE 执行并持久化每轮对话。
 - 基于 Ark 兼容配置初始化 Eino Agent Graph。
 - 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
@@ -20,7 +20,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 .
 ├── biz/handler/           # HTTP 处理函数与健康检查接口
 ├── internal/
-│   ├── application/chat/  # /v1/agent/chat 应用服务与依赖装配
+│   ├── application/chat/  # 会话聊天应用服务与依赖装配
 │   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
 │   ├── integration/       # Ark、知识库、Cozeloop（开源版 Fornax）、MCP、本地 Sandbox 与同济开放平台适配
 │   └── platform/          # 服务配置与日志等基础能力
@@ -68,6 +68,13 @@ ARK_KNOWLEDGE_ENABLED=false
 MCP_SERVER_URL=http://127.0.0.1:3000/mcp
 MCP_TIMEOUT=12s
 
+# 会话存储：认证会话使用 PostgreSQL，匿名会话使用 Redis；两项均为启动必填
+POSTGRES_DSN=postgres://postgres:postgres@127.0.0.1:5432/tongji_student?sslmode=disable
+REDIS_URL=redis://127.0.0.1:6379/0
+# SESSION_ANONYMOUS_TTL=24h
+# SESSION_ANONYMOUS_MAX_MESSAGES=20
+# SESSION_HISTORY_MAX_MESSAGES=20
+
 # 同济开放平台 OAuth 2.0 授权码模式
 TONGJI_OPEN_PLATFORM_CLIENT_ID=your-client-id
 TONGJI_OPEN_PLATFORM_CLIENT_SECRET=your-client-secret
@@ -75,7 +82,7 @@ TONGJI_OPEN_PLATFORM_REDIRECT_URI=https://app.tongji.edu.cn/wallbreakerAuth/call
 TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 ```
 
-`ENDPOINT_ID`、`ENDPOINT_API_KEY` 以及 `ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）均为必填项。服务启动时会检查它们是否存在并据此创建模型客户端。
+`ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`POSTGRES_DSN` 和 `REDIS_URL` 均为必填项。服务启动时会校验并连接模型、会话存储和远程 MCP。
 
 如需启用 Cozeloop，请显式设置 `COZELOOP_ENABLED=true` 以及对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 
@@ -163,34 +170,23 @@ curl http://127.0.0.1:8080/v1/ping
 go test ./...
 ```
 
-## 调用 Agent
+## 会话调用 Agent
 
-服务启动后，可用以下请求调用 Agent：
+先创建会话，再使用返回的 `session_id` 提交消息。`POST /v1/sessions/:session_id/messages` 是唯一的 Agent 执行入口，始终以 SSE 返回事件，并将用户消息与成功生成的最终回答写入会话存储。
 
 ```bash
-curl --request POST http://127.0.0.1:8080/v1/agent/chat \
+SESSION_ID=$(curl --silent --request POST http://127.0.0.1:8080/v1/sessions \
+  --header 'Authorization: Bearer <access_token>' | jq -r '.session_id')
+
+curl --no-buffer --request POST "http://127.0.0.1:8080/v1/sessions/${SESSION_ID}/messages" \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Bearer <access_token>' \
   --data '{"message":"现在几点了？"}'
 ```
 
-请求体：
+认证请求使用 PostgreSQL 持久化会话；未获得用户 ID 的请求使用带 TTL 的 Redis 匿名会话。响应会包含用于问题排查的 `X-Request-ID`，普通日志只记录该 ID、方法、路径、状态码和耗时，不记录请求或响应内容。
 
-```json
-{"message":"用户问题"}
-```
-
-成功时返回：
-
-```json
-{"message":"Agent 的最终文本回复"}
-```
-
-`Authorization` 为可选字段，当前仅在 Bearer 格式正确时写入请求上下文；`message` 为空或请求体不是合法 JSON 时会返回 `400`；模型调用或 Agent 执行失败时会返回 `500`。JSON 接口保持单轮聚合回复；SSE 接口同样不保存会话历史。响应会包含用于问题排查的 `X-Request-ID`，普通日志只记录该 ID、方法、路径、状态码和耗时，不记录请求或响应内容。
-
-## 流式调用 Agent
-
-`POST /v1/agent/chat/stream` 使用 Server-Sent Events 返回单轮 Run 的安全可见过程。所有事件都包含同一次运行的 `run_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。事件不会包含模型原始推理内容、工具参数、工具原始结果或 Bearer token。
+所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。事件不会包含模型原始推理内容、工具参数、工具原始结果或 Bearer token。
 
 | 事件 | `data` 契约 | 含义 |
 | --- | --- | --- |
@@ -205,18 +201,13 @@ curl --request POST http://127.0.0.1:8080/v1/agent/chat \
 
 `run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
-```bash
-curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <access_token>' \
-  --data '{"message":"现在几点了？"}'
-```
+可使用 `GET /v1/sessions/:session_id/messages?limit=20` 读取当前请求有权访问的 canonical 历史消息。
 
 ## 模型与 MCP 的现状
 
 启动过程中会依次创建模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
 
-`POST /v1/agent/chat` 与 `POST /v1/agent/chat/stream` 都会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 系列接口只用于服务存活检查。当前仍是无会话的单轮运行；后续可在此基础上加入 Session、取消与 HITL Resume。
+会话消息接口会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 系列接口只用于服务存活检查。
 
 当前允许暴露给 Agent 的远程 MCP 工具为：
 
@@ -233,8 +224,9 @@ curl --no-buffer --request POST http://127.0.0.1:8080/v1/agent/chat/stream \
 | `GET` | `/` | 基础服务响应 |
 | `GET` | `/ping` | 健康检查 |
 | `GET` | `/v1/ping` | 兼容部署平台的存活检查 |
-| `POST` | `/v1/agent/chat` | 单轮调用 Agent |
-| `POST` | `/v1/agent/chat/stream` | 以 SSE 返回单轮 Agent 运行事件 |
+| `POST` | `/v1/sessions` | 创建认证或匿名会话 |
+| `POST` | `/v1/sessions/:session_id/messages` | 以 SSE 执行并保存一轮会话消息 |
+| `GET` | `/v1/sessions/:session_id/messages` | 读取会话历史 |
 
 ## 说明
 

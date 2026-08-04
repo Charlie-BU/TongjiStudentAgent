@@ -33,7 +33,7 @@
 ### 改动结果与业务影响
 
 - 现在已经具备可独立测试的会话最小模型：用户消息重试可通过 `client_turn_id` 返回已保存记录，并发追加仍产生连续的 `Sequence`；模型输入只接受经过角色和顺序校验的历史。
-- 保持现有 `Stream`/`StreamWithStudentInfo` API 的行为不变，现有聊天继续作为无状态单轮运行。这个取舍是本次仅提交领域层基础设施的明确边界，而不是遗漏的生产接入。
+- 保持现有 `Stream`/`StreamWithHistory` API 的行为不变，现有聊天继续作为无状态单轮运行。这个取舍是本次仅提交领域层基础设施的明确边界，而不是遗漏的生产接入。
 - 已执行 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session`、`go vet ./...` 与 `git diff --check`，均通过；本次恢复测试后再次执行 `go test ./internal/agentic/runtime`，通过。
 
 ### 风险与待办

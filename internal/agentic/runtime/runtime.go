@@ -64,17 +64,6 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog}, nil
 }
 
-// Stream 执行单轮查询，并通过 emit 输出已脱敏的模型文本与工具生命周期事件。
-// 它不会输出模型 reasoning content、工具参数或工具原始响应。
-func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent.Event)) (string, error) {
-	return r.StreamWithStudentInfo(ctx, query, "", emit)
-}
-
-// StreamWithStudentInfo 执行单轮查询，并将调用方已获取的学生基础信息作为可信上下文注入输入。
-func (r *Runtime) StreamWithStudentInfo(ctx context.Context, query, studentInfo string, emit func(agentevent.Event)) (string, error) {
-	return r.StreamWithHistory(ctx, query, studentInfo, nil, emit)
-}
-
 // TODO：待拆解 tool call 处理
 // StreamWithHistory 执行单轮查询，并将 canonical 会话历史作为模型上下文注入输入。
 func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error) {

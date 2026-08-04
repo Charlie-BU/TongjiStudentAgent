@@ -63,7 +63,7 @@ func TestRuntimeStreamPublishesToolFailureWhenToolStreamFails(t *testing.T) {
 		var events []agentevent.Event
 
 		Convey("应将已开始的工具调用标记为失败", func() {
-			_, err := runtime.Stream(context.Background(), "现在几点？", func(event agentevent.Event) {
+			_, err := runtime.StreamWithHistory(context.Background(), "现在几点？", "", nil, func(event agentevent.Event) {
 				events = append(events, event)
 			})
 
@@ -82,7 +82,7 @@ func TestChatRequiresInitializedRuntime(t *testing.T) {
 	Convey("执行 Runtime 聊天", t, func() {
 		Convey("Runtime 未初始化", func() {
 			var runtime *Runtime
-			response, err := runtime.Stream(context.Background(), "你好", nil)
+			response, err := runtime.StreamWithHistory(context.Background(), "你好", "", nil, nil)
 
 			Convey("应返回初始化错误且不产生响应", func() {
 				So(response, ShouldBeBlank)
@@ -101,8 +101,8 @@ func TestRuntimeStreamCreatesIsolatedSkillRunState(t *testing.T) {
 		runtime := &Runtime{agent: agent}
 
 		Convey("每一轮都应使用独立的 Skill Run State", func() {
-			_, firstErr := runtime.Stream(context.Background(), "第一轮", nil)
-			_, secondErr := runtime.Stream(context.Background(), "第二轮", nil)
+			_, firstErr := runtime.StreamWithHistory(context.Background(), "第一轮", "", nil, nil)
+			_, secondErr := runtime.StreamWithHistory(context.Background(), "第二轮", "", nil, nil)
 
 			So(firstErr, ShouldBeNil)
 			So(secondErr, ShouldBeNil)
@@ -124,7 +124,7 @@ func TestRuntimeStreamContinuesAfterLoadingSkill(t *testing.T) {
 		})
 
 		Convey("加载 Skill 后应继续 ReAct 并生成最终回答", func() {
-			response, streamErr := runtime.Stream(context.Background(), "请生成文档", nil)
+			response, streamErr := runtime.StreamWithHistory(context.Background(), "请生成文档", "", nil, nil)
 
 			So(err, ShouldBeNil)
 			So(streamErr, ShouldBeNil)
@@ -150,7 +150,7 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 		var events []agentevent.Event
 
 		Convey("应输出文本增量和脱敏工具生命周期", func() {
-			response, err := runtime.Stream(context.Background(), "现在几点？", func(event agentevent.Event) {
+			response, err := runtime.StreamWithHistory(context.Background(), "现在几点？", "", nil, func(event agentevent.Event) {
 				events = append(events, event)
 			})
 

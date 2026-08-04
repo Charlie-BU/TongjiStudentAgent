@@ -74,6 +74,7 @@ type RunFailedData struct {
 type Event struct {
 	Type       string    `json:"type"`
 	RunID      string    `json:"run_id"`
+	SessionID  string    `json:"session_id,omitempty"`
 	Sequence   int64     `json:"seq"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Data       any       `json:"data,omitempty"`

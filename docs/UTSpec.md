@@ -732,7 +732,7 @@ func TestWithDefer(t *testing.T) {
 
 ### 10.1 并发测试
 
-使用 `sync.WaitGroup` 和 channel 进行并发测试。对于后续 Session、Checkpoint、缓存和 tool 调度逻辑，需验证并发请求下的幂等、顺序和锁释放。
+使用 `sync.WaitGroup` 和 channel 进行并发测试。对于后续 Session、Checkpoint、缓存和 tool 调度逻辑，需验证并发请求下的顺序和锁释放。
 
 ### 10.2 并发安全测试
 

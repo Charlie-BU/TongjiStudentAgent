@@ -12,6 +12,17 @@
 ## 当前豁免
 
 ```yaml
+- id: WL-20260805-001
+  enabled: true
+  severity: HIGH
+  type: session_api_breaking_change
+  match:
+    file: router.go
+    contains: "r.POST(\"/v1/sessions\", handler.CreateSession)"
+  reason: "产品已确认本次以会话 API 替换旧 /v1/agent/chat 与 /v1/agent/chat/stream 接口；客户端将随本次发布同步迁移，不保留兼容窗口。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-08-05"
+  expires_at: "2026-09-05"
 - id: WL-20260731-001
   enabled: true
   severity: HIGH

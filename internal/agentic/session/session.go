@@ -3,7 +3,10 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -18,6 +21,12 @@ var (
 	ErrInvalidTurnInput = errors.New("session turn input is invalid")
 	// ErrNotFound 表示会话不存在。
 	ErrNotFound = errors.New("session not found")
+	// ErrInvalidTTL 表示匿名会话存活时间无效。
+	ErrInvalidTTL = errors.New("session TTL must be positive")
+	// ErrInvalidMessageLimit 表示会话消息数量上限无效。
+	ErrInvalidMessageLimit = errors.New("session message limit must be positive")
+	// ErrTurnInProgress 表示同一用户消息正在生成回复。
+	ErrTurnInProgress = errors.New("session turn is already in progress")
 )
 
 // Persistence 表示会话的生命周期类型。
@@ -51,20 +60,18 @@ type Session struct {
 
 // Message 表示可作为后续模型输入的 canonical 对话消息。
 type Message struct {
-	ID           string
-	SessionID    string
-	Sequence     int64
-	Role         MessageRole
-	Content      string
-	ClientTurnID string
-	CreatedAt    time.Time
+	ID        string
+	SessionID string
+	Sequence  int64
+	Role      MessageRole
+	Content   string
+	CreatedAt time.Time
 }
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
-	Role         MessageRole
-	Content      string
-	ClientTurnID string
+	Role    MessageRole
+	Content string
 }
 
 // AppendResult 表示追加消息的结果。
@@ -79,4 +86,38 @@ type Store interface {
 	Get(ctx context.Context, sessionID, ownerUserID string) (Session, error)
 	Append(ctx context.Context, sessionID, ownerUserID string, message NewMessage) (AppendResult, error)
 	ListMessages(ctx context.Context, sessionID, ownerUserID string, limit int) ([]Message, error)
+}
+
+// EphemeralStore 定义匿名临时会话的最小存储契约。
+type EphemeralStore interface {
+	Create(ctx context.Context) (Session, error)
+	Get(ctx context.Context, sessionID string) (Session, error)
+	Append(ctx context.Context, sessionID string, message NewMessage) (AppendResult, error)
+	ListMessages(ctx context.Context, sessionID string, limit int) ([]Message, error)
+}
+
+// TurnRelease 在本轮会话执行完成后释放互斥锁。
+type TurnRelease func()
+
+// TurnLocker 约束同一会话在任意实例中同一时间只执行一个 turn。
+type TurnLocker interface {
+	AcquireTurn(ctx context.Context, sessionID string) (TurnRelease, error)
+}
+
+// validateMessage 规范化并校验待写入的 canonical 消息。
+func validateMessage(input NewMessage) (NewMessage, error) {
+	input.Content = strings.TrimSpace(input.Content)
+	if input.Content == "" || (input.Role != MessageRoleUser && input.Role != MessageRoleAssistant) {
+		return NewMessage{}, ErrInvalidMessage
+	}
+	return input, nil
+}
+
+// newID 创建不包含用户身份的随机存储标识。
+func newID(prefix string) string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err == nil {
+		return prefix + "_" + hex.EncodeToString(value)
+	}
+	return prefix + "_" + time.Now().UTC().Format("20060102150405.000000000")
 }

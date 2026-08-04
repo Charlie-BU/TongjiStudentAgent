@@ -3,11 +3,13 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	promptallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/prompt"
@@ -29,12 +31,23 @@ var defaultService *Service
 // studentInfoLoader 按当前请求凭据获取学生基础信息。
 type studentInfoLoader func(ctx context.Context, accessToken string) (*tongjiapi.StudentInfo, error)
 
-// Service 组装当前单轮聊天所需的 Runtime 与外部适配器。
+// sessionRuntime 描述会话执行链路所需的最小运行时能力。
+type sessionRuntime interface {
+	StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error)
+}
+
+// Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
-	runtime           *runtime.Runtime  // Agent Runtime
-	mcpClient         *mcpclient.Client // MCP Client
-	knowledgeClient   *knowledge.Client // 知识库 Client
-	studentInfoLoader studentInfoLoader // 个人信息加载器
+	runtime               sessionRuntime                      // Agent Runtime
+	mcpClient             *mcpclient.Client                   // MCP Client
+	knowledgeClient       *knowledge.Client                   // 知识库 Client
+	studentInfoLoader     studentInfoLoader                   // 个人信息加载器
+	durableSessionStore   agenticsession.Store                // 认证会话存储
+	ephemeralSessionStore agenticsession.EphemeralStore       // 匿名会话存储
+	turnLocker            agenticsession.TurnLocker           // 会话执行锁
+	postgresSessionStore  *agenticsession.PostgresStore       // PostgreSQL 资源
+	redisSessionStore     *agenticsession.RedisEphemeralStore // Redis 资源
+	historyMessageLimit   int                                 // 上下文历史消息上限
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -115,11 +128,40 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		return nil, err
 	}
 
+	// session 持久化相关
+	sessionConfig, err := agenticsession.ConfigFromEnv()
+	if err != nil {
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("read session configuration: %w", err)
+	}
+	postgresStore, err := agenticsession.NewPostgresStoreFromEnv(ctx)
+	if err != nil {
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize PostgreSQL session store: %w", err)
+	}
+	if err := agenticsession.EnsurePostgresSchema(ctx, postgresStore); err != nil {
+		postgresStore.Close()
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize PostgreSQL session schema: %w", err)
+	}
+	redisStore, err := agenticsession.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
+	if err != nil {
+		postgresStore.Close()
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize Redis session store: %w", err)
+	}
+
 	return &Service{
-		runtime:           rt,
-		mcpClient:         mcpClient,
-		knowledgeClient:   knowledgeClient,
-		studentInfoLoader: loadStudentInfo,
+		runtime:               rt,
+		mcpClient:             mcpClient,
+		knowledgeClient:       knowledgeClient,
+		studentInfoLoader:     loadStudentInfo,
+		durableSessionStore:   postgresStore,
+		ephemeralSessionStore: redisStore,
+		turnLocker:            redisStore,
+		postgresSessionStore:  postgresStore,
+		redisSessionStore:     redisStore,
+		historyMessageLimit:   sessionConfig.HistoryMessageLimit,
 	}, nil
 }
 
@@ -141,23 +183,28 @@ func loadSystemInstruction(ctx context.Context) (string, error) {
 	return instruction, nil
 }
 
-// Chat 通过默认聊天服务执行单轮对话。
-func Chat(ctx context.Context, query string) (string, error) {
+// CreateSession 为已认证或匿名请求创建对应生命周期的会话。
+func CreateSession(ctx context.Context) (agenticsession.Session, error) {
 	if defaultService == nil {
-		return "", fmt.Errorf("chat service is not initialized")
+		return agenticsession.Session{}, fmt.Errorf("chat service is not initialized")
 	}
-	return defaultService.Stream(ctx, query, nil)
+	return defaultService.CreateSession(ctx)
 }
 
-// Stream 通过默认聊天服务执行单轮对话，并发送安全的运行过程事件。
-func Stream(ctx context.Context, query string, send func(agentevent.Event)) (string, error) {
+// StreamSession 提交会话消息并以 SSE 事件返回本轮执行过程。
+func StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
 	if defaultService == nil {
-		emitter := agentevent.NewEmitter("", send)
-		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
-		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_unavailable", Message: "Agent 服务暂不可用"})
 		return "", fmt.Errorf("chat service is not initialized")
 	}
-	return defaultService.Stream(ctx, query, send)
+	return defaultService.StreamSession(ctx, sessionID, query, send)
+}
+
+// ListSessionMessages 读取当前请求有权访问的会话历史。
+func ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]agenticsession.Message, error) {
+	if defaultService == nil {
+		return nil, fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.ListSessionMessages(ctx, sessionID, limit)
 }
 
 // Close 释放默认聊天服务持有的资源。
@@ -168,8 +215,133 @@ func Close() error {
 	return defaultService.Close()
 }
 
-// Stream 通过服务 Runtime 执行对话，并发送运行事件。
-func (s *Service) Stream(ctx context.Context, query string, send func(agentevent.Event)) (string, error) {
+// CreateSession 为当前请求的身份状态创建会话。
+func (s *Service) CreateSession(ctx context.Context) (agenticsession.Session, error) {
+	if s == nil {
+		return agenticsession.Session{}, fmt.Errorf("chat service is not initialized")
+	}
+	// userId 存在时，创建持久化会话
+	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
+		if s.durableSessionStore == nil {
+			return agenticsession.Session{}, fmt.Errorf("durable session store is not initialized")
+		}
+		return s.durableSessionStore.Create(ctx, ownerUserID)
+	}
+	// userId 不存在时，创建临时会话
+	if s.ephemeralSessionStore == nil {
+		return agenticsession.Session{}, fmt.Errorf("ephemeral session store is not initialized")
+	}
+	return s.ephemeralSessionStore.Create(ctx)
+}
+
+// StreamSession 将当前用户消息、历史和最终回答写入同一会话。
+func (s *Service) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
+	releaseTurn, err := s.acquireSessionTurn(ctx, sessionID)
+	if err != nil {
+		s.emitSessionFailure(send, err)
+		return "", err
+	}
+	defer releaseTurn()
+
+	history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query)
+	if err != nil {
+		s.emitSessionFailure(send, err)
+		return "", err
+	}
+	return s.stream(ctx, query, history, func() error {
+		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
+		return err
+	}, func(response string) error {
+		_, err := appendAssistant(response) // 在 Agent 执行后追加 AI 消息到 session
+		return err
+	}, send)
+}
+
+// acquireSessionTurn 为会话获取执行锁，确保并发安全。
+func (s *Service) acquireSessionTurn(ctx context.Context, sessionID string) (agenticsession.TurnRelease, error) {
+	if s == nil || s.turnLocker == nil {
+		return nil, fmt.Errorf("session turn locker is not initialized")
+	}
+	return s.turnLocker.AcquireTurn(ctx, sessionID)
+}
+
+// emitSessionFailure 发送会话失败事件。
+func (s *Service) emitSessionFailure(send func(agentevent.Event), err error) {
+	emitter := agentevent.NewEmitter("", send)
+	emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
+	code, message := "session_unavailable", "会话不存在或暂时不可用"
+	if errors.Is(err, agenticsession.ErrTurnInProgress) {
+		code, message = "turn_in_progress", "该会话正在处理中，请稍后重试"
+	}
+	emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: code, Message: message})
+}
+
+// ListSessionMessages 读取当前请求可访问的会话消息。
+func (s *Service) ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]agenticsession.Message, error) {
+	if s == nil {
+		return nil, fmt.Errorf("chat service is not initialized")
+	}
+	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
+		if s.durableSessionStore == nil {
+			return nil, fmt.Errorf("durable session store is not initialized")
+		}
+		return s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, limit)
+	}
+	if s.ephemeralSessionStore == nil {
+		return nil, fmt.Errorf("ephemeral session store is not initialized")
+	}
+	return s.ephemeralSessionStore.ListMessages(ctx, sessionID, limit)
+}
+
+// sessionTurnOperations 为本轮选择存储、读取历史并构造追加操作。
+func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
+	if s == nil {
+		return nil, nil, nil, fmt.Errorf("chat service is not initialized")
+	}
+	// userId 存在时，选择持久化会话
+	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
+		if s.durableSessionStore == nil {
+			return nil, nil, nil, fmt.Errorf("durable session store is not initialized")
+		}
+		history, err := s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, s.historyLimit())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return history,
+			func() (agenticsession.AppendResult, error) {
+				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{Role: agenticsession.MessageRoleUser, Content: query})
+			},
+			func(response string) (agenticsession.AppendResult, error) {
+				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{Role: agenticsession.MessageRoleAssistant, Content: response})
+			}, nil
+	}
+	// userId 不存在时，选择临时会话
+	if s.ephemeralSessionStore == nil {
+		return nil, nil, nil, fmt.Errorf("ephemeral session store is not initialized")
+	}
+	history, err := s.ephemeralSessionStore.ListMessages(ctx, sessionID, s.historyLimit())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return history,
+		func() (agenticsession.AppendResult, error) {
+			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{Role: agenticsession.MessageRoleUser, Content: query})
+		},
+		func(response string) (agenticsession.AppendResult, error) {
+			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{Role: agenticsession.MessageRoleAssistant, Content: response})
+		}, nil
+}
+
+// historyLimit 返回有效的上下文历史消息数量。
+func (s *Service) historyLimit() int {
+	if s.historyMessageLimit > 0 {
+		return s.historyMessageLimit
+	}
+	return 20
+}
+
+// stream 执行一次模型调用，并在成功后可选持久化最终回答。
+func (s *Service) stream(ctx context.Context, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, send func(agentevent.Event)) (string, error) {
 	emitter := agentevent.NewEmitter("", send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
@@ -184,6 +356,17 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "student_info_unavailable", Message: "学生基础信息暂时不可用，请稍后重试"})
 		return "", err
 	}
+	// Agent 执行前
+	if beforeModel != nil {
+		if err := beforeModel(); err != nil {
+			code, message := "session_write_failed", "会话消息暂时无法保存，请稍后重试"
+			if errors.Is(err, agenticsession.ErrTurnInProgress) {
+				code, message = "turn_in_progress", "该消息正在处理中，请勿重复提交"
+			}
+			emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: code, Message: message})
+			return "", err
+		}
+	}
 
 	// TODO：使用 tool 调用知识库检索工具，不要直接作为 input
 	// input, err := s.withKnowledgeContextWithEmitter(ctx, query, emitter)
@@ -193,12 +376,19 @@ func (s *Service) Stream(ctx context.Context, query string, send func(agentevent
 	// }
 
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "model", Message: "正在生成回答"})
-	response, err := s.runtime.StreamWithStudentInfo(ctx, query, studentInfo, func(event agentevent.Event) {
+	response, err := s.runtime.StreamWithHistory(ctx, query, studentInfo, history, func(event agentevent.Event) {
 		emitter.Emit(event.Type, event.Data)
 	})
 	if err != nil {
 		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_execution_failed", Message: "Agent 执行失败"})
 		return "", err
+	}
+	// Agent 执行后
+	if afterModel != nil {
+		if err := afterModel(response); err != nil {
+			emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "session_write_failed", Message: "回答已生成，但会话暂时无法保存"})
+			return "", err
+		}
 	}
 	emitter.Emit(agentevent.RunCompleted, agentevent.RunCompletedData{DurationMS: time.Since(startedAt).Milliseconds()})
 	return response, nil
@@ -230,12 +420,22 @@ func loadStudentInfo(ctx context.Context, accessToken string) (*tongjiapi.Studen
 	return studentInfo, nil
 }
 
-// Close 释放 MCP Client。
+// Close 释放聊天服务持有的外部资源。
 func (s *Service) Close() error {
-	if s == nil || s.mcpClient == nil {
+	if s == nil {
 		return nil
 	}
-	return s.mcpClient.Close()
+	var closeErr error
+	if s.redisSessionStore != nil {
+		closeErr = errors.Join(closeErr, s.redisSessionStore.Close())
+	}
+	if s.postgresSessionStore != nil {
+		s.postgresSessionStore.Close()
+	}
+	if s.mcpClient != nil {
+		closeErr = errors.Join(closeErr, s.mcpClient.Close())
+	}
+	return closeErr
 }
 
 // withKnowledgeContextWithEmitter 将可选知识库结果作为非可信参考资料传给 Runtime。

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
@@ -13,24 +14,6 @@ import (
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-func TestChatRequiresInitializedDefaultService(t *testing.T) {
-	Convey("使用默认聊天服务", t, func() {
-		original := defaultService
-		defaultService = nil
-		t.Cleanup(func() { defaultService = original })
-
-		Convey("默认服务未初始化", func() {
-			response, err := Chat(context.Background(), "你好")
-
-			Convey("应返回初始化错误且不产生响应", func() {
-				So(response, ShouldBeBlank)
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "chat service is not initialized")
-			})
-		})
-	})
-}
 
 func TestServiceLoadUserInfo(t *testing.T) {
 	Convey("加载个人基础信息", t, func() {
@@ -190,23 +173,96 @@ func TestLoadSystemInstructionDoesNotContainSkillCatalog(t *testing.T) {
 	})
 }
 
-func TestServiceChatRequiresRuntime(t *testing.T) {
-	Convey("通过聊天服务执行对话", t, func() {
-		Convey("Runtime 未初始化", func() {
-			service := &Service{}
-			var events []agentevent.Event
-			response, err := service.Stream(context.Background(), "你好", func(event agentevent.Event) {
-				events = append(events, event)
-			})
+func TestStreamSessionEndToEnd(t *testing.T) {
+	Convey("会话消息主链路", t, func() {
+		operations := make([]string, 0, 4)
+		store := &recordingEphemeralStore{
+			operations: &operations,
+			history: []agenticsession.Message{
+				{ID: "msg-001", SessionID: "anon-001", Sequence: 1, Role: agenticsession.MessageRoleUser, Content: "上一轮问题"},
+				{ID: "msg-002", SessionID: "anon-001", Sequence: 2, Role: agenticsession.MessageRoleAssistant, Content: "上一轮回答"},
+			},
+		}
+		runner := &recordingSessionRuntime{operations: &operations, response: "本轮回答"}
+		service := &Service{
+			runtime:               runner,
+			ephemeralSessionStore: store,
+			turnLocker:            noOpTurnLocker{},
+			historyMessageLimit:   20,
+		}
+		events := make([]agentevent.Event, 0, 4)
 
-			Convey("应返回初始化错误且以失败终态收尾", func() {
-				So(response, ShouldBeBlank)
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "chat service is not initialized")
-				So(events, ShouldHaveLength, 2)
-				So(events[0].Type, ShouldEqual, agentevent.RunStarted)
-				So(events[1].Type, ShouldEqual, agentevent.RunFailed)
-			})
+		response, err := service.StreamSession(context.Background(), "anon-001", "本轮问题", func(event agentevent.Event) {
+			events = append(events, event)
+		})
+
+		So(err, ShouldBeNil)
+		So(response, ShouldEqual, "本轮回答")
+		So(runner.query, ShouldEqual, "本轮问题")
+		So(runner.history, ShouldResemble, store.history)
+		So(store.appended, ShouldResemble, []agenticsession.NewMessage{
+			{Role: agenticsession.MessageRoleUser, Content: "本轮问题"},
+			{Role: agenticsession.MessageRoleAssistant, Content: "本轮回答"},
+		})
+		So(operations, ShouldResemble, []string{"list", "append:user", "runtime", "append:assistant"})
+		So(eventTypes(events), ShouldResemble, []string{
+			agentevent.RunStarted,
+			agentevent.AgentStatus,
+			agentevent.AgentStatus,
+			agentevent.RunCompleted,
 		})
 	})
+}
+
+type recordingEphemeralStore struct {
+	operations *[]string
+	history    []agenticsession.Message
+	appended   []agenticsession.NewMessage
+}
+
+func (s *recordingEphemeralStore) Create(context.Context) (agenticsession.Session, error) {
+	return agenticsession.Session{}, nil
+}
+
+func (s *recordingEphemeralStore) Get(context.Context, string) (agenticsession.Session, error) {
+	return agenticsession.Session{}, nil
+}
+
+func (s *recordingEphemeralStore) Append(_ context.Context, _ string, message agenticsession.NewMessage) (agenticsession.AppendResult, error) {
+	s.appended = append(s.appended, message)
+	*s.operations = append(*s.operations, "append:"+string(message.Role))
+	return agenticsession.AppendResult{Created: true}, nil
+}
+
+func (s *recordingEphemeralStore) ListMessages(context.Context, string, int) ([]agenticsession.Message, error) {
+	*s.operations = append(*s.operations, "list")
+	return s.history, nil
+}
+
+type recordingSessionRuntime struct {
+	operations *[]string
+	query      string
+	history    []agenticsession.Message
+	response   string
+}
+
+func (r *recordingSessionRuntime) StreamWithHistory(_ context.Context, query, _ string, history []agenticsession.Message, _ func(agentevent.Event)) (string, error) {
+	r.query = query
+	r.history = history
+	*r.operations = append(*r.operations, "runtime")
+	return r.response, nil
+}
+
+type noOpTurnLocker struct{}
+
+func (noOpTurnLocker) AcquireTurn(context.Context, string) (agenticsession.TurnRelease, error) {
+	return func() {}, nil
+}
+
+func eventTypes(events []agentevent.Event) []string {
+	types := make([]string, 0, len(events))
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	return types
 }
