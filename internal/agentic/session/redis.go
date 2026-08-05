@@ -168,7 +168,7 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
+	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.ResponseID, strconv.FormatInt(input.ResponseCacheExpiresAt, 10), input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("append ephemeral message: %w", err)
 	}
@@ -239,14 +239,16 @@ local toolCalls = ARGV[3]
 local toolCallID = ARGV[4]
 local toolName = ARGV[5]
 local reasoningContent = ARGV[6]
-local runID = ARGV[7]
-local messageID = ARGV[8]
-local now = ARGV[9]
-local ttl = tonumber(ARGV[10])
-local maxItems = tonumber(ARGV[11])
+local responseID = ARGV[7]
+local responseCacheExpiresAt = tonumber(ARGV[8])
+local runID = ARGV[9]
+local messageID = ARGV[10]
+local now = ARGV[11]
+local ttl = tonumber(ARGV[12])
+local maxItems = tonumber(ARGV[13])
 local sequence = redis.call('HINCRBY', meta, 'next_sequence', 1)
 redis.call('HSET', meta, 'last_active_at', now)
-local item = cjson.encode({ID=messageID, SessionID=string.match(meta, '([^:]+):meta$'), run_id=runID, Sequence=sequence, Role=role, Content=content, ToolCalls=cjson.decode(toolCalls), ToolCallID=toolCallID, ToolName=toolName, ReasoningContent=reasoningContent, CreatedAt=now})
+local item = cjson.encode({ID=messageID, SessionID=string.match(meta, '([^:]+):meta$'), run_id=runID, Sequence=sequence, Role=role, Content=content, ToolCalls=cjson.decode(toolCalls), ToolCallID=toolCallID, ToolName=toolName, ReasoningContent=reasoningContent, response_id=responseID, response_cache_expires_at=responseCacheExpiresAt, CreatedAt=now})
 redis.call('LPUSH', messages, item)
 redis.call('LTRIM', messages, 0, maxItems - 1)
 redis.call('PEXPIRE', meta, ttl)

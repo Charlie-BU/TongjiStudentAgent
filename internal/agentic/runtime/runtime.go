@@ -65,12 +65,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 }
 
 // TODO：待拆解 tool call 处理
-// StreamWithHistory 执行单轮查询，并将 canonical 会话历史作为模型上下文注入输入。
-func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error) {
-	return r.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emit, nil)
-}
-
-// StreamWithHistoryAndMessages 执行查询，并将运行时输出逐条交给调用方持久化。
+// StreamWithHistoryAndMessages 执行查询，并将运行时输出**逐条**交给调用方持久化。
 func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")

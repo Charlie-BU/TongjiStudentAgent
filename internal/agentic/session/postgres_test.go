@@ -32,6 +32,8 @@ func TestPostgresStoreValidation(t *testing.T) {
 			schema := strings.Join(postgresSchemaStatements, "\n")
 			So(strings.Contains(schema, "UNIQUE (session_id, sequence)"), ShouldBeTrue)
 			So(strings.Contains(schema, "run_id TEXT NOT NULL"), ShouldBeTrue)
+			So(strings.Contains(schema, "response_id TEXT NOT NULL"), ShouldBeTrue)
+			So(strings.Contains(schema, "response_cache_expires_at BIGINT NOT NULL"), ShouldBeTrue)
 		})
 	})
 }
@@ -57,18 +59,19 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_session_messages WHERE session_id = $1`)).
 				WithArgs("ses-001").
 				WillReturnRows(pgxmock.NewRows([]string{"sequence"}).AddRow(int64(1)))
-			pool.ExpectExec(regexp.QuoteMeta(`INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`)).
-				WithArgs(pgxmock.AnyArg(), "ses-001", "run-001", int64(1), MessageRoleAssistant, "", pgxmock.AnyArg(), "", "", "需要查询成绩", pgxmock.AnyArg()).
+			pool.ExpectExec(regexp.QuoteMeta(`INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`)).
+				WithArgs(pgxmock.AnyArg(), "ses-001", "run-001", int64(1), MessageRoleAssistant, "", pgxmock.AnyArg(), "", "", "需要查询成绩", "resp-001", int64(1_785_000_000), pgxmock.AnyArg()).
 				WillReturnResult(pgxmock.NewResult("INSERT", 1))
 			pool.ExpectExec(regexp.QuoteMeta(`UPDATE agent_sessions SET last_active_at = $1 WHERE id = $2`)).
 				WithArgs(pgxmock.AnyArg(), "ses-001").
 				WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 			pool.ExpectCommit()
 
-			appended, appendErr := store.Append(context.Background(), "ses-001", "user-001", NewMessage{RunID: "run-001", Role: MessageRoleAssistant, ToolCalls: toolCalls, ReasoningContent: "需要查询成绩"})
+			appended, appendErr := store.Append(context.Background(), "ses-001", "user-001", NewMessage{RunID: "run-001", Role: MessageRoleAssistant, ToolCalls: toolCalls, ReasoningContent: "需要查询成绩", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000})
 			So(appendErr, ShouldBeNil)
 			So(appended.Message.ToolCalls, ShouldResemble, toolCalls)
 			So(appended.Message.RunID, ShouldEqual, "run-001")
+			So(appended.Message.ResponseID, ShouldEqual, "resp-001")
 
 			createdAt := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
 			toolCallsJSON, marshalErr := json.Marshal(toolCalls)
@@ -76,17 +79,18 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
 				WithArgs("ses-001", "user-001").
 				WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", createdAt, createdAt))
-			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`)).
+			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`)).
 				WithArgs("ses-001", 20).
-				WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "created_at"}).
-					AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleTool, `{"scores":[{"course":"高等数学"}]}`, []byte(`[]`), "call-001", "tongji.student.score", "", createdAt).
-					AddRow("msg-001", "ses-001", "run-001", int64(1), MessageRoleAssistant, "", toolCallsJSON, "", "", "需要查询成绩", createdAt))
+				WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "response_id", "response_cache_expires_at", "created_at"}).
+					AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleTool, `{"scores":[{"course":"高等数学"}]}`, []byte(`[]`), "call-001", "tongji.student.score", "", "", int64(0), createdAt).
+					AddRow("msg-001", "ses-001", "run-001", int64(1), MessageRoleAssistant, "", toolCallsJSON, "", "", "需要查询成绩", "resp-001", int64(1_785_000_000), createdAt))
 
 			messages, listErr := store.ListMessages(context.Background(), "ses-001", "user-001", 20)
 			So(listErr, ShouldBeNil)
 			So(messages, ShouldHaveLength, 2)
 			So(messages[0].ToolCalls, ShouldResemble, toolCalls)
 			So(messages[0].RunID, ShouldEqual, "run-001")
+			So(messages[0].ResponseID, ShouldEqual, "resp-001")
 			So(messages[1].Role, ShouldEqual, MessageRoleTool)
 			So(messages[1].ToolCallID, ShouldEqual, "call-001")
 			So(messages[1].Content, ShouldContainSubstring, "高等数学")

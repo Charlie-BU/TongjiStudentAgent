@@ -579,7 +579,9 @@ console.log(historyPayload.messages);
 
 ## 模型与 MCP 的现状
 
-启动过程中会依次创建模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
+启动过程中会依次创建 Ark Responses API 模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
+
+主 Agent 固定启用 Ark Responses API 的 response-chain 会话缓存，TTL 为 600 秒。每轮 Agent 输出的 `response_id` 和缓存到期时间会随 canonical 会话消息写入 PostgreSQL 或 Redis，并在下一轮恢复到模型历史；Ark SDK 因而会自动发送 `previous_response_id` 与未缓存的增量上下文。缓存过期或历史中没有可用 response ID 时，服务会自动回退为完整历史请求，不影响会话正确性。
 
 会话消息接口会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 系列接口只用于服务存活检查。
 

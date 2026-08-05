@@ -21,6 +21,7 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
+	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -33,11 +34,6 @@ type studentInfoLoader func(ctx context.Context, accessToken string) (*tongjiapi
 
 // sessionRuntime 描述会话执行链路所需的最小运行时能力。
 type sessionRuntime interface {
-	StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error)
-}
-
-type messageRecordingRuntime interface {
-	sessionRuntime
 	StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error)
 }
 
@@ -249,16 +245,13 @@ func (s *Service) StreamSession(ctx context.Context, sessionID, query string, se
 	}
 	defer releaseTurn()
 
-	history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
+	history, appendUser, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
 	if err != nil {
 		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
 	return s.stream(ctx, runID, query, history, func() error {
 		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
-		return err
-	}, func(response string) error {
-		_, err := appendAssistant(response) // 在 Agent 执行后追加 AI 消息到 session
 		return err
 	}, func(ctx context.Context, message *schema.Message) error {
 		return s.appendAgentMessage(ctx, sessionID, runID, message)
@@ -301,55 +294,57 @@ func (s *Service) ListSessionMessages(ctx context.Context, sessionID string, lim
 	return s.ephemeralSessionStore.ListMessages(ctx, sessionID, limit)
 }
 
-// sessionTurnOperations 为本轮选择存储、读取历史并构造追加操作。
-func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, runID string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
+// sessionTurnOperations 为本轮选择存储、读取历史并构造用户消息追加操作。
+// 返回会话历史、追加用户消息函数和错误。
+func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, runID string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), error) {
 	if s == nil {
-		return nil, nil, nil, fmt.Errorf("chat service is not initialized")
+		return nil, nil, fmt.Errorf("chat service is not initialized")
 	}
 	// userId 存在时，选择持久化会话
 	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
 		if s.durableSessionStore == nil {
-			return nil, nil, nil, fmt.Errorf("durable session store is not initialized")
+			return nil, nil, fmt.Errorf("durable session store is not initialized")
 		}
 		history, err := s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, s.historyLimit())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		return history,
 			func() (agenticsession.AppendResult, error) {
 				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
-			},
-			func(response string) (agenticsession.AppendResult, error) {
-				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleAssistant, Content: response})
 			}, nil
 	}
 	// userId 不存在时，选择临时会话
 	if s.ephemeralSessionStore == nil {
-		return nil, nil, nil, fmt.Errorf("ephemeral session store is not initialized")
+		return nil, nil, fmt.Errorf("ephemeral session store is not initialized")
 	}
 	history, err := s.ephemeralSessionStore.ListMessages(ctx, sessionID, s.historyLimit())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	return history,
 		func() (agenticsession.AppendResult, error) {
 			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
-		},
-		func(response string) (agenticsession.AppendResult, error) {
-			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleAssistant, Content: response})
 		}, nil
 }
 
+// appendAgentMessage 追加 Agent 输出消息到会话。
+// 参数：上下文、sessionID、本轮 runID、Agent 消息
+// 返回：错误信息
 func (s *Service) appendAgentMessage(ctx context.Context, sessionID, runID string, message *schema.Message) error {
 	input, err := agenticsession.NewMessageFromSchema(message)
 	if err != nil {
 		return err
 	}
 	input.RunID = runID
+	input.ResponseID, _ = ark.GetResponseID(message)
+	input.ResponseCacheExpiresAt, _ = ark.GetCacheExpiration(message)
+	// userId 存在时，选择持久化会话
 	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
 		_, err = s.durableSessionStore.Append(ctx, sessionID, ownerUserID, input)
 		return err
 	}
+	// userId 不存在时，选择临时会话
 	_, err = s.ephemeralSessionStore.Append(ctx, sessionID, input)
 	return err
 }
@@ -362,8 +357,10 @@ func (s *Service) historyLimit() int {
 	return 20
 }
 
-// stream 执行一次模型调用，并在成功后可选持久化最终回答。
-func (s *Service) stream(ctx context.Context, runID, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
+// stream 执行一次模型调用，并通过 record 持久化每条 Agent 输出消息。
+// 参数：上下文、本轮 runID、用户 query、历史消息、模型调用前回调、记录回调、事件发送函数
+// 返回：模型回答、错误信息
+func (s *Service) stream(ctx context.Context, runID, query string, history []agenticsession.Message, beforeModel func() error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
 	emitter := agentevent.NewEmitter(runID, send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
@@ -401,27 +398,10 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 	emitRuntimeEvent := func(event agentevent.Event) {
 		emitter.Emit(event.Type, event.Data)
 	}
-	var response string
-	if runtimeWithRecorder, ok := s.runtime.(messageRecordingRuntime); ok {
-		response, err = runtimeWithRecorder.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emitRuntimeEvent, record)
-	} else {
-		response, err = s.runtime.StreamWithHistory(ctx, query, studentInfo, history, emitRuntimeEvent)
-	}
+	response, err := s.runtime.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emitRuntimeEvent, record)
 	if err != nil {
 		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_execution_failed", Message: "Agent 执行失败"})
 		return "", err
-	}
-	// Agent 执行后
-	if afterModel != nil {
-		if _, supportsRecorder := s.runtime.(messageRecordingRuntime); supportsRecorder {
-			afterModel = nil
-		}
-	}
-	if afterModel != nil {
-		if err := afterModel(response); err != nil {
-			emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "session_write_failed", Message: "回答已生成，但会话暂时无法保存"})
-			return "", err
-		}
 	}
 	emitter.Emit(agentevent.RunCompleted, agentevent.RunCompletedData{DurationMS: time.Since(startedAt).Milliseconds()})
 	return response, nil

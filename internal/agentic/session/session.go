@@ -64,28 +64,32 @@ type Session struct {
 
 // Message 表示可作为后续模型输入的 canonical 对话消息。
 type Message struct {
-	ID               string            `json:"id"`
-	SessionID        string            `json:"session_id"`
-	RunID            string            `json:"run_id"`
-	Sequence         int64             `json:"sequence"`
-	Role             MessageRole       `json:"role"`
-	Content          string            `json:"content"`
-	ToolCalls        []schema.ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string            `json:"tool_call_id,omitempty"`
-	ToolName         string            `json:"tool_name,omitempty"`
-	ReasoningContent string            `json:"reasoning_content,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
+	ID                     string            `json:"id"`
+	SessionID              string            `json:"session_id"`
+	RunID                  string            `json:"run_id"`
+	Sequence               int64             `json:"sequence"`
+	Role                   MessageRole       `json:"role"`
+	Content                string            `json:"content"`
+	ToolCalls              []schema.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID             string            `json:"tool_call_id,omitempty"`
+	ToolName               string            `json:"tool_name,omitempty"`
+	ReasoningContent       string            `json:"reasoning_content,omitempty"`
+	ResponseID             string            `json:"response_id,omitempty"`
+	ResponseCacheExpiresAt int64             `json:"response_cache_expires_at,omitempty"`
+	CreatedAt              time.Time         `json:"created_at"`
 }
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
-	RunID            string
-	Role             MessageRole
-	Content          string
-	ToolCalls        []schema.ToolCall
-	ToolCallID       string
-	ToolName         string
-	ReasoningContent string
+	RunID                  string
+	Role                   MessageRole
+	Content                string
+	ToolCalls              []schema.ToolCall
+	ToolCallID             string
+	ToolName               string
+	ReasoningContent       string
+	ResponseID             string
+	ResponseCacheExpiresAt int64
 }
 
 // AppendResult 表示追加消息的结果。

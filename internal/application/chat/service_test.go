@@ -12,6 +12,7 @@ import (
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
+	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -218,6 +219,44 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 	})
 }
 
+func TestAppendAgentMessagePersistsArkResponseCache(t *testing.T) {
+	Convey("Agent 输出的 Ark response-chain 元数据", t, func() {
+		operations := make([]string, 0, 1)
+		store := &recordingEphemeralStore{operations: &operations}
+		service := &Service{ephemeralSessionStore: store}
+		message := schema.AssistantMessage("查询完成", nil)
+		message.Extra = map[string]any{
+			"ark-response-id":              "resp-001",
+			"ark-response-cache-expire-at": int64(1_785_000_000),
+		}
+
+		err := service.appendAgentMessage(context.Background(), "anon-001", "run-001", message)
+
+		Convey("应持久化并在下一轮上下文恢复 SDK 可识别字段", func() {
+			So(err, ShouldBeNil)
+			So(store.appended, ShouldHaveLength, 1)
+			So(store.appended[0].ResponseID, ShouldEqual, "resp-001")
+			So(store.appended[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
+
+			history := agenticsession.Message{
+				Sequence:               1,
+				Role:                   store.appended[0].Role,
+				Content:                store.appended[0].Content,
+				ResponseID:             store.appended[0].ResponseID,
+				ResponseCacheExpiresAt: store.appended[0].ResponseCacheExpiresAt,
+			}
+			messages, assembleErr := agenticsession.NewContextAssembler().AssembleForTurn(context.Background(), agenticsession.TurnInput{
+				DynamicReminder: schema.UserMessage("<system-reminder>当前日期</system-reminder>"),
+				History:         []agenticsession.Message{history},
+				UserMessage:     schema.UserMessage("继续查询"),
+			})
+			So(assembleErr, ShouldBeNil)
+			So(messages[1].Extra["ark-response-id"], ShouldEqual, "resp-001")
+			So(messages[1].Extra["ark-response-cache-expire-at"], ShouldEqual, int64(1_785_000_000))
+		})
+	})
+}
+
 type recordingEphemeralStore struct {
 	operations *[]string
 	history    []agenticsession.Message
@@ -250,10 +289,13 @@ type recordingSessionRuntime struct {
 	response   string
 }
 
-func (r *recordingSessionRuntime) StreamWithHistory(_ context.Context, query, _ string, history []agenticsession.Message, _ func(agentevent.Event)) (string, error) {
+func (r *recordingSessionRuntime) StreamWithHistoryAndMessages(ctx context.Context, query, _ string, history []agenticsession.Message, _ func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	r.query = query
 	r.history = history
 	*r.operations = append(*r.operations, "runtime")
+	if err := record(ctx, schema.AssistantMessage(r.response, nil)); err != nil {
+		return "", err
+	}
 	return r.response, nil
 }
 

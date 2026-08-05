@@ -37,6 +37,7 @@ func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skil
 	}
 	reminder := "<system-reminder>\n" + strings.Join(reminderParts, "\n\n") + "\n</system-reminder>"
 
+	// 通过 ContextAssembler 构建最终模型输入
 	return agenticsession.NewContextAssembler().AssembleForTurn(ctx, agenticsession.TurnInput{
 		DynamicReminder: schema.UserMessage(reminder),
 		History:         history,

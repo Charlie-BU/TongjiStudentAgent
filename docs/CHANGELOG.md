@@ -1,3 +1,58 @@
+## CHANGELOG - 2026-08-06 01:06 - 接入 Ark Responses API 会话缓存并持久化 response chain
+
+### 撰写时间
+
+- 2026-08-06 01:06
+
+### Base Commit
+
+- f9dd638cee4e09fd6225f6b0ea03f1e1fa64d8d3
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 多轮会话已经能够把 canonical user、assistant 与 tool 消息从 PostgreSQL 或 Redis 恢复到 Runtime，但每一轮仍会把完整历史重新交给模型。对带工具循环的 Agent 来说，这会重复传输先前已经处理过的上下文，既增加请求体和模型上下文成本，也没有利用 Ark Responses API 已提供的 response-chain session cache。
+- 一开始不能只在模型构造处打开缓存。Ark SDK 会从输入历史中找最近一个有效的 `response_id`，随后裁掉该消息及其之前的输入，只发送其后的增量。如果仍把“当前日期、当前学生资料和 Skill catalog”放在历史之前，这些本轮动态信息也会被裁掉，模型会继续使用缓存中旧的 reminder。此次将缓存元数据的持久化、上下文装配顺序和会话写入方式一起调整，目标是在命中缓存时仍保留本轮动态上下文，同时在缓存失效时自然退回完整历史。
+- 另一个约束是 Agent 输出不再只是最终文本。工具调用、工具结果、reasoning 与最终 assistant 消息都要成为同一条可恢复链路的一部分；若仍保留旧的“模型结束后再追加最终回答”分支，容易重复写入并丢失模型输出附带的 Ark metadata。因此本次把记录回调收敛为会话 Runtime 的必经能力。
+
+### 改动概览
+
+- `internal/integration/arkmodel.NewFromEnv` 从旧 `ChatModel` 切换为 `ark.NewResponsesAPIChatModel`，默认启用 600 秒 `SessionCache`，并配置 `ReasoningEffortMedium`。返回类型收敛为 Runtime 已依赖的 `model.BaseChatModel`，不再让应用层依赖旧模型实现类型。
+- canonical `session.Message` / `NewMessage` 增加 `ResponseID` 与 `ResponseCacheExpiresAt`。`chat.Service.appendAgentMessage` 从每条 Runtime 输出的 `schema.Message.Extra` 提取 Ark 的 `response_id` 和缓存过期秒数，再随同 `run_id`、tool calls、reasoning 一起写入对应会话。
+- PostgreSQL `agent_session_messages` 增加 `response_id TEXT` 与 `response_cache_expires_at BIGINT`，启动迁移使用 `ADD COLUMN IF NOT EXISTS` 补齐既有表；Redis Lua append 参数和 JSON payload 同步扩展。两种存储的 `Append` / `ListMessages` 都保留该元数据，旧记录以空 ID、过期时间 `0` 安全回退。
+- `ContextAssembler` 恢复 assistant 历史时把持久化字段写回 Ark SDK 识别的 `Extra` key。它会先检查是否存在尚未过期的缓存响应：无缓存时维持“动态 reminder -> 历史 -> 当前 query”的原顺序；命中缓存时改为“历史 -> 动态 reminder -> 当前 query”，确保 SDK 裁剪缓存前缀后，当前日期、用户资料和 Skill catalog 仍作为增量发送。
+- `runtime.Runtime` 删除只返回最终文本的 `StreamWithHistory` 入口，保留并强化 `StreamWithHistoryAndMessages`。`chat.Service` 同步将 `sessionRuntime` 固定为带 `record` 回调的接口，移除结束阶段单独追加 final assistant 文本的 fallback；每条 Agent 输出均由回调落入 session，避免重复消息并保留 response-chain 元数据。
+- README 补充当前模型运行方式：缓存命中时 Ark 自动携带 `previous_response_id` 与未缓存增量；响应 ID 不存在或缓存过期时，SDK 发送完整历史，正确性不依赖缓存命中。
+- 新增或更新 Runtime、上下文、PostgreSQL、Redis、Chat service 与 Ark 初始化测试，覆盖 Responses API 创建、TTL、元数据存取、`Extra` 恢复、完整消息记录和缓存命中时 dynamic reminder 的装配位置。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`NewFromEnv` 仍使用 `ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL` / `ARK_BASE_URL_CN` 完成模型构造；`runtime.New` 继续只依赖 `model.BaseChatModel`。请求身份、会话归属、Redis turn lock 与 MCP Tool allowlist 不因缓存开启而改变。
+- 当前写入链：`adk.Runner` 产生 `schema.Message` -> `Runtime.StreamWithHistoryAndMessages` 调用 `record` -> `chat.Service.appendAgentMessage` 读取 Ark `Extra` -> `PostgresStore` 或 `RedisEphemeralStore` 写入 canonical 消息。工具循环中间的 assistant/tool 消息和最终回复均走该路径；不会再由 `afterModel` 再写一份最终文本。
+- 当前恢复链：`ListMessages` 从 session store 读取 response ID 与 expiry -> `ContextAssembler.restoreArkResponseCache` 重建 SDK metadata -> Ark Responses SDK 找最近有效 assistant cache 并使用其 `previous_response_id`。缓存命中后，Assembler 有意把本轮 dynamic reminder 放在历史之后；SDK 裁掉缓存消息及之前内容时，提醒和当前 query 会留下来作为真正的增量输入。
+- 下游影响：缓存可用时，模型服务端保留已处理 response chain，应用侧不再重复发送整段前缀；缓存到期时，由于历史消息仍完整持久化且过期 metadata 不会被 SDK 选中，调用退回完整上下文。会话历史接口现在也会返回 `response_id` 与 `response_cache_expires_at` 字段，调用方应把它们视为会话内部元数据，不应自行拼装或转发为模型凭据。
+
+### 改动结果与业务影响
+
+- 多轮 Agent 在 600 秒缓存窗口内可以复用 Ark 上一轮的 response chain，并继续携带当前轮动态资料和当前 query；这减少了重复前缀传输，同时避免了因缓存裁剪导致日期、学生资料或 Skill catalog 停留在旧值的问题。
+- 认证会话和匿名会话都具备同一份 response metadata 语义。PostgreSQL 的所有权查询仍以 `session_id + owner_user_id` 保护；匿名会话仍由随机 capability ID 与 TTL 管理。response ID 本身不携带 API key，模型调用仍仅发生在服务端。
+- 会话 Runtime 不再支持只写最终回答的兼容路径。仓内 Runtime、service fake 与测试已同步为逐条记录接口；这使工具轨迹、reasoning、最终回复和 Ark response metadata 在同一持久化边界内保持一致。
+- 已执行并通过 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session ./internal/application/chat ./internal/integration/arkmodel`、`go vet ./...` 与 `git diff HEAD --check`。测试均使用 fake Agent、`pgxmock`、`miniredis` 或本地构造的 schema message，不访问真实 Ark、校园平台、共享 Redis 或 PostgreSQL。
+
+### 风险与待办
+
+- Responses API 的实际缓存命中、服务端 `previous_response_id` 行为和缓存失效响应仍未通过真实 Ark endpoint 验证；当前单测覆盖本地 metadata 编解码与输入排序，不等同于生产网络契约。发布前应在隔离的 Ark 测试 endpoint 观测请求体、缓存命中率和过期后的完整历史回退。
+- 动态 reminder 在缓存命中时会作为 cached assistant 之后的一条 User role 消息重新发送。该顺序是为了适配 SDK 的裁剪规则，但若未来 Agent 或 Ark SDK 改变“最近缓存消息”的选择策略，需要重新验证动态资料、工具结果和当前 query 的相对顺序。
+- `response_id` 与过期时间会通过会话历史 JSON 返回给具有会话访问权的客户端。它们不是 Bearer token，但属于上游会话关联元数据；前端、日志和分析链路不应把它们当成可公开分享的标识，也不应尝试以此替代服务端 Ark 凭据。
+- 本次默认开启 `ReasoningEffortMedium`，模型可能产生更多 reasoning 内容。现有 raw reasoning / tool trace 暴露仍受 `WL-20260805-002` 的产品豁免约束，白名单将于 2026-09-05 到期，届时需要一并复核缓存与前端数据处理边界。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): persist Ark response-chain cache`
+
 ## CHANGELOG - 2026-08-05 02:26 - 记录并回放 Agent 工具调用与推理轨迹
 
 ### 撰写时间
