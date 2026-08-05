@@ -100,6 +100,7 @@ type Emitter struct {
 
 // NewEmitter 创建单次 Agent Run 的事件发送器。
 func NewEmitter(runID string, send func(Event)) *Emitter {
+	// 兜底：生成随机 Run 标识和空发送函数
 	if runID == "" {
 		runID = NewRunID()
 	}

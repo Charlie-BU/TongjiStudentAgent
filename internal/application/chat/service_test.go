@@ -200,10 +200,13 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 		So(response, ShouldEqual, "本轮回答")
 		So(runner.query, ShouldEqual, "本轮问题")
 		So(runner.history, ShouldResemble, store.history)
-		So(store.appended, ShouldResemble, []agenticsession.NewMessage{
-			{Role: agenticsession.MessageRoleUser, Content: "本轮问题"},
-			{Role: agenticsession.MessageRoleAssistant, Content: "本轮回答"},
-		})
+		So(store.appended, ShouldHaveLength, 2)
+		So(store.appended[0].Role, ShouldEqual, agenticsession.MessageRoleUser)
+		So(store.appended[0].Content, ShouldEqual, "本轮问题")
+		So(store.appended[0].RunID, ShouldNotBeBlank)
+		So(store.appended[1].Role, ShouldEqual, agenticsession.MessageRoleAssistant)
+		So(store.appended[1].Content, ShouldEqual, "本轮回答")
+		So(store.appended[1].RunID, ShouldEqual, store.appended[0].RunID)
 		So(operations, ShouldResemble, []string{"list", "append:user", "runtime", "append:assistant"})
 		So(eventTypes(events), ShouldResemble, []string{
 			agentevent.RunStarted,
@@ -211,6 +214,7 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 			agentevent.AgentStatus,
 			agentevent.RunCompleted,
 		})
+		So(events[0].RunID, ShouldEqual, store.appended[0].RunID)
 	})
 }
 

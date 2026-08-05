@@ -241,26 +241,27 @@ func (s *Service) CreateSession(ctx context.Context) (agenticsession.Session, er
 
 // StreamSession 将当前用户消息、历史和最终回答写入同一会话。
 func (s *Service) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
+	runID := agentevent.NewRunID()
 	releaseTurn, err := s.acquireSessionTurn(ctx, sessionID)
 	if err != nil {
-		s.emitSessionFailure(send, err)
+		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
 	defer releaseTurn()
 
-	history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query)
+	history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
 	if err != nil {
-		s.emitSessionFailure(send, err)
+		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
-	return s.stream(ctx, query, history, func() error {
+	return s.stream(ctx, runID, query, history, func() error {
 		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
 		return err
 	}, func(response string) error {
 		_, err := appendAssistant(response) // 在 Agent 执行后追加 AI 消息到 session
 		return err
 	}, func(ctx context.Context, message *schema.Message) error {
-		return s.appendAgentMessage(ctx, sessionID, message)
+		return s.appendAgentMessage(ctx, sessionID, runID, message)
 	}, send)
 }
 
@@ -273,8 +274,8 @@ func (s *Service) acquireSessionTurn(ctx context.Context, sessionID string) (age
 }
 
 // emitSessionFailure 发送会话失败事件。
-func (s *Service) emitSessionFailure(send func(agentevent.Event), err error) {
-	emitter := agentevent.NewEmitter("", send)
+func (s *Service) emitSessionFailure(runID string, send func(agentevent.Event), err error) {
+	emitter := agentevent.NewEmitter(runID, send)
 	emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
 	code, message := "session_unavailable", "会话不存在或暂时不可用"
 	if errors.Is(err, agenticsession.ErrTurnInProgress) {
@@ -301,7 +302,7 @@ func (s *Service) ListSessionMessages(ctx context.Context, sessionID string, lim
 }
 
 // sessionTurnOperations 为本轮选择存储、读取历史并构造追加操作。
-func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
+func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, runID string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
 	if s == nil {
 		return nil, nil, nil, fmt.Errorf("chat service is not initialized")
 	}
@@ -316,10 +317,10 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query st
 		}
 		return history,
 			func() (agenticsession.AppendResult, error) {
-				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{Role: agenticsession.MessageRoleUser, Content: query})
+				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
 			},
 			func(response string) (agenticsession.AppendResult, error) {
-				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{Role: agenticsession.MessageRoleAssistant, Content: response})
+				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleAssistant, Content: response})
 			}, nil
 	}
 	// userId 不存在时，选择临时会话
@@ -332,18 +333,19 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query st
 	}
 	return history,
 		func() (agenticsession.AppendResult, error) {
-			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{Role: agenticsession.MessageRoleUser, Content: query})
+			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
 		},
 		func(response string) (agenticsession.AppendResult, error) {
-			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{Role: agenticsession.MessageRoleAssistant, Content: response})
+			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleAssistant, Content: response})
 		}, nil
 }
 
-func (s *Service) appendAgentMessage(ctx context.Context, sessionID string, message *schema.Message) error {
+func (s *Service) appendAgentMessage(ctx context.Context, sessionID, runID string, message *schema.Message) error {
 	input, err := agenticsession.NewMessageFromSchema(message)
 	if err != nil {
 		return err
 	}
+	input.RunID = runID
 	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
 		_, err = s.durableSessionStore.Append(ctx, sessionID, ownerUserID, input)
 		return err
@@ -361,8 +363,8 @@ func (s *Service) historyLimit() int {
 }
 
 // stream 执行一次模型调用，并在成功后可选持久化最终回答。
-func (s *Service) stream(ctx context.Context, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
-	emitter := agentevent.NewEmitter("", send)
+func (s *Service) stream(ctx context.Context, runID, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
+	emitter := agentevent.NewEmitter(runID, send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
 		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_unavailable", Message: "Agent 服务暂不可用"})

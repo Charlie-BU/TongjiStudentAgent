@@ -118,8 +118,8 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID strin
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	message := Message{ID: newID("msg"), SessionID: sessionID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, CreatedAt: now}
-	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, message.ID, message.SessionID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.CreatedAt)
+	message := Message{ID: newID("msg"), SessionID: sessionID, RunID: input.RunID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, CreatedAt: now}
+	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, message.ID, message.SessionID, message.RunID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.CreatedAt)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("insert durable message: %w", err)
 	}
@@ -143,7 +143,7 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	if limit <= 0 {
 		return []Message{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, session_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
+	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list durable messages: %w", err)
 	}
@@ -152,7 +152,7 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	for rows.Next() {
 		var message Message
 		var toolCalls []byte
-		if err := rows.Scan(&message.ID, &message.SessionID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.CreatedAt); err != nil {
+		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan durable message: %w", err)
 		}
 		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 CREATE TABLE IF NOT EXISTS agent_session_messages (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL DEFAULT '',
     sequence BIGINT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
     content TEXT NOT NULL,
@@ -235,7 +236,14 @@ ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS tool_name TEXT NOT N
 ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS reasoning_content TEXT NOT NULL DEFAULT '';
 `,
 	`
+ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+`,
+	`
 CREATE INDEX IF NOT EXISTS agent_session_messages_session_sequence_index
     ON agent_session_messages (session_id, sequence DESC);
+`,
+	`
+CREATE INDEX IF NOT EXISTS agent_session_messages_session_run_index
+    ON agent_session_messages (session_id, run_id, sequence);
 `,
 }

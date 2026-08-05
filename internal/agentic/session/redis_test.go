@@ -35,15 +35,15 @@ func TestRedisEphemeralStore(t *testing.T) {
 		})
 
 		Convey("历史超过上限后保留最近消息", func() {
-			first, appendErr := store.Append(context.Background(), session.ID, NewMessage{Role: MessageRoleUser, Content: " 我是小济 "})
+			first, appendErr := store.Append(context.Background(), session.ID, NewMessage{RunID: "run-001", Role: MessageRoleUser, Content: " 我是小济 "})
 			So(appendErr, ShouldBeNil)
 			So(first.Created, ShouldBeTrue)
 			So(first.Message.Sequence, ShouldEqual, int64(1))
 
-			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{Role: MessageRoleAssistant, Content: "你好，小济。"})
+			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{RunID: "run-001", Role: MessageRoleAssistant, Content: "你好，小济。"})
 			So(appendErr, ShouldBeNil)
 			So(assistant.Message.Sequence, ShouldEqual, int64(2))
-			last, appendErr := store.Append(context.Background(), session.ID, NewMessage{Role: MessageRoleUser, Content: "我叫什么？"})
+			last, appendErr := store.Append(context.Background(), session.ID, NewMessage{RunID: "run-002", Role: MessageRoleUser, Content: "我叫什么？"})
 			So(appendErr, ShouldBeNil)
 			So(last.Message.Sequence, ShouldEqual, int64(3))
 
@@ -51,7 +51,9 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(listErr, ShouldBeNil)
 			So(messages, ShouldHaveLength, 2)
 			So(messages[0].Role, ShouldEqual, MessageRoleAssistant)
+			So(messages[0].RunID, ShouldEqual, "run-001")
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
+			So(messages[1].RunID, ShouldEqual, "run-002")
 		})
 
 		Convey("TTL 到期后会话不可读取", func() {

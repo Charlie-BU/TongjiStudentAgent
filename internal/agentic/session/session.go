@@ -66,6 +66,7 @@ type Session struct {
 type Message struct {
 	ID               string            `json:"id"`
 	SessionID        string            `json:"session_id"`
+	RunID            string            `json:"run_id"`
 	Sequence         int64             `json:"sequence"`
 	Role             MessageRole       `json:"role"`
 	Content          string            `json:"content"`
@@ -78,6 +79,7 @@ type Message struct {
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
+	RunID            string
 	Role             MessageRole
 	Content          string
 	ToolCalls        []schema.ToolCall

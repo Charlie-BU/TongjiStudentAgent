@@ -363,7 +363,7 @@ Loop 的硬边界：
 
 当前已落地创建、提交消息与读取历史三个接口。`POST /v1/sessions/:session_id/messages` 的请求体为 `{"message":"..."}`。认证请求以 request context 的 `user_id` 访问 PostgreSQL 会话，未获得该 ID 的请求仅可访问 Redis 匿名会话。
 
-会话消息表同时保存 user、assistant 与 tool 三类消息。assistant 消息保留 `tool_calls` 和 `reasoning_content`，tool 消息保留 `tool_call_id`、`tool_name` 与完整结果；历史接口直接返回这些字段，下一轮上下文按原角色恢复它们。SSE 同样发送 `assistant.reasoning`、工具参数和工具结果，供前端实时展示。
+会话消息表同时保存 user、assistant 与 tool 三类消息。每次用户提交会生成一个 `run_id`，并写入该次运行产生的全部消息，以便按完整 turn 边界读取；assistant 消息保留 `tool_calls` 和 `reasoning_content`，tool 消息保留 `tool_call_id`、`tool_name` 与完整结果。历史接口直接返回这些字段，下一轮上下文按原角色恢复它们；SSE 使用相同的 `run_id`，并发送 `assistant.reasoning`、工具参数和工具结果，供前端实时展示。
 
 SSE 事件使用稳定的业务事件名；事件 `data` 当前会投影部分 Eino 输出（reasoning、工具参数和工具结果）：
 
