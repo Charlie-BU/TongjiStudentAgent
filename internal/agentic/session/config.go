@@ -12,24 +12,40 @@ const (
 	anonymousSessionTTLEnv          = "SESSION_ANONYMOUS_TTL"
 	anonymousSessionMessageLimitEnv = "SESSION_ANONYMOUS_MAX_MESSAGES"
 	historyMessageLimitEnv          = "SESSION_HISTORY_MAX_MESSAGES"
+	contextTokenBudgetEnv           = "SESSION_CONTEXT_TOKEN_BUDGET"
+	summaryMaxTokensEnv             = "SESSION_SUMMARY_MAX_TOKENS"
+	summaryRecentTurnsEnv           = "SESSION_SUMMARY_RECENT_TURNS"
+	summaryScanMessageLimitEnv      = "SESSION_SUMMARY_SCAN_MAX_MESSAGES"
 	defaultAnonymousSessionTTL      = 24 * time.Hour
 	defaultAnonymousMessageLimit    = 20
-	defaultHistoryMessageLimit      = 20
+	defaultHistoryMessageLimit      = 20   // 只用做兜底
+	defaultContextTokenBudget       = 6000 // TODO：TBD
+	defaultSummaryMaxTokens         = 1200
+	defaultSummaryRecentTurns       = 2
+	defaultSummaryScanMessageLimit  = 1000
 )
 
 // Config 描述会话存储的容量与历史窗口配置。
 type Config struct {
-	AnonymousTTL          time.Duration
-	AnonymousMessageLimit int
-	HistoryMessageLimit   int
+	AnonymousTTL           time.Duration
+	AnonymousMessageLimit  int
+	HistoryMessageLimit    int
+	ContextTokenBudget     int
+	SummaryMaxTokens       int
+	SummaryRecentTurns     int
+	SummaryScanMaxMessages int
 }
 
 // ConfigFromEnv 从环境变量读取会话容量与历史窗口配置。
 func ConfigFromEnv() (Config, error) {
 	config := Config{
-		AnonymousTTL:          defaultAnonymousSessionTTL,
-		AnonymousMessageLimit: defaultAnonymousMessageLimit,
-		HistoryMessageLimit:   defaultHistoryMessageLimit,
+		AnonymousTTL:           defaultAnonymousSessionTTL,
+		AnonymousMessageLimit:  defaultAnonymousMessageLimit,
+		HistoryMessageLimit:    defaultHistoryMessageLimit,
+		ContextTokenBudget:     defaultContextTokenBudget,
+		SummaryMaxTokens:       defaultSummaryMaxTokens,
+		SummaryRecentTurns:     defaultSummaryRecentTurns,
+		SummaryScanMaxMessages: defaultSummaryScanMessageLimit,
 	}
 	if value := strings.TrimSpace(os.Getenv(anonymousSessionTTLEnv)); value != "" {
 		parsed, err := time.ParseDuration(value)
@@ -44,6 +60,10 @@ func ConfigFromEnv() (Config, error) {
 	}{
 		{key: anonymousSessionMessageLimitEnv, destination: &config.AnonymousMessageLimit},
 		{key: historyMessageLimitEnv, destination: &config.HistoryMessageLimit},
+		{key: contextTokenBudgetEnv, destination: &config.ContextTokenBudget},
+		{key: summaryMaxTokensEnv, destination: &config.SummaryMaxTokens},
+		{key: summaryRecentTurnsEnv, destination: &config.SummaryRecentTurns},
+		{key: summaryScanMessageLimitEnv, destination: &config.SummaryScanMaxMessages},
 	} {
 		if value := strings.TrimSpace(os.Getenv(item.key)); value != "" {
 			parsed, err := strconv.Atoi(value)

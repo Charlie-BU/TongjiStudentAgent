@@ -19,7 +19,7 @@ var chineseWeekdays = [...]string{"周日", "周一", "周二", "周三", "周�
 
 // buildInputMessagesWithHistory 构建包含当前日期、学生基础信息、技能目录、用户请求的输入消息。
 // history 是用户与 Deep Agent 之前的交互历史记录。
-func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skillCatalog string, now time.Time, history []agenticsession.Message) ([]*schema.Message, error) {
+func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skillCatalog, summary string, now time.Time, history []agenticsession.Message) ([]*schema.Message, error) {
 	interactionRequest, err := xml.MarshalIndent(struct {
 		XMLName   xml.Name `xml:"interaction_request"`
 		UserQuery string   `xml:"user_query"`
@@ -34,6 +34,9 @@ func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skil
 	}
 	if catalog := strings.TrimSpace(skillCatalog); catalog != "" {
 		reminderParts = append(reminderParts, catalog)
+	}
+	if summary := strings.TrimSpace(summary); summary != "" {
+		reminderParts = append(reminderParts, "<conversation-summary>\n"+summary+"\n</conversation-summary>")
 	}
 	reminder := "<system-reminder>\n" + strings.Join(reminderParts, "\n\n") + "\n</system-reminder>"
 

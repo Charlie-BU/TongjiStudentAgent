@@ -90,6 +90,18 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			So(messages[1].Role, ShouldEqual, MessageRoleTool)
 			So(messages[1].ToolCallID, ShouldEqual, "call-001")
 			So(messages[1].Content, ShouldContainSubstring, "高等数学")
+
+			pool.ExpectQuery(regexp.QuoteMeta(`SELECT summary, summary_anchor_sequence FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+				WithArgs("ses-001", "user-001").
+				WillReturnRows(pgxmock.NewRows([]string{"summary", "summary_anchor_sequence"}).AddRow("已查询成绩。", int64(2)))
+			snapshot, memoryErr := store.LoadMemory(context.Background(), "ses-001", "user-001")
+			So(memoryErr, ShouldBeNil)
+			So(snapshot, ShouldResemble, MemorySnapshot{Summary: "已查询成绩。", AnchorSequence: 2})
+
+			pool.ExpectExec(regexp.QuoteMeta(`UPDATE agent_sessions SET summary = $1, summary_anchor_sequence = $2, last_active_at = $3 WHERE id = $4 AND owner_user_id = $5`)).
+				WithArgs("已查询成绩和课程。", int64(4), pgxmock.AnyArg(), "ses-001", "user-001").
+				WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			So(store.SaveMemory(context.Background(), "ses-001", "user-001", MemorySnapshot{Summary: "已查询成绩和课程。", AnchorSequence: 4}), ShouldBeNil)
 			So(pool.ExpectationsWereMet(), ShouldBeNil)
 		})
 	})

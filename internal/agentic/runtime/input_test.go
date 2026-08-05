@@ -17,6 +17,7 @@ func TestBuildInputMessagesWithHistory(t *testing.T) {
 			"我叫什么名字？",
 			"",
 			"",
+			"已确认用户姓名为小济。",
 			time.Date(2026, time.July, 2, 15, 10, 18, 0, reminderLocation),
 			[]agenticsession.Message{
 				{Sequence: 1, Role: agenticsession.MessageRoleUser, Content: "我叫小济"},
@@ -28,6 +29,7 @@ func TestBuildInputMessagesWithHistory(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(messages, ShouldHaveLength, 4)
 			So(messages[0].Content, ShouldContainSubstring, "<system-reminder>")
+			So(messages[0].Content, ShouldContainSubstring, "<conversation-summary>\n已确认用户姓名为小济。\n</conversation-summary>")
 			So(messages[1].Role, ShouldEqual, schema.User)
 			So(messages[1].Content, ShouldEqual, "我叫小济")
 			So(messages[2].Role, ShouldEqual, schema.Assistant)

@@ -64,7 +64,7 @@ HTTP /v1/sessions/:session_id/messages
 | --- | --- | --- |
 | Agent 编排 | 使用 `deep.New` 的标准模型—工具循环，禁用内置待办和通用子 Agent | CozeLoop 可识别 Agent 与 Tool 节点；Loop、持久化与完整工具策略仍待补齐 |
 | 上下文工程 | 只把知识切片拼入当前问题 | 没有身份、历史、摘要、来源和动态提醒的稳定装配顺序 |
-| 短期记忆 | 已提供认证 PostgreSQL 会话与匿名 Redis 会话，Runtime 按消息历史装配上下文 | 尚未实现摘要、Checkpoint、断线重连或 Resume |
+| 短期记忆 | 已提供认证 PostgreSQL 会话与匿名 Redis 会话；按 `run_id`（一个完整 turn）压缩旧历史并以摘要注入上下文 | 尚未实现 Checkpoint、断线重连或 Resume |
 | MCP | 启动时连接远程 `TongjiStudentMCPServer`，并只发现 application allowlist 中的工具；调用时转发请求 context 中的 Bearer token，缺失 token 时本地拒绝 | 远程 MCP/开放平台仍需验证 token 有效性、用户绑定和 scope |
 | 工具治理 | 没有工具风险等级、参数预检、超时和失败策略 | 无法安全接入学生隐私和未来写操作 |
 | HITL | 未实现 | 无法确认高风险操作，也无法中断后恢复 |
@@ -485,16 +485,16 @@ Token 预算至少分为：
   = 本轮可用消息预算
 ```
 
-达到软阈值时：
+达到 `SESSION_CONTEXT_TOKEN_BUDGET` 软阈值时：
 
 1. 保留当前用户消息。
 2. 保留最近若干完整对话轮次。
 3. 找到不会拆断 Tool 事务的压缩切点。
-4. 将旧 Summary 与新增历史 Delta 一起交给 Summarizer。
+4. 将旧 Summary 与新增的完整 `run_id` turn 一起交给 Summarizer。
 5. 更新 `summary + summary_anchor`，原始消息不删除。
 6. 重新装配并计算 Token。
 
-摘要连续失败应有熔断，避免每轮重复消耗模型调用。仍超过硬上限时返回可识别的 `CONTEXT_TOO_LONG`，由产品提示用户新建会话；首期不实现复杂的工具结果外溢与按需分页。
+当前实现用 UTF-8 rune 数近似 token，仅用于稳定地触发压缩而不用于计费。`SESSION_SUMMARY_RECENT_TURNS` 指定始终保留的最新完整 turn 数；摘要写入认证会话的 PostgreSQL session 行或匿名会话的 Redis meta hash，原始消息不会删除。生成的摘要作为 `<system-reminder><conversation-summary>...</conversation-summary></system-reminder>` 的内部段落加入下一轮模型输入。仍超过预算时返回 `context_too_long`，由产品提示用户新建会话；当前不实现复杂的工具结果外溢与按需分页。
 
 ## 7. MCP Server 与工具体系
 

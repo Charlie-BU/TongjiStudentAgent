@@ -29,6 +29,8 @@ var (
 	ErrInvalidMessageLimit = errors.New("session message limit must be positive")
 	// ErrTurnInProgress 表示同一用户消息正在生成回复。
 	ErrTurnInProgress = errors.New("session turn is already in progress")
+	// ErrContextTooLong 表示保留完整最近 turn 后上下文仍超出预算。
+	ErrContextTooLong = errors.New("session context exceeds token budget")
 )
 
 // Persistence 表示会话的生命周期类型。

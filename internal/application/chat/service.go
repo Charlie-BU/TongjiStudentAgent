@@ -41,18 +41,35 @@ type messageRecordingRuntime interface {
 	StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error)
 }
 
+type memoryRuntime interface {
+	sessionRuntime
+	StreamWithHistoryAndMemory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, summary string, emit func(agentevent.Event)) (string, error)
+}
+
+type memoryRecordingRuntime interface {
+	memoryRuntime
+	StreamWithHistoryAndMessagesAndMemory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, summary string, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error)
+}
+
 // Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
-	runtime               sessionRuntime                      // Agent Runtime
-	mcpClient             *mcpclient.Client                   // MCP Client
-	knowledgeClient       *knowledge.Client                   // 知识库 Client
-	studentInfoLoader     studentInfoLoader                   // 个人信息加载器
-	durableSessionStore   agenticsession.Store                // 认证会话存储
-	ephemeralSessionStore agenticsession.EphemeralStore       // 匿名会话存储
-	turnLocker            agenticsession.TurnLocker           // 会话执行锁
-	postgresSessionStore  *agenticsession.PostgresStore       // PostgreSQL 资源
-	redisSessionStore     *agenticsession.RedisEphemeralStore // Redis 资源
-	historyMessageLimit   int                                 // 上下文历史消息上限
+	runtime                sessionRuntime                      // Agent Runtime
+	mcpClient              *mcpclient.Client                   // MCP Client
+	knowledgeClient        *knowledge.Client                   // 知识库 Client
+	studentInfoLoader      studentInfoLoader                   // 个人信息加载器
+	durableSessionStore    agenticsession.Store                // 认证会话存储
+	ephemeralSessionStore  agenticsession.EphemeralStore       // 匿名会话存储
+	durableMemoryStore     agenticsession.DurableMemoryStore   // 认证会话摘要存储
+	ephemeralMemoryStore   agenticsession.EphemeralMemoryStore // 匿名会话摘要存储
+	summarizer             agenticsession.Summarizer           // 历史摘要器
+	turnLocker             agenticsession.TurnLocker           // 会话执行锁
+	postgresSessionStore   *agenticsession.PostgresStore       // PostgreSQL 资源
+	redisSessionStore      *agenticsession.RedisEphemeralStore // Redis 资源
+	historyMessageLimit    int                                 // 上下文历史消息上限
+	contextTokenBudget     int                                 // 会话上下文 token 预算
+	summaryMaxTokens       int                                 // 单次摘要最大 token 数
+	summaryRecentTurns     int                                 // 不参与摘要的最近完整 turn 数
+	summaryScanMaxMessages int                                 // 单次摘要扫描消息数
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -157,16 +174,23 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	return &Service{
-		runtime:               rt,
-		mcpClient:             mcpClient,
-		knowledgeClient:       knowledgeClient,
-		studentInfoLoader:     loadStudentInfo,
-		durableSessionStore:   postgresStore,
-		ephemeralSessionStore: redisStore,
-		turnLocker:            redisStore,
-		postgresSessionStore:  postgresStore,
-		redisSessionStore:     redisStore,
-		historyMessageLimit:   sessionConfig.HistoryMessageLimit,
+		runtime:                rt,
+		mcpClient:              mcpClient,
+		knowledgeClient:        knowledgeClient,
+		studentInfoLoader:      loadStudentInfo,
+		durableSessionStore:    postgresStore,
+		ephemeralSessionStore:  redisStore,
+		durableMemoryStore:     postgresStore,
+		ephemeralMemoryStore:   redisStore,
+		summarizer:             agenticsession.NewModelSummarizer(chatModel),
+		turnLocker:             redisStore,
+		postgresSessionStore:   postgresStore,
+		redisSessionStore:      redisStore,
+		historyMessageLimit:    sessionConfig.HistoryMessageLimit,
+		contextTokenBudget:     sessionConfig.ContextTokenBudget,
+		summaryMaxTokens:       sessionConfig.SummaryMaxTokens,
+		summaryRecentTurns:     sessionConfig.SummaryRecentTurns,
+		summaryScanMaxMessages: sessionConfig.SummaryScanMaxMessages,
 	}, nil
 }
 
@@ -249,12 +273,12 @@ func (s *Service) StreamSession(ctx context.Context, sessionID, query string, se
 	}
 	defer releaseTurn()
 
-	history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
+	summary, history, appendUser, appendAssistant, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
 	if err != nil {
 		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
-	return s.stream(ctx, runID, query, history, func() error {
+	return s.stream(ctx, runID, query, summary, history, func() error {
 		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
 		return err
 	}, func(response string) error {
@@ -281,6 +305,9 @@ func (s *Service) emitSessionFailure(runID string, send func(agentevent.Event), 
 	if errors.Is(err, agenticsession.ErrTurnInProgress) {
 		code, message = "turn_in_progress", "该会话正在处理中，请稍后重试"
 	}
+	if errors.Is(err, agenticsession.ErrContextTooLong) {
+		code, message = "context_too_long", "会话上下文过长，请新建会话后继续"
+	}
 	emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: code, Message: message})
 }
 
@@ -302,20 +329,20 @@ func (s *Service) ListSessionMessages(ctx context.Context, sessionID string, lim
 }
 
 // sessionTurnOperations 为本轮选择存储、读取历史并构造追加操作。
-func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, runID string) ([]agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
+func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, runID string) (string, []agenticsession.Message, func() (agenticsession.AppendResult, error), func(string) (agenticsession.AppendResult, error), error) {
 	if s == nil {
-		return nil, nil, nil, fmt.Errorf("chat service is not initialized")
+		return "", nil, nil, nil, fmt.Errorf("chat service is not initialized")
 	}
 	// userId 存在时，选择持久化会话
 	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
 		if s.durableSessionStore == nil {
-			return nil, nil, nil, fmt.Errorf("durable session store is not initialized")
+			return "", nil, nil, nil, fmt.Errorf("durable session store is not initialized")
 		}
-		history, err := s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, s.historyLimit())
+		summary, history, err := s.prepareDurableMemory(ctx, sessionID, ownerUserID, query)
 		if err != nil {
-			return nil, nil, nil, err
+			return "", nil, nil, nil, err
 		}
-		return history,
+		return summary, history,
 			func() (agenticsession.AppendResult, error) {
 				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
 			},
@@ -325,19 +352,149 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, r
 	}
 	// userId 不存在时，选择临时会话
 	if s.ephemeralSessionStore == nil {
-		return nil, nil, nil, fmt.Errorf("ephemeral session store is not initialized")
+		return "", nil, nil, nil, fmt.Errorf("ephemeral session store is not initialized")
 	}
-	history, err := s.ephemeralSessionStore.ListMessages(ctx, sessionID, s.historyLimit())
+	summary, history, err := s.prepareEphemeralMemory(ctx, sessionID, query)
 	if err != nil {
-		return nil, nil, nil, err
+		return "", nil, nil, nil, err
 	}
-	return history,
+	return summary, history,
 		func() (agenticsession.AppendResult, error) {
 			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
 		},
 		func(response string) (agenticsession.AppendResult, error) {
 			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleAssistant, Content: response})
 		}, nil
+}
+
+// prepareDurableMemory 为持久化会话准备历史消息和摘要。
+func (s *Service) prepareDurableMemory(ctx context.Context, sessionID, ownerUserID, query string) (string, []agenticsession.Message, error) {
+	if s.durableMemoryStore == nil || s.summarizer == nil {
+		history, err := s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, s.historyLimit())
+		return "", history, err
+	}
+	snapshot, err := s.durableMemoryStore.LoadMemory(ctx, sessionID, ownerUserID)
+	if err != nil {
+		return "", nil, err
+	}
+	messages, err := s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, s.summaryScanLimit())
+	if err != nil {
+		return "", nil, err
+	}
+	previousSnapshot := snapshot
+	snapshot, messages, err = s.compactMemory(ctx, snapshot, messages, query)
+	if err != nil {
+		return "", nil, err
+	}
+	if snapshot != previousSnapshot {
+		if err := s.durableMemoryStore.SaveMemory(ctx, sessionID, ownerUserID, snapshot); err != nil {
+			return "", nil, err
+		}
+	}
+	return snapshot.Summary, messages, nil
+}
+
+// prepareEphemeralMemory 为临时会话准备历史消息和摘要。
+func (s *Service) prepareEphemeralMemory(ctx context.Context, sessionID, query string) (string, []agenticsession.Message, error) {
+	if s.ephemeralMemoryStore == nil || s.summarizer == nil {
+		history, err := s.ephemeralSessionStore.ListMessages(ctx, sessionID, s.historyLimit())
+		return "", history, err
+	}
+	snapshot, err := s.ephemeralMemoryStore.LoadMemory(ctx, sessionID)
+	if err != nil {
+		return "", nil, err
+	}
+	messages, err := s.ephemeralSessionStore.ListMessages(ctx, sessionID, s.summaryScanLimit())
+	if err != nil {
+		return "", nil, err
+	}
+	previousSnapshot := snapshot
+	snapshot, messages, err = s.compactMemory(ctx, snapshot, messages, query)
+	if err != nil {
+		return "", nil, err
+	}
+	if snapshot != previousSnapshot {
+		if err := s.ephemeralMemoryStore.SaveMemory(ctx, sessionID, snapshot); err != nil {
+			return "", nil, err
+		}
+	}
+	return snapshot.Summary, messages, nil
+}
+
+// compactMemory 仅按完整 run_id turn 压缩锚点前未覆盖的旧消息，保留最近 turn 原样进入模型上下文。
+func (s *Service) compactMemory(ctx context.Context, snapshot agenticsession.MemorySnapshot, messages []agenticsession.Message, query string) (agenticsession.MemorySnapshot, []agenticsession.Message, error) {
+	remaining := make([]agenticsession.Message, 0, len(messages))
+	for _, message := range messages {
+		if message.Sequence > snapshot.AnchorSequence {
+			remaining = append(remaining, message)
+		}
+	}
+	budget := s.contextBudget()
+	for agenticsession.EstimateTokens(snapshot.Summary, query, remaining) > budget {
+		turns := agenticsession.PartitionTurns(remaining)
+		compressibleTurns := len(turns) - s.recentTurnCount()
+		if compressibleTurns <= 0 {
+			return agenticsession.MemorySnapshot{}, nil, agenticsession.ErrContextTooLong
+		}
+		turnCount := 1
+		for turnCount < compressibleTurns && agenticsession.EstimateTokens(snapshot.Summary, query, flattenTurns(turns[:turnCount])) < agenticsession.EstimateTokens("", "", remaining)-budget {
+			turnCount++
+		}
+		selected := flattenTurns(turns[:turnCount])
+		summary, err := s.summarizer.Summarize(ctx, snapshot.Summary, selected, s.summaryTokenBudget())
+		if err != nil {
+			return agenticsession.MemorySnapshot{}, nil, fmt.Errorf("summarize session history: %w", err)
+		}
+		snapshot.Summary = summary
+		snapshot.AnchorSequence = selected[len(selected)-1].Sequence
+		remaining = remaining[len(selected):]
+	}
+	return snapshot, remaining, nil
+}
+
+// flattenTurns 合并所有 turn 为一个消息列表。
+func flattenTurns(turns [][]agenticsession.Message) []agenticsession.Message {
+	count := 0
+	for _, turn := range turns {
+		count += len(turn)
+	}
+	messages := make([]agenticsession.Message, 0, count)
+	for _, turn := range turns {
+		messages = append(messages, turn...)
+	}
+	return messages
+}
+
+// contextBudget 返回有效的上下文 token 预算。
+func (s *Service) contextBudget() int {
+	if s.contextTokenBudget > 0 {
+		return s.contextTokenBudget
+	}
+	return 6000
+}
+
+// summaryTokenBudget 返回有效的摘要 token 预算。
+func (s *Service) summaryTokenBudget() int {
+	if s.summaryMaxTokens > 0 {
+		return s.summaryMaxTokens
+	}
+	return 1200
+}
+
+// recentTurnCount 返回有效的最近 turn 数量。
+func (s *Service) recentTurnCount() int {
+	if s.summaryRecentTurns > 0 {
+		return s.summaryRecentTurns
+	}
+	return 2
+}
+
+// summaryScanLimit 返回有效的摘要扫描消息数量。
+func (s *Service) summaryScanLimit() int {
+	if s.summaryScanMaxMessages > 0 {
+		return s.summaryScanMaxMessages
+	}
+	return 1000
 }
 
 func (s *Service) appendAgentMessage(ctx context.Context, sessionID, runID string, message *schema.Message) error {
@@ -363,7 +520,7 @@ func (s *Service) historyLimit() int {
 }
 
 // stream 执行一次模型调用，并在成功后可选持久化最终回答。
-func (s *Service) stream(ctx context.Context, runID, query string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
+func (s *Service) stream(ctx context.Context, runID, query, summary string, history []agenticsession.Message, beforeModel func() error, afterModel func(string) error, record func(context.Context, *schema.Message) error, send func(agentevent.Event)) (string, error) {
 	emitter := agentevent.NewEmitter(runID, send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
@@ -402,8 +559,12 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 		emitter.Emit(event.Type, event.Data)
 	}
 	var response string
-	if runtimeWithRecorder, ok := s.runtime.(messageRecordingRuntime); ok {
+	if runtimeWithMemoryRecorder, ok := s.runtime.(memoryRecordingRuntime); ok {
+		response, err = runtimeWithMemoryRecorder.StreamWithHistoryAndMessagesAndMemory(ctx, query, studentInfo, history, summary, emitRuntimeEvent, record)
+	} else if runtimeWithRecorder, ok := s.runtime.(messageRecordingRuntime); ok {
 		response, err = runtimeWithRecorder.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emitRuntimeEvent, record)
+	} else if runtimeWithMemory, ok := s.runtime.(memoryRuntime); ok {
+		response, err = runtimeWithMemory.StreamWithHistoryAndMemory(ctx, query, studentInfo, history, summary, emitRuntimeEvent)
 	} else {
 		response, err = s.runtime.StreamWithHistory(ctx, query, studentInfo, history, emitRuntimeEvent)
 	}

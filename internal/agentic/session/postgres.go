@@ -169,6 +169,40 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	return messages, nil
 }
 
+// LoadMemory 读取认证会话的摘要及其已覆盖的最后一条消息序号。
+func (s *PostgresStore) LoadMemory(ctx context.Context, sessionID, ownerUserID string) (MemorySnapshot, error) {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return MemorySnapshot{}, err
+	}
+	var snapshot MemorySnapshot
+	err := s.pool.QueryRow(ctx, `SELECT summary, summary_anchor_sequence FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&snapshot.Summary, &snapshot.AnchorSequence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MemorySnapshot{}, ErrNotFound
+	}
+	if err != nil {
+		return MemorySnapshot{}, fmt.Errorf("load durable session memory: %w", err)
+	}
+	return snapshot, nil
+}
+
+// SaveMemory 覆盖认证会话的派生摘要，不会删除原始消息。
+func (s *PostgresStore) SaveMemory(ctx context.Context, sessionID, ownerUserID string, snapshot MemorySnapshot) error {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return err
+	}
+	if snapshot.AnchorSequence < 0 {
+		return ErrInvalidTurnInput
+	}
+	command, err := s.pool.Exec(ctx, `UPDATE agent_sessions SET summary = $1, summary_anchor_sequence = $2, last_active_at = $3 WHERE id = $4 AND owner_user_id = $5`, strings.TrimSpace(snapshot.Summary), snapshot.AnchorSequence, time.Now().UTC(), strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID))
+	if err != nil {
+		return fmt.Errorf("save durable session memory: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // EnsurePostgresSchema 创建会话存储所需的最小 PostgreSQL 表与约束。
 func EnsurePostgresSchema(ctx context.Context, store *PostgresStore) error {
 	if store == nil || store.pool == nil {
@@ -197,6 +231,8 @@ var postgresSchemaStatements = []string{
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    summary_anchor_sequence BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     last_active_at TIMESTAMPTZ NOT NULL
 );
@@ -237,6 +273,12 @@ ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS reasoning_content TE
 `,
 	`
 ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS summary_anchor_sequence BIGINT NOT NULL DEFAULT 0;
 `,
 	`
 CREATE INDEX IF NOT EXISTS agent_session_messages_session_sequence_index

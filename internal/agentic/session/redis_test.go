@@ -63,6 +63,15 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(errors.Is(loadErr, ErrNotFound), ShouldBeTrue)
 		})
 
+		Convey("摘要与锚点应随匿名会话持久化", func() {
+			saveErr := store.SaveMemory(context.Background(), session.ID, MemorySnapshot{Summary: "用户正在查询课程安排。", AnchorSequence: 3})
+			So(saveErr, ShouldBeNil)
+
+			snapshot, loadErr := store.LoadMemory(context.Background(), session.ID)
+			So(loadErr, ShouldBeNil)
+			So(snapshot, ShouldResemble, MemorySnapshot{Summary: "用户正在查询课程安排。", AnchorSequence: 3})
+		})
+
 		Convey("同一会话同一时间只允许一个执行锁", func() {
 			release, lockErr := store.AcquireTurn(context.Background(), session.ID)
 			So(lockErr, ShouldBeNil)

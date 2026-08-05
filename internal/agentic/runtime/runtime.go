@@ -67,11 +67,21 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 // TODO：待拆解 tool call 处理
 // StreamWithHistory 执行单轮查询，并将 canonical 会话历史作为模型上下文注入输入。
 func (r *Runtime) StreamWithHistory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event)) (string, error) {
-	return r.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emit, nil)
+	return r.StreamWithHistoryAndMemory(ctx, query, studentInfo, history, "", emit)
+}
+
+// StreamWithHistoryAndMemory 执行查询，并将已压缩的历史摘要注入动态提醒。
+func (r *Runtime) StreamWithHistoryAndMemory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, summary string, emit func(agentevent.Event)) (string, error) {
+	return r.StreamWithHistoryAndMessagesAndMemory(ctx, query, studentInfo, history, summary, emit, nil)
 }
 
 // StreamWithHistoryAndMessages 执行查询，并将运行时输出逐条交给调用方持久化。
 func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
+	return r.StreamWithHistoryAndMessagesAndMemory(ctx, query, studentInfo, history, "", emit, record)
+}
+
+// StreamWithHistoryAndMessagesAndMemory 执行查询，并持久化运行过程中的完整消息。
+func (r *Runtime) StreamWithHistoryAndMessagesAndMemory(ctx context.Context, query, studentInfo string, history []agenticsession.Message, summary string, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")
 	}
@@ -79,7 +89,7 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 		emit = func(agentevent.Event) {}
 	}
 
-	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, time.Now(), history)
+	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, summary, time.Now(), history)
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}

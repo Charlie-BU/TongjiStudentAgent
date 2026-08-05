@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
@@ -216,6 +218,41 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 		})
 		So(events[0].RunID, ShouldEqual, store.appended[0].RunID)
 	})
+}
+
+func TestCompactMemoryByCompleteRun(t *testing.T) {
+	Convey("动态摘要只压缩完整的旧 run", t, func() {
+		summarizer := &recordingSummarizer{}
+		service := &Service{summarizer: summarizer, contextTokenBudget: 60, summaryMaxTokens: 20, summaryRecentTurns: 2}
+		messages := []agenticsession.Message{
+			{Sequence: 1, RunID: "run-001", Role: agenticsession.MessageRoleUser, Content: strings.Repeat("甲", 100)},
+			{Sequence: 2, RunID: "run-001", Role: agenticsession.MessageRoleAssistant, Content: "旧回答"},
+			{Sequence: 3, RunID: "run-002", Role: agenticsession.MessageRoleUser, Content: strings.Repeat("乙", 100)},
+			{Sequence: 4, RunID: "run-002", Role: agenticsession.MessageRoleAssistant, Content: "中间回答"},
+			{Sequence: 5, RunID: "run-003", Role: agenticsession.MessageRoleUser, Content: strings.Repeat("丙", 100)},
+			{Sequence: 6, RunID: "run-003", Role: agenticsession.MessageRoleAssistant, Content: "最近回答"},
+		}
+
+		snapshot, remaining, err := service.compactMemory(context.Background(), agenticsession.MemorySnapshot{}, messages, "本轮问题")
+
+		So(err, ShouldBeNil)
+		So(snapshot.Summary, ShouldEqual, "摘要-1")
+		So(snapshot.AnchorSequence, ShouldEqual, int64(2))
+		So(summarizer.calls, ShouldHaveLength, 1)
+		So(summarizer.calls[0][0].RunID, ShouldEqual, "run-001")
+		So(remaining, ShouldHaveLength, 4)
+		So(remaining[0].RunID, ShouldEqual, "run-002")
+		So(remaining[3].RunID, ShouldEqual, "run-003")
+	})
+}
+
+type recordingSummarizer struct {
+	calls [][]agenticsession.Message
+}
+
+func (s *recordingSummarizer) Summarize(_ context.Context, _ string, turns []agenticsession.Message, _ int) (string, error) {
+	s.calls = append(s.calls, turns)
+	return fmt.Sprintf("摘要-%d", len(s.calls)), nil
 }
 
 type recordingEphemeralStore struct {

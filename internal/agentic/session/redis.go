@@ -213,6 +213,47 @@ func (s *RedisEphemeralStore) ListMessages(ctx context.Context, sessionID string
 	return messages, nil
 }
 
+// LoadMemory 读取匿名会话的摘要及其已覆盖的最后一条消息序号。
+func (s *RedisEphemeralStore) LoadMemory(ctx context.Context, sessionID string) (MemorySnapshot, error) {
+	if _, err := s.Get(ctx, sessionID); err != nil {
+		return MemorySnapshot{}, err
+	}
+	values, err := s.client.HMGet(ctx, redisMetaKey(sessionID), "summary", "summary_anchor_sequence").Result()
+	if err != nil {
+		return MemorySnapshot{}, fmt.Errorf("load ephemeral session memory: %w", err)
+	}
+	snapshot := MemorySnapshot{}
+	if len(values) > 0 && values[0] != nil {
+		snapshot.Summary, _ = values[0].(string)
+	}
+	if len(values) > 1 && values[1] != nil {
+		value, parseErr := strconv.ParseInt(values[1].(string), 10, 64)
+		if parseErr != nil || value < 0 {
+			return MemorySnapshot{}, fmt.Errorf("parse ephemeral session memory anchor: %w", parseErr)
+		}
+		snapshot.AnchorSequence = value
+	}
+	return snapshot, nil
+}
+
+// SaveMemory 覆盖匿名会话的派生摘要，并延长其 TTL。
+func (s *RedisEphemeralStore) SaveMemory(ctx context.Context, sessionID string, snapshot MemorySnapshot) error {
+	if snapshot.AnchorSequence < 0 {
+		return ErrInvalidTurnInput
+	}
+	if _, err := s.Get(ctx, sessionID); err != nil {
+		return err
+	}
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, redisMetaKey(sessionID), "summary", strings.TrimSpace(snapshot.Summary), "summary_anchor_sequence", strconv.FormatInt(snapshot.AnchorSequence, 10), "last_active_at", time.Now().UTC().Format(time.RFC3339Nano))
+	pipe.PExpire(ctx, redisMetaKey(sessionID), s.ttl)
+	pipe.PExpire(ctx, redisMessagesKey(sessionID), s.ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("save ephemeral session memory: %w", err)
+	}
+	return nil
+}
+
 func redisMetaKey(sessionID string) string { return "agent:anonymous-session:" + sessionID + ":meta" }
 func redisMessagesKey(sessionID string) string {
 	return "agent:anonymous-session:" + sessionID + ":messages"
