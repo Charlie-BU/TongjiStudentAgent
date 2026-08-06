@@ -10,6 +10,7 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
@@ -31,6 +32,9 @@ var streamSession = chat.StreamSession
 
 // listSessionMessages 用于测试时替换会话历史读取实现。
 var listSessionMessages = chat.ListSessionMessages
+
+// getSessionTaskPlan 用于测试时替换会话任务计划读取实现。
+var getSessionTaskPlan = chat.GetSessionTaskPlan
 
 // CreateSession 创建与当前请求身份对应的会话。
 func CreateSession(ctx context.Context, c *app.RequestContext) {
@@ -114,6 +118,28 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, utils.H{"messages": messages})
+}
+
+// SessionTaskPlan 返回当前请求有权访问的活动任务计划。
+func SessionTaskPlan(ctx context.Context, c *app.RequestContext) {
+	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
+		return
+	}
+	plan, err := getSessionTaskPlan(requestContext, sessionID)
+	if err != nil {
+		status := consts.StatusInternalServerError
+		if errors.Is(err, agenticsession.ErrNotFound) {
+			status = consts.StatusNotFound
+		}
+		c.JSON(status, utils.H{"error": "session not found"})
+		return
+	}
+	c.JSON(consts.StatusOK, struct {
+		Plan *taskplan.TaskPlan `json:"plan"`
+	}{Plan: plan})
 }
 
 // bindSessionMessage 从请求体中提取会话用户消息。

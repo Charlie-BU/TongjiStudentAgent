@@ -334,6 +334,9 @@ go run .
 | `tool.call.failed` | `duration_ms` | `number` | 是 | 本次工具调用耗时，单位毫秒 | 动态生成 |
 | `tool.call.failed` | `code` | `string` | 是 | 工具失败码 | 无 |
 | `tool.call.failed` | `message` | `string` | 是 | 工具失败说明 | 无 |
+| `task_plan.updated` | `action` | `string` | 是 | 触发更新的任务计划操作 | 无 |
+| `task_plan.updated` | `revision` | `number` | 是 | 最新任务计划版本 | 动态生成 |
+| `task_plan.updated` | `tasks` | `array<object>` | 是 | 当前任务计划完整快照 | `[]` |
 | `run.completed` | `duration_ms` | `number` | 是 | 本次运行总耗时，单位毫秒 | 动态生成 |
 | `run.failed` | `code` | `string` | 是 | 失败码，如 `turn_in_progress`、`session_unavailable`、`session_write_failed`、`agent_execution_failed` | 无 |
 | `run.failed` | `message` | `string` | 是 | 失败说明 | 无 |
@@ -362,12 +365,23 @@ go run .
 | `messages[].Content` | `string` | 是 | 消息文本内容 | 无 |
 | `messages[].CreatedAt` | `string` | 是 | 消息创建时间，UTC 时间戳 | 动态生成 |
 
+#### `GET /v1/sessions/:session_id/task-plan`
+
+描述：读取指定会话当前活动任务计划；认证会话按当前 `user_id` 校验归属，匿名会话按 `session_id` capability 校验。当前不存在活动计划时返回 `{"plan":null}`。
+
+| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
+| --- | --- | --- | --- | --- | --- |
+| Path | `session_id` | `string` | 是 | 目标会话 ID | 无 |
+| Header | `Authorization` | `string` | 否 | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无 |
+
+响应体中的 `plan` 为 `null` 或包含 `session_id`、`revision`、`tasks`、`updated_at` 的任务计划快照。
+
 ### 推荐调用顺序
 
 | 场景 | 调用顺序 |
 | --- | --- |
-| 匿名会话 | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` |
-| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` |
+| 匿名会话 | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
+| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
 
 ### 1. 发起同济开放平台授权
 
@@ -570,12 +584,13 @@ console.log(historyPayload.messages);
 | `tool.call.started` | `call_id`, `tool`, `display_name` | 模型已选择该工具，调用即将执行。 |
 | `tool.call.completed` | `call_id`, `tool`, `duration_ms` | Agent 已收到工具结果；不代表上游业务一定成功。 |
 | `tool.call.failed` | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。 |
+| `task_plan.updated` | `action`, `revision`, `tasks` | 当前会话任务计划已更新；前端应以完整快照刷新进度面板。 |
 | `run.completed` | `duration_ms` | Run 成功结束。 |
 | `run.failed` | `code`, `message` | Run 无法完成。 |
 
 `run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
-可使用 `GET /v1/sessions/:session_id/messages?limit=20` 读取当前请求有权访问的 canonical 历史消息。
+可使用 `GET /v1/sessions/:session_id/messages?limit=20` 读取当前请求有权访问的 canonical 历史消息，或使用 `GET /v1/sessions/:session_id/task-plan` 在页面刷新后恢复当前任务计划。
 
 ## 模型与 MCP 的现状
 
@@ -603,6 +618,7 @@ console.log(historyPayload.messages);
 | `POST` | `/v1/sessions` | 创建认证或匿名会话 |
 | `POST` | `/v1/sessions/:session_id/messages` | 以 SSE 执行并保存一轮会话消息 |
 | `GET` | `/v1/sessions/:session_id/messages` | 读取会话历史 |
+| `GET` | `/v1/sessions/:session_id/task-plan` | 读取活动任务计划 |
 
 ## 说明
 

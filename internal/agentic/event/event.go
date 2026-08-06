@@ -2,10 +2,13 @@
 package event
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
 	"time"
+
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 )
 
 const (
@@ -16,9 +19,12 @@ const (
 	ToolCallStarted    = "tool.call.started"
 	ToolCallCompleted  = "tool.call.completed"
 	ToolCallFailed     = "tool.call.failed"
+	TaskPlanUpdated    = "task_plan.updated"
 	RunCompleted       = "run.completed"
 	RunFailed          = "run.failed"
 )
+
+type eventSinkContextKey struct{}
 
 // RunStartedData 表示 Run 启动时的展示信息。
 type RunStartedData struct {
@@ -66,6 +72,13 @@ type ToolCallFailedData struct {
 	Message    string `json:"message"`
 }
 
+// TaskPlanUpdatedData 是当前会话任务计划的完整最新快照。
+type TaskPlanUpdatedData struct {
+	Action   string              `json:"action"`
+	Revision int64               `json:"revision"`
+	Tasks    []taskplan.TaskItem `json:"tasks"`
+}
+
 // RunCompletedData 表示 Run 成功结束时的汇总信息。
 type RunCompletedData struct {
 	DurationMS int64 `json:"duration_ms"`
@@ -87,6 +100,24 @@ type Event struct {
 	Sequence   int64     `json:"seq"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Data       any       `json:"data,omitempty"`
+}
+
+// WithSink 将当前 Run 的事件出口传递给会话范围内的静态系统工具。
+func WithSink(ctx context.Context, sink func(Event)) context.Context {
+	return context.WithValue(ctx, eventSinkContextKey{}, sink)
+}
+
+// EmitFromContext 从系统工具向当前 Run 投影事件；缺少出口时安全忽略。
+func EmitFromContext(ctx context.Context, eventType string, data any) bool {
+	if ctx == nil {
+		return false
+	}
+	sink, ok := ctx.Value(eventSinkContextKey{}).(func(Event))
+	if !ok || sink == nil {
+		return false
+	}
+	sink(Event{Type: eventType, Data: data})
+	return true
 }
 
 // Emitter 为单次 Run 赋予单调递增的事件序号。

@@ -11,6 +11,7 @@ func customizeRegister(r *server.Hertz) {
 	r.POST("/v1/sessions", handler.CreateSession)
 	r.POST("/v1/sessions/:session_id/messages", handler.SessionMessageStream)
 	r.GET("/v1/sessions/:session_id/messages", handler.SessionMessages)
+	r.GET("/v1/sessions/:session_id/task-plan", handler.SessionTaskPlan)
 	r.GET("/v1/tongji/oauth/authorize", handler.TongjiAuthorize)
 	r.POST("/v1/tongji/oauth/token", handler.TongjiExchangeToken)
 	r.OPTIONS("/v1/tongji/oauth/token", handler.TongjiExchangeTokenOptions)

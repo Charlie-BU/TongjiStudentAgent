@@ -78,7 +78,8 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}
-	runCtx := agenticskills.WithRunState(ctx, agenticskills.NewRunState())
+	runCtx := agenticskills.WithRunState(ctx, agenticskills.NewRunState()) // 将本轮状态传递给静态系统工具
+	runCtx = agentevent.WithSink(runCtx, emit)                             // 将当前 Run 的事件出口传递给会话范围内的静态系统工具
 	runner := adk.NewRunner(runCtx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
 	iter := runner.Run(runCtx, messages)
 	var response string

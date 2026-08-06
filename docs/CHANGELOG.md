@@ -1,3 +1,68 @@
+## CHANGELOG - 2026-08-06 - 接入会话级任务计划管理、实时事件与恢复接口
+
+### 背景与目标
+
+为多步骤 Agent 任务提供跨请求可恢复的计划状态：模型可在当前已授权会话内创建、调整、追加、更新或清理任务计划；前端可通过 SSE 实时更新进度，并在页面刷新后读取最新快照。
+
+### 核心改动
+
+- 新增 `system.manage_task_plan` 静态系统工具，并加入应用工具 allowlist 与系统工具注册表。
+- 工具支持五类操作：
+  - `create`：创建完整计划；
+  - `modify`：替换当前计划；
+  - `append`：追加任务；
+  - `update_status`：仅更新已有任务状态；
+  - `clear`：清空当前计划。
+- 工具参数使用严格 JSON 解码，拒绝未知字段；校验必填 `reason`、操作类型、任务列表和状态更新约束。
+- 工具执行始终通过 `TaskPlanRepository` 访问数据；不接受模型提供的 `session_id` 或 `owner_user_id`，避免模型篡改会话访问范围。
+- 创建、更新和清理操作使用 revision 乐观并发控制；发生并发冲突时返回稳定的 `plan_conflict` 结果。
+
+### 会话与运行时接入
+
+- Chat Service 在每轮 Agent 运行前重新验证会话归属并构造 `TaskPlanScope`：
+  - 认证会话绑定当前 `user_id`；
+  - 匿名会话绑定其 capability session ID；
+  - scope 注入当前 Run context，供任务计划工具访问。
+- 每轮运行开始时读取当前活动计划，并以转义后的 `<active-task-plan>` 动态提醒注入模型输入。
+- 任务描述被明确标记为状态快照而非指令，且 XML 特殊字符会被转义，避免计划内容破坏提示词边界。
+- Runtime 将当前 SSE 事件出口传入工具执行上下文，使工具无需依赖全局状态即可上报计划更新。
+
+### SSE 与 API
+
+- 新增 SSE 事件 `task_plan.updated`，包含：
+  - `action`：触发更新的操作；
+  - `revision`：最新计划版本；
+  - `tasks`：当前完整任务列表快照。
+- 前端应以该事件的完整 `tasks` 快照刷新进度面板，不依赖局部增量合并。
+- 新增 `GET /v1/sessions/:session_id/task-plan`：
+  - 认证会话按当前 `user_id` 校验归属；
+  - 匿名会话按 session capability 校验；
+  - 无活动计划时返回 `{"plan":null}`；
+  - 会话不存在或无权访问时返回 404。
+
+### 存储与生命周期
+
+- Redis 匿名会话普通消息追加时，现会同步续期 task-plan 键。
+- 活跃匿名会话持续产生消息时，任务计划不再因初始 TTL 到期而提前丢失。
+- PostgreSQL 持久会话与 Redis 匿名会话继续复用统一的任务计划模型、版本语义和访问范围约束。
+
+### 文档与测试
+
+- README 与开发文档补充任务计划 SSE 事件、查询接口和推荐调用顺序。
+- 新增或更新测试，覆盖：
+  - 工具注册与 allowlist；
+  - 创建、重复创建保护、状态更新和非法参数；
+  - scope 注入与认证/匿名会话路由；
+  - SSE `task_plan.updated` 事件；
+  - Handler 读取任务计划；
+  - 动态提醒中的计划转义；
+  - Redis TTL 续期。
+- 已通过 `go test ./...`、受影响包 `go test -race`、`go vet ./...` 与 `git diff HEAD --check`。
+
+### 建议 Commit Message
+
+`feat(agent): add session-scoped task plan management`
+
 ## CHANGELOG - 2026-08-06 15:56 - 重构 Agent 会话模块并新增会话级任务计划存储
 
 ### 撰写时间
