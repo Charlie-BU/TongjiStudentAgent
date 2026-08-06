@@ -63,9 +63,9 @@ func TestRuntimeStreamPublishesToolFailureWhenToolStreamFails(t *testing.T) {
 		var events []agentevent.Event
 
 		Convey("应将已开始的工具调用标记为失败", func() {
-			_, err := runtime.Stream(context.Background(), "现在几点？", func(event agentevent.Event) {
+			_, err := runtime.StreamWithHistoryAndMessages(context.Background(), "现在几点？", "", nil, func(event agentevent.Event) {
 				events = append(events, event)
-			})
+			}, nil)
 
 			So(err, ShouldNotBeNil)
 			So(events, ShouldHaveLength, 2)
@@ -82,7 +82,7 @@ func TestChatRequiresInitializedRuntime(t *testing.T) {
 	Convey("执行 Runtime 聊天", t, func() {
 		Convey("Runtime 未初始化", func() {
 			var runtime *Runtime
-			response, err := runtime.Stream(context.Background(), "你好", nil)
+			response, err := runtime.StreamWithHistoryAndMessages(context.Background(), "你好", "", nil, nil, nil)
 
 			Convey("应返回初始化错误且不产生响应", func() {
 				So(response, ShouldBeBlank)
@@ -101,8 +101,8 @@ func TestRuntimeStreamCreatesIsolatedSkillRunState(t *testing.T) {
 		runtime := &Runtime{agent: agent}
 
 		Convey("每一轮都应使用独立的 Skill Run State", func() {
-			_, firstErr := runtime.Stream(context.Background(), "第一轮", nil)
-			_, secondErr := runtime.Stream(context.Background(), "第二轮", nil)
+			_, firstErr := runtime.StreamWithHistoryAndMessages(context.Background(), "第一轮", "", nil, nil, nil)
+			_, secondErr := runtime.StreamWithHistoryAndMessages(context.Background(), "第二轮", "", nil, nil, nil)
 
 			So(firstErr, ShouldBeNil)
 			So(secondErr, ShouldBeNil)
@@ -124,7 +124,7 @@ func TestRuntimeStreamContinuesAfterLoadingSkill(t *testing.T) {
 		})
 
 		Convey("加载 Skill 后应继续 ReAct 并生成最终回答", func() {
-			response, streamErr := runtime.Stream(context.Background(), "请生成文档", nil)
+			response, streamErr := runtime.StreamWithHistoryAndMessages(context.Background(), "请生成文档", "", nil, nil, nil)
 
 			So(err, ShouldBeNil)
 			So(streamErr, ShouldBeNil)
@@ -135,7 +135,7 @@ func TestRuntimeStreamContinuesAfterLoadingSkill(t *testing.T) {
 	})
 }
 
-func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
+func TestRuntimeStreamPublishesAssistantAndToolEvents(t *testing.T) {
 	Convey("执行 Runtime 流式事件", t, func() {
 		runtime := &Runtime{agent: &fakeAgent{events: []*adk.AgentEvent{
 			adk.EventFromMessage(nil, schema.StreamReaderFromArray([]*schema.Message{
@@ -149,10 +149,10 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 		}}}
 		var events []agentevent.Event
 
-		Convey("应输出文本增量和脱敏工具生命周期", func() {
-			response, err := runtime.Stream(context.Background(), "现在几点？", func(event agentevent.Event) {
+		Convey("应输出文本增量和完整工具生命周期", func() {
+			response, err := runtime.StreamWithHistoryAndMessages(context.Background(), "现在几点？", "", nil, func(event agentevent.Event) {
 				events = append(events, event)
-			})
+			}, nil)
 
 			So(err, ShouldBeNil)
 			So(response, ShouldEqual, "同学你好，这里是答案。")
@@ -165,8 +165,8 @@ func TestRuntimeStreamPublishesSafeAssistantAndToolEvents(t *testing.T) {
 			completedData, completedMarshalErr := json.Marshal(events[3].Data)
 			So(marshalErr, ShouldBeNil)
 			So(completedMarshalErr, ShouldBeNil)
-			So(string(startedData), ShouldNotContainSubstring, "must-not-leak")
-			So(string(completedData), ShouldNotContainSubstring, "sensitive tool result")
+			So(string(startedData), ShouldContainSubstring, "must-not-leak")
+			So(string(completedData), ShouldContainSubstring, "sensitive tool result")
 		})
 	})
 }

@@ -1,11 +1,13 @@
 package runtime
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"strings"
 	"time"
 
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -15,7 +17,9 @@ var reminderLocation = time.FixedZone(reminderTimezone, 8*60*60)
 
 var chineseWeekdays = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
 
-func buildInputMessages(query, studentInfo, skillCatalog string, now time.Time) ([]*schema.Message, error) {
+// buildInputMessagesWithHistory 构建包含当前日期、学生基础信息、技能目录、用户请求的输入消息。
+// history 是用户与 Deep Agent 之前的交互历史记录。
+func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skillCatalog string, now time.Time, history []agenticsession.Message) ([]*schema.Message, error) {
 	interactionRequest, err := xml.MarshalIndent(struct {
 		XMLName   xml.Name `xml:"interaction_request"`
 		UserQuery string   `xml:"user_query"`
@@ -33,10 +37,12 @@ func buildInputMessages(query, studentInfo, skillCatalog string, now time.Time) 
 	}
 	reminder := "<system-reminder>\n" + strings.Join(reminderParts, "\n\n") + "\n</system-reminder>"
 
-	return []*schema.Message{
-		schema.UserMessage(reminder),
-		schema.UserMessage(string(interactionRequest)),
-	}, nil
+	// 通过 ContextAssembler 构建最终模型输入
+	return agenticsession.NewContextAssembler().AssembleForTurn(ctx, agenticsession.TurnInput{
+		DynamicReminder: schema.UserMessage(reminder),
+		History:         history,
+		UserMessage:     schema.UserMessage(string(interactionRequest)),
+	})
 }
 
 // trustedStudentInfoReminder 将调用方已获取的学生基础信息作为非指令数据与用户提问隔离。

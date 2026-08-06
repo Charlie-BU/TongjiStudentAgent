@@ -1,4 +1,4 @@
-// Package event 定义 Agent 运行过程对外可投影的安全事件。
+// Package event 定义 Agent 运行过程对外投影的 SSE 事件。
 package event
 
 import (
@@ -9,14 +9,15 @@ import (
 )
 
 const (
-	RunStarted        = "run.started"
-	AgentStatus       = "agent.status"
-	AssistantDelta    = "assistant.delta"
-	ToolCallStarted   = "tool.call.started"
-	ToolCallCompleted = "tool.call.completed"
-	ToolCallFailed    = "tool.call.failed"
-	RunCompleted      = "run.completed"
-	RunFailed         = "run.failed"
+	RunStarted         = "run.started"
+	AgentStatus        = "agent.status"
+	AssistantReasoning = "assistant.reasoning"
+	AssistantDelta     = "assistant.delta"
+	ToolCallStarted    = "tool.call.started"
+	ToolCallCompleted  = "tool.call.completed"
+	ToolCallFailed     = "tool.call.failed"
+	RunCompleted       = "run.completed"
+	RunFailed          = "run.failed"
 )
 
 // RunStartedData 表示 Run 启动时的展示信息。
@@ -35,11 +36,17 @@ type AssistantDeltaData struct {
 	Text string `json:"text"`
 }
 
+// AssistantReasoningData 表示模型明确返回的 reasoning 内容。
+type AssistantReasoningData struct {
+	Text string `json:"text"`
+}
+
 // ToolCallStartedData 表示模型已选择工具且等待执行的调用。
 type ToolCallStartedData struct {
 	CallID      string `json:"call_id"`
 	Tool        string `json:"tool"`
 	DisplayName string `json:"display_name"`
+	Arguments   string `json:"arguments"`
 }
 
 // ToolCallCompletedData 表示本轮 Agent 已接收到工具结果。
@@ -47,6 +54,7 @@ type ToolCallCompletedData struct {
 	CallID     string `json:"call_id"`
 	Tool       string `json:"tool"`
 	DurationMS int64  `json:"duration_ms"`
+	Result     string `json:"result"`
 }
 
 // ToolCallFailedData 表示工具调用执行失败的安全错误信息。
@@ -69,11 +77,13 @@ type RunFailedData struct {
 	Message string `json:"message"`
 }
 
-// Event 是可安全发送给调用方的单个 Agent 运行事件。
-// Data 只允许携带经调用层裁剪后的展示数据，不能放入凭据、原始工具结果或模型推理内容。
+// Event 是单个 Agent 运行事件。
+// Data 按事件类型携带前端展示数据；当前协议允许 reasoning、工具参数和工具结果，
+// 但不得携带 Bearer token、数据库连接串或其他服务端凭据。
 type Event struct {
 	Type       string    `json:"type"`
 	RunID      string    `json:"run_id"`
+	SessionID  string    `json:"session_id,omitempty"`
 	Sequence   int64     `json:"seq"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Data       any       `json:"data,omitempty"`
@@ -90,6 +100,7 @@ type Emitter struct {
 
 // NewEmitter 创建单次 Agent Run 的事件发送器。
 func NewEmitter(runID string, send func(Event)) *Emitter {
+	// 兜底：生成随机 Run 标识和空发送函数
 	if runID == "" {
 		runID = NewRunID()
 	}

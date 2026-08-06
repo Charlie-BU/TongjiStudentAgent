@@ -39,7 +39,7 @@
 以源码为准，主仓当前具备：
 
 - Hertz HTTP 服务与健康检查。
-- `POST /v1/agent/chat` 单轮 JSON 聚合接口，以及 `POST /v1/agent/chat/stream` 单轮 SSE 接口。
+- `POST /v1/sessions` 创建会话、`POST /v1/sessions/:session_id/messages` 以 SSE 执行会话消息，以及 `GET /v1/sessions/:session_id/messages` 读取历史。
 - Ark ChatModel 初始化。
 - Eino `deep.New` 预构建 DeepAgent。
 - 远程 Streamable HTTP MCP Client 与 application allowlist 中的工具。
@@ -49,9 +49,9 @@
 当前调用链为：
 
 ```text
-HTTP /v1/agent/chat 或 /v1/agent/chat/stream
-  -> biz/handler.Chat 或 ChatStream（Bearer 凭据写入请求上下文）
-  -> chat.Chat 或 chat.Stream
+HTTP /v1/sessions/:session_id/messages
+  -> biz/handler.SessionMessageStream（Bearer 凭据写入请求上下文）
+  -> chat.StreamSession（读取、追加会话消息）
   -> 可选 Ark Knowledge Search
   -> Eino DeepAgent Runner
   -> 远程 MCP allowlist 工具（请求级 token 注入）
@@ -64,11 +64,11 @@ HTTP /v1/agent/chat 或 /v1/agent/chat/stream
 | --- | --- | --- |
 | Agent 编排 | 使用 `deep.New` 的标准模型—工具循环，禁用内置待办和通用子 Agent | CozeLoop 可识别 Agent 与 Tool 节点；Loop、持久化与完整工具策略仍待补齐 |
 | 上下文工程 | 只把知识切片拼入当前问题 | 没有身份、历史、摘要、来源和动态提醒的稳定装配顺序 |
-| 短期记忆 | 请求不带 `session_id`，Runner 没有 CheckPointStore | 多轮对话无法延续 |
+| 短期记忆 | 已提供认证 PostgreSQL 会话与匿名 Redis 会话，Runtime 按消息历史装配上下文 | 尚未实现摘要、Checkpoint、断线重连或 Resume |
 | MCP | 启动时连接远程 `TongjiStudentMCPServer`，并只发现 application allowlist 中的工具；调用时转发请求 context 中的 Bearer token，缺失 token 时本地拒绝 | 远程 MCP/开放平台仍需验证 token 有效性、用户绑定和 scope |
 | 工具治理 | 没有工具风险等级、参数预检、超时和失败策略 | 无法安全接入学生隐私和未来写操作 |
 | HITL | 未实现 | 无法确认高风险操作，也无法中断后恢复 |
-| 流式协议 | 已提供单轮 SSE，包含状态、文本增量、工具开始/结束/失败、运行完成/失败；尚无会话事件重连、心跳和 HITL | 前端可展示首期执行过程，但尚不能恢复中断 Run 或展示确认请求 |
+| 流式协议 | 会话消息接口以 SSE 提供状态、文本增量、工具开始/结束/失败、运行完成/失败；尚无重连、心跳和 HITL | 前端可展示首期执行过程，但尚不能恢复中断 Run 或展示确认请求 |
 | 身份与鉴权 | Chat 接口可将格式正确的 Bearer 凭据写入请求上下文；当前不因缺失或无效格式拒绝调用，也未验证 token、绑定用户或审核 scope | 不能安全访问课表、成绩等个人数据 |
 | 安全 | 生产调用链不注册宿主机文件或 Shell 工具 | 未来新增此类能力时必须采用隔离沙箱与最小权限接口 |
 | 隐私 | 普通 HTTP 日志仅记录 Request ID、方法、路径、状态码和耗时；Chat 不再记录完整回复 | 仍需补充审计、字段级脱敏和受限诊断日志 |
@@ -350,7 +350,7 @@ Loop 的硬边界：
 
 ### 5.5 对外接口与事件流
 
-保留现有 `POST /v1/agent/chat` 作为兼容接口，仅用于开发和迁移；新增正式接口：
+正式接口：
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -361,7 +361,11 @@ Loop 的硬边界：
 | `POST` | `/v1/messages/:message_id/feedback` | 提交未解决/不准确反馈 |
 | `GET` | `/v1/sessions/:session_id/messages` | 分页读取历史消息 |
 
-SSE 事件使用稳定的业务协议，不直接暴露 Eino 内部结构：
+当前已落地创建、提交消息与读取历史三个接口。`POST /v1/sessions/:session_id/messages` 的请求体为 `{"message":"..."}`。认证请求以 request context 的 `user_id` 访问 PostgreSQL 会话，未获得该 ID 的请求仅可访问 Redis 匿名会话。
+
+会话消息表同时保存 user、assistant 与 tool 三类消息。每次用户提交会生成一个 `run_id`，并写入该次运行产生的全部消息，以便按完整 turn 边界读取；assistant 消息保留 `tool_calls` 和 `reasoning_content`，tool 消息保留 `tool_call_id`、`tool_name` 与完整结果。历史接口直接返回这些字段，下一轮上下文按原角色恢复它们；SSE 使用相同的 `run_id`，并发送 `assistant.reasoning`、工具参数和工具结果，供前端实时展示。
+
+SSE 事件使用稳定的业务事件名；事件 `data` 当前会投影部分 Eino 输出（reasoning、工具参数和工具结果）：
 
 ```text
 run.started
@@ -458,13 +462,13 @@ Run
 
 实现分两步：
 
-1. 先定义接口并提供内存实现，用于 Graph 单测和本地开发。
-2. 灰度前完成 Redis + 持久化数据库实现。
+1. 定义独立于 HTTP、Runner 的会话接口与上下文装配边界。
+2. 认证会话使用 PostgreSQL，匿名会话使用 Redis；进程内存不作为任何会话的存储实现。
 
 建议职责：
 
-- Redis：Session Snapshot、短期 History 窗口、同 Session 锁、Run 取消位、HITL Checkpoint。
-- 数据库：完整原始消息、Session 元数据、反馈、工具审计；具体数据库选型服从部署平台现有能力。
+- Redis：匿名 Session、短期 History 窗口、同 Session 锁、Run 取消位、HITL Checkpoint。匿名消息使用 TTL 和每会话消息上限自动淘汰。
+- PostgreSQL：已认证会话的完整 canonical 原始消息、Session 元数据、反馈、工具审计。
 - 进程内缓存：只做短 TTL 读取优化，不能成为唯一事实源。
 
 所有 Session 写入使用 `session_id + version` 做并发保护。原始消息 append-only；摘要和 Anchor 可覆盖更新。跨实例恢复时，任何 Pod 都应能通过 Redis/数据库加载同一 Session。
@@ -808,7 +812,7 @@ DeepAgent 保留，但聊天调用链不注册宿主机文件系统或 Shell mid
 | --- | --- |
 | Graph | 无工具直接回答、单工具、多轮工具、超迭代、取消、Fallback |
 | Context | 装配顺序、消息不变性、Tool 配对、摘要切点、Token 超限 |
-| Session | Append 顺序、CAS、跨实例恢复、锁释放、重复请求幂等 |
+| Session | Append 顺序、CAS、跨实例恢复、锁释放 |
 | Tool | Catalog、Schema、权限、HITL、超时、错误分类、失败熔断 |
 | MCP Server | 每个 Tool 的输入、OpenAPI 映射、空数据、错误归一、脱敏 |
 | Knowledge | 配置、过滤、去重、来源字段、超时降级、Prompt 注入防护 |
@@ -892,7 +896,6 @@ MCP Server 仓：
 - 使用 Fake Tool/Scripted Model 覆盖无工具、单工具、多工具、错误修正、超迭代。
 - 实现 `ChatService.Handle`、Run 状态、Session 单活跃锁、取消传播。
 - 新增 SSE 正式接口和事件协议。
-- 保留 `/v1/agent/chat` 兼容聚合层。
 
 验收：
 
@@ -1025,7 +1028,7 @@ MCP Server 仓：
 - HITL。
 - Fallback Model。
 
-灰度和回滚均以开关为第一手段。旧 `/v1/agent/chat` 在正式 SSE 接口稳定一个版本后再评估下线。
+灰度和回滚均以开关为第一手段。
 
 ## 16. 上线前必须确认的外部依赖
 

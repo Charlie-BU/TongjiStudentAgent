@@ -1,3 +1,222 @@
+## CHANGELOG - 2026-08-06 01:06 - 接入 Ark Responses API 会话缓存并持久化 response chain
+
+### 撰写时间
+
+- 2026-08-06 01:06
+
+### Base Commit
+
+- f9dd638cee4e09fd6225f6b0ea03f1e1fa64d8d3
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 多轮会话已经能够把 canonical user、assistant 与 tool 消息从 PostgreSQL 或 Redis 恢复到 Runtime，但每一轮仍会把完整历史重新交给模型。对带工具循环的 Agent 来说，这会重复传输先前已经处理过的上下文，既增加请求体和模型上下文成本，也没有利用 Ark Responses API 已提供的 response-chain session cache。
+- 一开始不能只在模型构造处打开缓存。Ark SDK 会从输入历史中找最近一个有效的 `response_id`，随后裁掉该消息及其之前的输入，只发送其后的增量。如果仍把“当前日期、当前学生资料和 Skill catalog”放在历史之前，这些本轮动态信息也会被裁掉，模型会继续使用缓存中旧的 reminder。此次将缓存元数据的持久化、上下文装配顺序和会话写入方式一起调整，目标是在命中缓存时仍保留本轮动态上下文，同时在缓存失效时自然退回完整历史。
+- 另一个约束是 Agent 输出不再只是最终文本。工具调用、工具结果、reasoning 与最终 assistant 消息都要成为同一条可恢复链路的一部分；若仍保留旧的“模型结束后再追加最终回答”分支，容易重复写入并丢失模型输出附带的 Ark metadata。因此本次把记录回调收敛为会话 Runtime 的必经能力。
+
+### 改动概览
+
+- `internal/integration/arkmodel.NewFromEnv` 从旧 `ChatModel` 切换为 `ark.NewResponsesAPIChatModel`，默认启用 600 秒 `SessionCache`，并配置 `ReasoningEffortMedium`。返回类型收敛为 Runtime 已依赖的 `model.BaseChatModel`，不再让应用层依赖旧模型实现类型。
+- canonical `session.Message` / `NewMessage` 增加 `ResponseID` 与 `ResponseCacheExpiresAt`。`chat.Service.appendAgentMessage` 从每条 Runtime 输出的 `schema.Message.Extra` 提取 Ark 的 `response_id` 和缓存过期秒数，再随同 `run_id`、tool calls、reasoning 一起写入对应会话。
+- PostgreSQL `agent_session_messages` 增加 `response_id TEXT` 与 `response_cache_expires_at BIGINT`，启动迁移使用 `ADD COLUMN IF NOT EXISTS` 补齐既有表；Redis Lua append 参数和 JSON payload 同步扩展。两种存储的 `Append` / `ListMessages` 都保留该元数据，旧记录以空 ID、过期时间 `0` 安全回退。
+- `ContextAssembler` 恢复 assistant 历史时把持久化字段写回 Ark SDK 识别的 `Extra` key。它会先检查是否存在尚未过期的缓存响应：无缓存时维持“动态 reminder -> 历史 -> 当前 query”的原顺序；命中缓存时改为“历史 -> 动态 reminder -> 当前 query”，确保 SDK 裁剪缓存前缀后，当前日期、用户资料和 Skill catalog 仍作为增量发送。
+- `runtime.Runtime` 删除只返回最终文本的 `StreamWithHistory` 入口，保留并强化 `StreamWithHistoryAndMessages`。`chat.Service` 同步将 `sessionRuntime` 固定为带 `record` 回调的接口，移除结束阶段单独追加 final assistant 文本的 fallback；每条 Agent 输出均由回调落入 session，避免重复消息并保留 response-chain 元数据。
+- README 补充当前模型运行方式：缓存命中时 Ark 自动携带 `previous_response_id` 与未缓存增量；响应 ID 不存在或缓存过期时，SDK 发送完整历史，正确性不依赖缓存命中。
+- 新增或更新 Runtime、上下文、PostgreSQL、Redis、Chat service 与 Ark 初始化测试，覆盖 Responses API 创建、TTL、元数据存取、`Extra` 恢复、完整消息记录和缓存命中时 dynamic reminder 的装配位置。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`NewFromEnv` 仍使用 `ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL` / `ARK_BASE_URL_CN` 完成模型构造；`runtime.New` 继续只依赖 `model.BaseChatModel`。请求身份、会话归属、Redis turn lock 与 MCP Tool allowlist 不因缓存开启而改变。
+- 当前写入链：`adk.Runner` 产生 `schema.Message` -> `Runtime.StreamWithHistoryAndMessages` 调用 `record` -> `chat.Service.appendAgentMessage` 读取 Ark `Extra` -> `PostgresStore` 或 `RedisEphemeralStore` 写入 canonical 消息。工具循环中间的 assistant/tool 消息和最终回复均走该路径；不会再由 `afterModel` 再写一份最终文本。
+- 当前恢复链：`ListMessages` 从 session store 读取 response ID 与 expiry -> `ContextAssembler.restoreArkResponseCache` 重建 SDK metadata -> Ark Responses SDK 找最近有效 assistant cache 并使用其 `previous_response_id`。缓存命中后，Assembler 有意把本轮 dynamic reminder 放在历史之后；SDK 裁掉缓存消息及之前内容时，提醒和当前 query 会留下来作为真正的增量输入。
+- 下游影响：缓存可用时，模型服务端保留已处理 response chain，应用侧不再重复发送整段前缀；缓存到期时，由于历史消息仍完整持久化且过期 metadata 不会被 SDK 选中，调用退回完整上下文。会话历史接口现在也会返回 `response_id` 与 `response_cache_expires_at` 字段，调用方应把它们视为会话内部元数据，不应自行拼装或转发为模型凭据。
+
+### 改动结果与业务影响
+
+- 多轮 Agent 在 600 秒缓存窗口内可以复用 Ark 上一轮的 response chain，并继续携带当前轮动态资料和当前 query；这减少了重复前缀传输，同时避免了因缓存裁剪导致日期、学生资料或 Skill catalog 停留在旧值的问题。
+- 认证会话和匿名会话都具备同一份 response metadata 语义。PostgreSQL 的所有权查询仍以 `session_id + owner_user_id` 保护；匿名会话仍由随机 capability ID 与 TTL 管理。response ID 本身不携带 API key，模型调用仍仅发生在服务端。
+- 会话 Runtime 不再支持只写最终回答的兼容路径。仓内 Runtime、service fake 与测试已同步为逐条记录接口；这使工具轨迹、reasoning、最终回复和 Ark response metadata 在同一持久化边界内保持一致。
+- 已执行并通过 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session ./internal/application/chat ./internal/integration/arkmodel`、`go vet ./...` 与 `git diff HEAD --check`。测试均使用 fake Agent、`pgxmock`、`miniredis` 或本地构造的 schema message，不访问真实 Ark、校园平台、共享 Redis 或 PostgreSQL。
+
+### 风险与待办
+
+- Responses API 的实际缓存命中、服务端 `previous_response_id` 行为和缓存失效响应仍未通过真实 Ark endpoint 验证；当前单测覆盖本地 metadata 编解码与输入排序，不等同于生产网络契约。发布前应在隔离的 Ark 测试 endpoint 观测请求体、缓存命中率和过期后的完整历史回退。
+- 动态 reminder 在缓存命中时会作为 cached assistant 之后的一条 User role 消息重新发送。该顺序是为了适配 SDK 的裁剪规则，但若未来 Agent 或 Ark SDK 改变“最近缓存消息”的选择策略，需要重新验证动态资料、工具结果和当前 query 的相对顺序。
+- `response_id` 与过期时间会通过会话历史 JSON 返回给具有会话访问权的客户端。它们不是 Bearer token，但属于上游会话关联元数据；前端、日志和分析链路不应把它们当成可公开分享的标识，也不应尝试以此替代服务端 Ark 凭据。
+- 本次默认开启 `ReasoningEffortMedium`，模型可能产生更多 reasoning 内容。现有 raw reasoning / tool trace 暴露仍受 `WL-20260805-002` 的产品豁免约束，白名单将于 2026-09-05 到期，届时需要一并复核缓存与前端数据处理边界。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): persist Ark response-chain cache`
+
+## CHANGELOG - 2026-08-05 02:26 - 记录并回放 Agent 工具调用与推理轨迹
+
+### 撰写时间
+
+- 2026-08-05 02:26
+
+### Base Commit
+
+- ca79459eb67f07a734c665ae2581e9fb14f91105
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 已持久化的多轮会话此前只保存 user 消息与最终 assistant 文本。Agent 一旦在某轮调用工具，后续轮次恢复历史时既看不到 assistant 发起的 `ToolCalls`，也看不到对应的 tool result；模型无法重新建立「这条工具结果属于哪个调用」的关联，工具驱动的任务在跨请求续聊时会退化为不完整上下文。
+- 产品同时需要在 SSE 中展示模型 reasoning、工具入参和工具结果，用于让前端呈现 Agent 的实际执行过程。这与原先“安全事件不暴露 Eino 内部结构”的约束相冲突。本次不将其伪装为默认安全行为，而是在审阅白名单中明确登记为 `WL-20260805-002`：该暴露由产品确认并接受，白名单于 2026-09-05 到期，届时必须重新审查数据范围与前端访问控制。
+- 本次目标是在不改变现有会话归属、Redis/PostgreSQL 存储选择和 Tool allowlist 的前提下，将一轮 Agent 处理过的 canonical `schema.Message` 完整记录下来，并在下一轮以相同角色语义回放；同时让实时 SSE 与历史消息都能表达 reasoning、工具调用及工具结果。
+
+### 改动概览
+
+- `internal/agentic/event` 新增 `assistant.reasoning` 事件与 `AssistantReasoningData`；`tool.started` 新增 `arguments`，`tool.completed` 新增 `result`。事件包注释同步改为公共 SSE 协议，并明确数据可包含 reasoning、工具参数和结果，但不得放入 Bearer token、数据库连接串或服务端凭据。
+- `runtime.Runtime` 在原有 `StreamWithHistory` 之上新增 `StreamWithHistoryAndMessages`。它在处理每个 `*schema.Message` 时调用记录回调：assistant 的 `ReasoningContent` 投影为 `assistant.reasoning`，tool call 的函数参数写入 `tool.started.arguments`，工具输出写入 `tool.completed.result`。旧方法继续委托新方法，保持现有调用方兼容。
+- 会话 canonical 消息扩展 `tool` role、`ToolCalls`、`ToolCallID`、`ToolName` 与 `ReasoningContent`。`NewMessageFromSchema` 现在可保留 assistant tool call/reasoning 和 tool result；校验规则允许携带工具调用或 reasoning 的无正文 assistant 消息，并要求 tool 消息必须带 `tool_call_id`。
+- `ContextAssembler` 恢复历史时不再只拼接 user/assistant 文本：它会按 sequence 回放 assistant 的 tool calls 与 reasoning，再回放关联的 tool 消息。下一次 `buildInputMessagesWithHistory` 因而能向 Agent 还原完整的「assistant 调用工具 -> tool 返回 -> assistant 继续回答」链路。
+- PostgreSQL 的 `agent_session_messages` 增加 `tool_calls JSONB`、`tool_call_id`、`tool_name`、`reasoning_content`，迁移同时放宽 role 约束以接受 `tool`。Redis 消息 JSON 与 Lua append 参数同步携带这些字段；两种存储的 `Append`/`ListMessages` 都保留完整结构化消息。
+- `chat.Service.StreamSession` 识别支持记录回调的 runtime，并将每条处理过的 schema 消息交给 `appendAgentMessage` 写入 durable 或 ephemeral store；启用该路径时不再在结束阶段重复追加 final assistant 文本，避免同一轮最终回复出现两份。
+- `PostgresStore.pool` 收敛为只含 `Close`、`Exec`、`Query`、`QueryRow`、`BeginTx` 的内部接口，生产仍使用 `pgxpool.Pool`，测试则通过新增的 `pgxmock/v4` 精确验证建表迁移、事务写入和读取反序列化。运行时、上下文、handler、PostgreSQL 测试一并补齐工具轨迹断言。
+- `README.md` 与 `docs/DEVELOPMENT.md` 更新为当前协议：前端会接收 reasoning、工具入参与工具结果，必须按会话归属处理；文档同样列出不应传输的 Bearer token、数据库连接串和服务端凭据。
+
+### 关键链路解析（含上下游）
+
+- 上游输入仍由 `biz/handler` 的会话 SSE 接口进入 `chat.Service.StreamSession`。服务先依据用户身份选择 PostgreSQL durable store 或 Redis ephemeral store，并在既有 turn lock 保护下读取 canonical 历史、写入本轮 user 消息；身份校验、会话归属和工具 allowlist 并未因本次改动放宽。
+- 当前执行链变为 `chat.Service.StreamSession` -> `Runtime.StreamWithHistoryAndMessages` -> `Runtime.readMessage`。Runtime 一边把 assistant reasoning、tool started、tool completed 等事件投影到 SSE，一边把原始 `schema.Message` 交给记录回调；服务层将其映射为 `session.Message` 后追加到与该会话匹配的持久化或临时存储。最终 assistant 消息也由同一回调保存，避免旧的 after-model 分支再写一次。
+- 持久化与恢复链为 `PostgresStore`/`RedisEphemeralStore` -> `ListMessages` -> `ContextAssembler` -> `buildInputMessagesWithHistory`。消息中的 `ToolCalls`、`ToolCallID`、`ToolName` 和 `ReasoningContent` 均按 sequence 读取并映射回 Eino schema，所以下游 Agent 看到的是具备调用关联的历史，而不是脱离来源的纯文本摘要。
+- PostgreSQL 迁移先创建包含新字段的新表定义，再对已部署表执行 role check 替换和 `ADD COLUMN IF NOT EXISTS`；写入时将 `ToolCalls` 序列化到 JSONB，读取时反序列化。Redis 仍以 Lua 保证追加、序号分配、窗口裁剪和 TTL 刷新的原子性，只是消息 payload 扩展为同一套字段。
+- SSE 下游从“只看最终回答和工具状态”变为可消费原始 reasoning、函数 arguments 与工具 result。字段属于显式产品协议而非服务端脱敏视图；前端、网关日志和任何事件转发消费者必须以当前会话的 owner/capability 为边界，不得把这些 payload 当作可公开广播的数据。
+
+### 改动结果与业务影响
+
+- 工具型对话现在可跨请求继续：下一轮模型能同时获得发起调用的 assistant 消息、对应的 tool result 以及后续 assistant 输出，不会因历史缺少 `tool_call_id` 关联而丢失执行上下文。
+- 前端可在运行中呈现模型 reasoning、实际工具参数和工具结果；历史接口也会返回可表达同一轨迹的 canonical 消息字段。`Message` 的 JSON tag 统一为 lower snake case，handler 测试已按新输出更新。
+- 已执行并通过 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session ./internal/application/chat ./biz/handler`、`go vet ./...` 与 `git diff --check`。新增 PostgreSQL 测试覆盖 schema SQL、assistant 工具调用/reasoning 写入以及 tool result 读回后的顺序恢复。
+
+### 风险、边界与后续建议
+
+- `assistant.reasoning`、工具 arguments 与 result 是原始 Agent 轨迹，可能含用户输入、工具返回的敏感业务数据或第三方内容。本次由 `WL-20260805-002` 明确豁免，不代表数据天然安全；白名单到期前应复核前端会话授权、SSE/日志采集脱敏、持久化数据分级与删除策略。
+- 当前测试使用 `pgxmock` 验证 SQL 调用契约和消息编解码，未在真实 PostgreSQL 实例执行迁移。应在 CI 或预发布环境补充真实 PG migration/round-trip 集成测试，特别验证已存在 `agent_session_messages` 表的约束替换与列补齐。
+- 原始 tool payload 会增加 PostgreSQL/Redis 存储量及后续模型上下文长度；当前仅受会话消息窗口限制，尚无对 reasoning/arguments/results 的摘要、截断或单条大小上限。需要结合实际工具输出量设定容量和保留策略。
+- 记录回调在模型流式过程中失败会使本轮运行失败，但此前已经记录的部分轨迹可能保留在会话中。若产品要求严格的整轮原子可见性，后续应引入 turn 状态或提交标记，并在历史读取时过滤未完成轮次。
+
+### 建议提交信息
+
+- `feat(session): persist agent tool traces`
+
+## CHANGELOG - 2026-08-05 00:35 - 将 Agent 调用链切换为持久化多轮会话
+
+### 撰写时间
+
+- 2026-08-05 00:35
+
+### Base Commit
+
+- acb6bd12b3c9b3365703661c5f3a0593c6a0249a
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 上一次改动只完成了 `Session`、canonical 消息和 `Runtime.StreamWithHistory` 的领域边界，HTTP 调用仍是无状态的 `/v1/agent/chat` 与 `/v1/agent/chat/stream`。这意味着历史消息无法跨请求保存，已认证用户的会话归属、匿名用户的自动过期以及同一会话的并发执行都没有真正进入生产链路。
+- 一开始可以继续沿用进程内 `InMemoryStore`，用它快速把 API 接起来；但它在进程重启、Pod 扩缩容和多实例路由下都不能恢复同一段对话，也无法成为身份会话的唯一事实源。因此本次将认证与匿名两类生命周期拆开：前者落 PostgreSQL，后者放带 TTL 的 Redis；模型仍只消费服务端读取、校验后的 canonical 历史。
+- 目标不是为旧接口附加一个可选 `session_id`，而是明确一条新的会话协议：先创建会话，再提交消息，最后按归属读取历史。为避免多请求同时写入造成消息顺序混乱，本次也把跨实例的单会话执行锁一并接入。
+
+### 改动概览
+
+- 对外路由由单轮 `POST /v1/agent/chat`、`POST /v1/agent/chat/stream` 切换为三个会话接口：`POST /v1/sessions` 创建会话，`POST /v1/sessions/:session_id/messages` 以 SSE 执行并保存一轮消息，`GET /v1/sessions/:session_id/messages?limit=...` 读取 canonical 历史。SSE `Event` 新增 `session_id` 字段，使同一客户端可将运行事件与会话关联。
+- `chat.Service` 新增 `CreateSession`、`StreamSession`、`ListSessionMessages`，并从原先直接调用 Runtime 的单轮 `Stream` 改为“取历史 -> 写用户消息 -> 调模型 -> 写最终助手消息”的编排。运行成功前后分别执行 append；模型失败时不写助手回复，写入失败时向 SSE 发送稳定的 `session_write_failed` 终态。
+- 新增 `PostgresStore`：从 `POSTGRES_DSN` 建立并 Ping `pgxpool`，启动时通过 `EnsurePostgresSchema` 创建 `agent_sessions`、`agent_session_messages`、唯一顺序约束与查询索引。认证会话的 `Get`、`Append`、`ListMessages` 始终带 `owner_user_id`；追加消息在事务中对会话行 `FOR UPDATE`，再分配连续 `sequence` 并更新 `last_active_at`。
+- 新增 `RedisEphemeralStore`：从 `REDIS_URL` 连接 Redis，使用 `SESSION_ANONYMOUS_TTL`（默认 24h）与 `SESSION_ANONYMOUS_MAX_MESSAGES`（默认 20）管理匿名会话。Lua 脚本原子地校验 meta key、分配序号、写入消息、裁剪最近消息并刷新两个 key 的 TTL；`miniredis` 测试覆盖了上限裁剪和过期行为。
+- 新增 Redis `TurnLocker`。`AcquireTurn` 以 `SET NX PX` 获得 30 秒锁，持锁期间每 10 秒以 token 校验方式续租，释放时只删除自己持有的锁。`chat.Service.StreamSession` 在读写历史前持锁；锁冲突会以 `turn_in_progress` 结束本轮 SSE，避免两个 Run 并发插入同一会话。
+- 删除此前只用于领域阶段的 `memory.go` / `memory_test.go`，同时移除 `Message.ClientTurnID` 与 `NewMessage.ClientTurnID`。当前生产链路尚未实现客户端重试幂等键，文档与测试不再宣称该能力已经存在。
+- `runtime.Runtime` 收敛到 `StreamWithHistory`，应用层以最小 `sessionRuntime` 接口注入该能力。Runtime、动态提醒、学生资料、Skill catalog、历史和当前请求仍由 `buildInputMessagesWithHistory` 统一装配，既不允许客户端提交任意历史，也不改变 Tool allowlist、RunState 或安全事件裁剪边界。
+- `README.md`、`docs/DEVELOPMENT.md` 同步了新 API、`POSTGRES_DSN`、`REDIS_URL` 与三个会话容量配置；`go.mod` / `go.sum` 新增 `pgx/v5`、`go-redis/v9` 及仅测试使用的 `miniredis`。
+- 补充配置解析、Redis 会话、PostgreSQL 输入/DDL、服务编排和 HTTP handler 测试。handler 覆盖创建成功与 503、历史读取和 404、SSE 中的 `session_id` 投影、缺失 `session_id` 的 400；同时在审阅白名单中登记了旧 Agent API 的有意下线，`WL-20260805-001` 于 2026-09-05 到期，届时必须复核迁移是否完成。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`biz/handler` 仍通过 `withChatAccessToken` 从 `Authorization` 中提取 Bearer token。该上下文会沿用已有的 `UserIDFromContext`：存在用户 ID 时，服务选择 PostgreSQL durable store；缺失用户 ID 时，服务只创建和访问 Redis ephemeral store。服务启动新增两个必填基础设施依赖，因此模型、MCP 初始化成功不再足以代表服务可用，PostgreSQL schema 与 Redis Ping 也必须成功。
+- 当前改动：创建接口只调用 `chat.CreateSession` 并返回 `session_id`、`persistence`。提交接口先校验 JSON 消息和 path `session_id`，再将 HTTP context 派生为可取消的 SSE context；`StreamSession` 取得 Redis 锁、按当前身份读取有限窗口历史、写入用户消息，随后调用 `Runtime.StreamWithHistory`。模型返回非空最终回答后才追加 assistant 消息，最后由事件发送器输出 `run.completed`。每个写给 SSE 的事件由 handler 补入当前 `session_id`，但不暴露 token、工具参数、原始工具响应或模型 reasoning。
+- 持久化路径：认证请求的 `ListMessages` 和每次 `Append` 都将 `session_id + owner_user_id` 作为查询条件；`Append` 还在同一事务中锁住 session row，使 `MAX(sequence) + 1` 不会被同一会话的并发写入竞争。匿名请求不包含 owner，而是把随机 `anon_` 标识作为短期 capability；Redis meta/messages key 同时续期，消息列表按时间正序返回最近窗口。
+- 下游影响：DeepAgent 现在首次获得前轮 user/assistant 的结构化消息，而不是只收到当前 XML `interaction_request`；静态 Skill、远程 MCP 工具和学生资料读取仍从同一 request context 获取必要状态。调用方必须先保存 `POST /v1/sessions` 的结果，再使用新路径提交或读取；原先直接调用旧 `/v1/agent/chat*` 的客户端不会自动兼容。
+
+### 改动结果与业务影响
+
+- 已认证用户的会话可以跨进程通过 PostgreSQL 恢复，且读取与写入都受 `owner_user_id` 限制；这为多实例部署提供了最小的所有权边界。匿名对话不落 PostgreSQL，默认会在 24 小时后自动过期，并且每个会话只保存最近 20 条消息，避免无身份调用无限积累。
+- 模型上下文现在由服务端规范化的历史驱动。历史窗口由 `SESSION_HISTORY_MAX_MESSAGES` 控制，默认 20；当前轮 user 消息会在模型开始前持久化，assistant 最终文本只在生成成功后持久化。因此失败 Run 会留下用户输入但不会伪造一条成功助手回复，这既保留了可追踪的用户动作，也要求前端能处理“最后一条 user 消息尚无回复”的状态。
+- 同会话的并发提交不再同时进入模型运行。锁冲突不会静默覆盖历史，而是以 SSE `run.failed` / `turn_in_progress` 明确返回。数据库侧的事务锁和 Redis 侧的分布式执行锁分工不同：前者保障 durable 消息序号，后者保障完整 Run 生命周期。
+- 这次将旧单轮接口直接替换为会话接口，是有意的破坏性 API 变更。审阅时已识别该风险，产品确认客户端会随发布迁移，因此通过 `WL-20260805-001` 进行短期豁免；该条目不是永久兼容策略。
+- 已验证：`go test ./...`、`go test -race ./internal/agentic/session ./internal/application/chat ./biz/handler`、`go vet ./...`、`git diff --check` 均通过。测试使用 fake Runtime、内存 SSE writer 和 `miniredis`，不访问真实模型、校园平台、共享 Redis、PostgreSQL 或宿主机 Shell。
+
+### 风险与待办
+
+- `POSTGRES_DSN` 与 `REDIS_URL` 现在都是启动必填项。任一基础设施不可达都会令 Agent 服务初始化失败；当前没有 feature flag、降级到无状态聊天或延迟连接策略。发布前需要确认部署环境的网络、凭据、数据库权限以及 schema 创建权限已经就绪。
+- 匿名会话以随机 `session_id` 作为访问能力，不额外绑定 Cookie、设备或匿名身份；拿到该 ID 的调用方可以继续读取和提交这段匿名会话。当前随机 ID 足以避免枚举，但前端、日志、浏览器存储和链接传播都不应泄漏它。若匿名历史将承载敏感内容，后续应增加匿名会话绑定或显式的访问令牌设计。
+- Redis 锁的续租在 Redis 临时不可用时会停止；若模型运行超过剩余 TTL，另一个请求理论上可重新获得锁。当前实现仍保留 PostgreSQL append 的顺序安全，但不能保证整个模型 Run 绝对单活跃。后续应补充续租失败的观测、Run 超时上限与失锁后的 fail-closed 策略。
+- PostgreSQL 生产操作目前只有输入与 DDL 单测，没有独立临时 PostgreSQL 的 Create/Get/Append/所有权/事务并发集成测试；Redis 的 Lua 和 TTL 行为已经由 `miniredis` 覆盖，但也应在 CI 或预发布环境增加真实 Redis/PG 契约验证。
+- 当前 `Message` 对外 JSON 仍使用 Go 默认字段名（例如 `Content`），而创建会话和 SSE 已使用 snake_case 协议字段。文档只描述了 canonical 历史，不应据此假定其 JSON 字段风格；在客户端接入前应明确 history response DTO 与字段兼容策略。
+- `docs/DEVELOPMENT.md` 中有关未来 `client_turn_id` 幂等、CAS 和回滚开关的规划已调整，但本次没有实现请求重试幂等、断线重连、取消、HITL Resume、历史摘要或分页 cursor。长会话仍依赖固定条数窗口，不能保证 token 长度上界。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): persist multi-turn chat sessions`
+
+## CHANGELOG - 2026-08-03 17:32 - 建立 Agent 多轮会话领域基础与历史上下文装配
+
+### 撰写时间
+
+- 2026-08-03 17:32
+
+### Base Commit
+
+- a56895b17ded28dee06739d5b4a81964a5f86c19
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- Agent 当前仍按单轮请求运行，但后续多轮能力需要先有稳定的会话归属、消息顺序、幂等写入和模型上下文边界。直接在聊天服务中拼接历史会把存储语义和模型输入格式耦合在一起，也难以独立验证并发与重放行为。
+- 因此这次先提交领域层基础设施：定义不依赖 HTTP、数据库或 Agent 实现的会话契约，并让 Runtime 能接收已经规范化的历史消息。聊天入口的会话创建、读取和写入不在本次范围内。
+
+### 改动概览
+
+- 新增 `internal/agentic/session`：定义 `Session`、`Message`、`Store`、消息角色、持久化类型及输入校验错误；`InMemoryStore` 提供本地开发和单元测试使用的互斥访问、消息递增序号、用户消息 `client_turn_id` 幂等与最近消息读取能力。
+- 新增 `ContextAssembler`，按“动态提醒 → canonical 历史 → 当前用户请求”的固定顺序转换为 Eino 消息；历史仅接受用户与助手角色，并校验内容和严格递增序号。
+- Runtime 新增 `StreamWithHistory`，由 `buildInputMessagesWithHistory` 统一装配提醒、学生资料、Skill catalog、历史和当前 XML 请求。保留 `Stream` 与 `StreamWithStudentInfo` 的既有单轮兼容行为。
+- 补充会话存储、上下文装配和运行时历史顺序测试；恢复 `trustedStudentInfoReminder` 对资料中标签/指令文本的 XML 转义回归测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：调用方需要先完成认证和会话归属校验，再从 `Store.ListMessages` 读取同一用户拥有的 canonical 消息。当前聊天服务仍调用 `StreamWithStudentInfo`，因此继续传入空历史，原有请求协议和单轮语义不变。
+- 当前改动：应用层未来可把经过归属校验的历史传给 `Runtime.StreamWithHistory`；Runtime 将其交给 `ContextAssembler`，再交由 Deep Agent 执行。动态提醒和本轮 query 均保持用户消息角色，历史中的助手回复则保留助手角色，避免把多轮记录拼接成不具备角色语义的文本。
+- 下游影响：后续接入持久化 Store、会话 API 或聊天服务时可以复用同一领域契约与装配器，无需改变模型运行主循环、Skill allowlist、MCP Tool 或 SSE 事件协议。由于本次未接入调用入口，不会立即启用多轮对话。
+
+### 改动结果与业务影响
+
+- 现在已经具备可独立测试的会话最小模型：用户消息重试可通过 `client_turn_id` 返回已保存记录，并发追加仍产生连续的 `Sequence`；模型输入只接受经过角色和顺序校验的历史。
+- 保持现有 `Stream`/`StreamWithHistory` API 的行为不变，现有聊天继续作为无状态单轮运行。这个取舍是本次仅提交领域层基础设施的明确边界，而不是遗漏的生产接入。
+- 已执行 `go test ./...`、`go test -race ./internal/agentic/runtime ./internal/agentic/session`、`go vet ./...` 与 `git diff --check`，均通过；本次恢复测试后再次执行 `go test ./internal/agentic/runtime`，通过。
+
+### 风险与待办
+
+- `InMemoryStore` 仅适用于本地开发和测试，进程重启后不会保留消息；虽然领域类型包含 `PersistenceDurable`，真正跨进程恢复仍需要后续接入持久化 Store。
+- 生产接入时必须以当前授权用户 ID 做会话所有权校验，并在模型调用前读取有限长度历史、在成功生成后追加最终助手文本；不能直接接受客户端传入的任意历史消息。
+- 当前测试覆盖存储并发、幂等、角色/顺序校验、历史插入位置和资料 XML 边界；后续接入聊天服务后应补充会话 API、取消、失败写入策略和完整多轮链路测试。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add session domain foundation`
+
 ## CHANGELOG - 2026-07-31 01:06 - 为授权请求上下文补充校园用户 ID
 
 ### 撰写时间
@@ -267,7 +486,7 @@
 ### 关键链路解析（含上下游）
 
 - 上游依赖：HTTP Handler 继续将请求体中的 `message` 作为单轮 query 传给 `chat.Service`；Cozeloop 启用时仍在启动阶段取得 System Prompt，Skill allowlist、manifest 与嵌入手册也仍在启动阶段校验。
-- 当前改动：`chat.NewFromEnv` 将 catalog 保存进 `runtime.Config`。每次 `Runtime.Stream` 调用 `buildInputMessages`，先发送包含当前日期和 catalog 的提醒消息，再发送 XML 转义后的用户请求，随后使用 `Runner.Run` 执行 Deep Agent。
+- 当前改动：`chat.NewFromEnv` 将 catalog 保存进 `runtime.Config`。每次 `Runtime.Stream` 调用 `buildInputMessagesWithHistory`，先发送包含当前日期和 catalog 的提醒消息，再发送 XML 转义后的用户请求，随后使用 `Runner.Run` 执行 Deep Agent。
 - 下游影响：模型可在每轮获得当前日期与安全的 Skill 发现信息，同时用户 query 不与运行时提醒直接拼接。因为不再注册通用子代理，复杂请求仍由主 Agent 在同一 Run 中顺序调用已批准 Tool，不会进入缺少 catalog 的泛用子 Agent。
 
 ### 改动结果与业务影响
