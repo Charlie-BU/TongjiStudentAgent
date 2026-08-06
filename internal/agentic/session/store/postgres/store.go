@@ -1,4 +1,5 @@
-package session
+// Package postgres 实现认证会话及其任务计划的 PostgreSQL 存储。
+package postgres
 
 import (
 	"context"
@@ -9,9 +10,44 @@ import (
 	"strings"
 	"time"
 
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Session = agenticsession.Session
+type Persistence = agenticsession.Persistence
+type Message = agenticsession.Message
+type NewMessage = agenticsession.NewMessage
+type AppendResult = agenticsession.AppendResult
+type TaskPlan = taskplan.TaskPlan
+type TaskItem = taskplan.TaskItem
+type TaskStatus = taskplan.TaskStatus
+
+const (
+	PersistenceDurable   = agenticsession.PersistenceDurable
+	MessageRoleUser      = agenticsession.MessageRoleUser
+	MessageRoleAssistant = agenticsession.MessageRoleAssistant
+	MessageRoleTool      = agenticsession.MessageRoleTool
+	TaskStatusPending    = taskplan.TaskStatusPending
+	TaskStatusInProgress = taskplan.TaskStatusInProgress
+	TaskStatusDone       = taskplan.TaskStatusDone
+	TaskStatusFailed     = taskplan.TaskStatusFailed
+)
+
+var (
+	ErrInvalidOwner       = agenticsession.ErrInvalidOwner
+	ErrInvalidSessionID   = agenticsession.ErrInvalidSessionID
+	ErrInvalidMessage     = agenticsession.ErrInvalidMessage
+	ErrInvalidTaskPlan    = taskplan.ErrInvalidTaskPlan
+	ErrTaskPlanConflict   = taskplan.ErrTaskPlanConflict
+	ErrTaskPlanNotFound   = taskplan.ErrTaskPlanNotFound
+	ErrNotFound           = agenticsession.ErrNotFound
+	newID                 = agenticsession.NewID
+	validateMessage       = agenticsession.ValidateMessage
+	validateTaskPlanTasks = taskplan.ValidateTaskPlanTasks
 )
 
 const postgresDSNEnv = "POSTGRES_DSN"
@@ -169,6 +205,121 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	return messages, nil
 }
 
+// GetTaskPlan 读取属于 ownerUserID 的活动任务计划。没有计划时返回 nil。
+func (s *PostgresStore) GetTaskPlan(ctx context.Context, sessionID, ownerUserID string) (*TaskPlan, error) {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return nil, err
+	}
+	if _, err := s.Get(ctx, sessionID, ownerUserID); err != nil {
+		return nil, err
+	}
+	var plan TaskPlan
+	var tasks []byte
+	err := s.pool.QueryRow(ctx, `SELECT revision, tasks, updated_at FROM agent_session_task_plans WHERE session_id = $1`, strings.TrimSpace(sessionID)).Scan(&plan.Revision, &tasks, &plan.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get durable task plan: %w", err)
+	}
+	if err := json.Unmarshal(tasks, &plan.Tasks); err != nil {
+		return nil, fmt.Errorf("unmarshal durable task plan: %w", err)
+	}
+	plan.SessionID = strings.TrimSpace(sessionID)
+	return &plan, nil
+}
+
+// SaveTaskPlan 以 expectedRevision 为前置条件保存完整任务计划。
+func (s *PostgresStore) SaveTaskPlan(ctx context.Context, sessionID, ownerUserID string, expectedRevision int64, tasks []TaskItem) (TaskPlan, error) {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return TaskPlan{}, err
+	}
+	if expectedRevision < 0 {
+		return TaskPlan{}, ErrInvalidTaskPlan
+	}
+	validatedTasks, err := validateTaskPlanTasks(tasks)
+	if err != nil {
+		return TaskPlan{}, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return TaskPlan{}, fmt.Errorf("begin durable task plan save: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&sessionID); errors.Is(err, pgx.ErrNoRows) {
+		return TaskPlan{}, ErrNotFound
+	} else if err != nil {
+		return TaskPlan{}, fmt.Errorf("lock durable task plan session: %w", err)
+	}
+	var currentRevision int64
+	err = tx.QueryRow(ctx, `SELECT revision FROM agent_session_task_plans WHERE session_id = $1 FOR UPDATE`, sessionID).Scan(&currentRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		currentRevision = 0
+	} else if err != nil {
+		return TaskPlan{}, fmt.Errorf("read durable task plan revision: %w", err)
+	}
+	if currentRevision != expectedRevision {
+		return TaskPlan{}, ErrTaskPlanConflict
+	}
+	encodedTasks, err := json.Marshal(validatedTasks)
+	if err != nil {
+		return TaskPlan{}, fmt.Errorf("marshal durable task plan: %w", err)
+	}
+	now := time.Now().UTC()
+	plan := TaskPlan{SessionID: sessionID, Revision: currentRevision + 1, Tasks: validatedTasks, UpdatedAt: now}
+	if _, err := tx.Exec(ctx, `INSERT INTO agent_session_task_plans (session_id, revision, tasks, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (session_id) DO UPDATE SET revision = EXCLUDED.revision, tasks = EXCLUDED.tasks, updated_at = EXCLUDED.updated_at`, plan.SessionID, plan.Revision, encodedTasks, plan.UpdatedAt); err != nil {
+		return TaskPlan{}, fmt.Errorf("save durable task plan: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_sessions SET last_active_at = $1 WHERE id = $2`, now, sessionID); err != nil {
+		return TaskPlan{}, fmt.Errorf("touch durable task plan session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TaskPlan{}, fmt.Errorf("commit durable task plan save: %w", err)
+	}
+	return plan, nil
+}
+
+// ClearTaskPlan 按版本条件清理活动任务计划。
+func (s *PostgresStore) ClearTaskPlan(ctx context.Context, sessionID, ownerUserID string, expectedRevision int64) error {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return err
+	}
+	if expectedRevision <= 0 {
+		return ErrInvalidTaskPlan
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin durable task plan clear: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&sessionID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock durable task plan session: %w", err)
+	}
+	var currentRevision int64
+	err = tx.QueryRow(ctx, `SELECT revision FROM agent_session_task_plans WHERE session_id = $1 FOR UPDATE`, sessionID).Scan(&currentRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTaskPlanNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read durable task plan revision: %w", err)
+	}
+	if currentRevision != expectedRevision {
+		return ErrTaskPlanConflict
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_session_task_plans WHERE session_id = $1`, sessionID); err != nil {
+		return fmt.Errorf("clear durable task plan: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_sessions SET last_active_at = $1 WHERE id = $2`, time.Now().UTC(), sessionID); err != nil {
+		return fmt.Errorf("touch durable task plan session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit durable task plan clear: %w", err)
+	}
+	return nil
+}
+
 // EnsurePostgresSchema 创建会话存储所需的最小 PostgreSQL 表与约束。
 func EnsurePostgresSchema(ctx context.Context, store *PostgresStore) error {
 	if store == nil || store.pool == nil {
@@ -217,6 +368,14 @@ CREATE TABLE IF NOT EXISTS agent_session_messages (
 	response_cache_expires_at BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE (session_id, sequence)
+);
+`,
+	`
+CREATE TABLE IF NOT EXISTS agent_session_task_plans (
+    session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    revision BIGINT NOT NULL,
+    tasks JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
 );
 `,
 	`

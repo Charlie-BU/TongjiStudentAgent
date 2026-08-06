@@ -122,8 +122,8 @@ type TurnLocker interface {
 	AcquireTurn(ctx context.Context, sessionID string) (TurnRelease, error)
 }
 
-// validateMessage 规范化并校验待写入的 canonical 消息。
-func validateMessage(input NewMessage) (NewMessage, error) {
+// ValidateMessage 规范化并校验待写入的 canonical 消息。
+func ValidateMessage(input NewMessage) (NewMessage, error) {
 	input.Content = strings.TrimSpace(input.Content)
 	if input.Role != MessageRoleUser && input.Role != MessageRoleAssistant && input.Role != MessageRoleTool {
 		return NewMessage{}, ErrInvalidMessage
@@ -151,14 +151,16 @@ func NewMessageFromSchema(message *schema.Message) (NewMessage, error) {
 	default:
 		return NewMessage{}, ErrInvalidMessage
 	}
-	return validateMessage(input)
+	return ValidateMessage(input)
 }
 
-// newID 创建不包含用户身份的随机存储标识。
-func newID(prefix string) string {
+// NewID 创建不包含用户身份的随机存储标识。
+func NewID(prefix string) string {
 	value := make([]byte, 16)
 	if _, err := rand.Read(value); err == nil {
 		return prefix + "_" + hex.EncodeToString(value)
 	}
 	return prefix + "_" + time.Now().UTC().Format("20060102150405.000000000")
 }
+
+func newID(prefix string) string { return NewID(prefix) }

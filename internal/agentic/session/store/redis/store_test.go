@@ -1,4 +1,4 @@
-package session
+package redis
 
 import (
 	"context"
@@ -57,6 +57,41 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(messages[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
 			So(messages[1].RunID, ShouldEqual, "run-002")
+		})
+
+		Convey("任务计划按版本保存、读取和清理", func() {
+			plan, saveErr := store.SaveTaskPlan(context.Background(), session.ID, 0, []TaskItem{{ID: "step1", Desc: "查询成绩", Status: TaskStatusInProgress}})
+			So(saveErr, ShouldBeNil)
+			So(plan.Revision, ShouldEqual, int64(1))
+			So(plan.SessionID, ShouldEqual, session.ID)
+
+			loaded, loadErr := store.GetTaskPlan(context.Background(), session.ID)
+			So(loadErr, ShouldBeNil)
+			So(loaded, ShouldNotBeNil)
+			So(loaded.Tasks, ShouldResemble, plan.Tasks)
+
+			_, saveErr = store.SaveTaskPlan(context.Background(), session.ID, 0, []TaskItem{{ID: "step1", Desc: "查询成绩", Status: TaskStatusDone}})
+			So(errors.Is(saveErr, ErrTaskPlanConflict), ShouldBeTrue)
+
+			clearErr := store.ClearTaskPlan(context.Background(), session.ID, plan.Revision)
+			So(clearErr, ShouldBeNil)
+			loaded, loadErr = store.GetTaskPlan(context.Background(), session.ID)
+			So(loadErr, ShouldBeNil)
+			So(loaded, ShouldBeNil)
+		})
+
+		Convey("追加消息会续期任务计划", func() {
+			_, saveErr := store.SaveTaskPlan(context.Background(), session.ID, 0, []TaskItem{{ID: "step1", Desc: "查询成绩", Status: TaskStatusPending}})
+			So(saveErr, ShouldBeNil)
+
+			miniRedis.FastForward(59 * time.Minute)
+			_, appendErr := store.Append(context.Background(), session.ID, NewMessage{RunID: "run-001", Role: MessageRoleUser, Content: "继续查询"})
+			So(appendErr, ShouldBeNil)
+			miniRedis.FastForward(2 * time.Minute)
+
+			plan, loadErr := store.GetTaskPlan(context.Background(), session.ID)
+			So(loadErr, ShouldBeNil)
+			So(plan, ShouldNotBeNil)
 		})
 
 		Convey("TTL 到期后会话不可读取", func() {

@@ -7,6 +7,8 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	sessioncontext "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/context"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
@@ -188,6 +190,7 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 		service := &Service{
 			runtime:               runner,
 			ephemeralSessionStore: store,
+			taskPlanRepository:    &recordingTaskPlanRepository{},
 			turnLocker:            noOpTurnLocker{},
 			historyMessageLimit:   20,
 		}
@@ -201,6 +204,7 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 		So(response, ShouldEqual, "本轮回答")
 		So(runner.query, ShouldEqual, "本轮问题")
 		So(runner.history, ShouldResemble, store.history)
+		So(runner.hasTaskPlanScope, ShouldBeTrue)
 		So(store.appended, ShouldHaveLength, 2)
 		So(store.appended[0].Role, ShouldEqual, agenticsession.MessageRoleUser)
 		So(store.appended[0].Content, ShouldEqual, "本轮问题")
@@ -245,7 +249,7 @@ func TestAppendAgentMessagePersistsArkResponseCache(t *testing.T) {
 				ResponseID:             store.appended[0].ResponseID,
 				ResponseCacheExpiresAt: store.appended[0].ResponseCacheExpiresAt,
 			}
-			messages, assembleErr := agenticsession.NewContextAssembler().AssembleForTurn(context.Background(), agenticsession.TurnInput{
+			messages, assembleErr := sessioncontext.NewContextAssembler().AssembleForTurn(context.Background(), sessioncontext.TurnInput{
 				DynamicReminder: schema.UserMessage("<system-reminder>当前日期</system-reminder>"),
 				History:         []agenticsession.Message{history},
 				UserMessage:     schema.UserMessage("继续查询"),
@@ -267,8 +271,8 @@ func (s *recordingEphemeralStore) Create(context.Context) (agenticsession.Sessio
 	return agenticsession.Session{}, nil
 }
 
-func (s *recordingEphemeralStore) Get(context.Context, string) (agenticsession.Session, error) {
-	return agenticsession.Session{}, nil
+func (s *recordingEphemeralStore) Get(_ context.Context, sessionID string) (agenticsession.Session, error) {
+	return agenticsession.Session{ID: sessionID, Persistence: agenticsession.PersistenceEphemeral}, nil
 }
 
 func (s *recordingEphemeralStore) Append(_ context.Context, _ string, message agenticsession.NewMessage) (agenticsession.AppendResult, error) {
@@ -283,15 +287,33 @@ func (s *recordingEphemeralStore) ListMessages(context.Context, string, int) ([]
 }
 
 type recordingSessionRuntime struct {
-	operations *[]string
-	query      string
-	history    []agenticsession.Message
-	response   string
+	operations       *[]string
+	query            string
+	history          []agenticsession.Message
+	response         string
+	hasTaskPlanScope bool
+}
+
+type recordingTaskPlanRepository struct {
+	plan *taskplan.TaskPlan
+}
+
+func (r *recordingTaskPlanRepository) GetTaskPlan(context.Context) (*taskplan.TaskPlan, error) {
+	return r.plan, nil
+}
+
+func (r *recordingTaskPlanRepository) SaveTaskPlan(context.Context, int64, []taskplan.TaskItem) (taskplan.TaskPlan, error) {
+	return taskplan.TaskPlan{}, errors.New("SaveTaskPlan should not be called")
+}
+
+func (r *recordingTaskPlanRepository) ClearTaskPlan(context.Context, int64) error {
+	return errors.New("ClearTaskPlan should not be called")
 }
 
 func (r *recordingSessionRuntime) StreamWithHistoryAndMessages(ctx context.Context, query, _ string, history []agenticsession.Message, _ func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	r.query = query
 	r.history = history
+	_, r.hasTaskPlanScope = taskplan.TaskPlanScopeFromContext(ctx)
 	*r.operations = append(*r.operations, "runtime")
 	if err := record(ctx, schema.AssistantMessage(r.response, nil)); err != nil {
 		return "", err

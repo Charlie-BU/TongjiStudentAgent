@@ -11,6 +11,7 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/route/param"
@@ -33,6 +34,40 @@ func TestChatAuthorization(t *testing.T) {
 				_, ok := platformauth.AccessTokenFromContext(requestContext)
 				So(ok, ShouldBeFalse)
 			}
+		})
+	})
+}
+
+func TestSessionTaskPlan(t *testing.T) {
+	Convey("读取会话任务计划接口", t, func() {
+		originalGetSessionTaskPlan := getSessionTaskPlan
+		t.Cleanup(func() { getSessionTaskPlan = originalGetSessionTaskPlan })
+
+		Convey("会返回当前计划快照", func() {
+			getSessionTaskPlan = func(_ context.Context, sessionID string) (*taskplan.TaskPlan, error) {
+				So(sessionID, ShouldEqual, "ses-001")
+				return &taskplan.TaskPlan{SessionID: sessionID, Revision: 2, Tasks: []taskplan.TaskItem{{ID: "step1", Desc: "查询成绩", Status: taskplan.TaskStatusDone}}}, nil
+			}
+			requestContext := newSessionRequest("ses-001")
+
+			SessionTaskPlan(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"revision":2`)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"status":"done"`)
+		})
+
+		Convey("无计划时返回空 plan，会话不存在时返回 404", func() {
+			getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, nil }
+			requestContext := newSessionRequest("ses-001")
+			SessionTaskPlan(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"plan":null`)
+
+			getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, agenticsession.ErrNotFound }
+			requestContext = newSessionRequest("ses-001")
+			SessionTaskPlan(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
 		})
 	})
 }

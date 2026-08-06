@@ -10,6 +10,10 @@ import (
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	sessionconfig "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/config"
+	sessionpostgres "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/store/postgres"
+	sessionredis "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/store/redis"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	promptallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/prompt"
@@ -39,16 +43,17 @@ type sessionRuntime interface {
 
 // Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
-	runtime               sessionRuntime                      // Agent Runtime
-	mcpClient             *mcpclient.Client                   // MCP Client
-	knowledgeClient       *knowledge.Client                   // 知识库 Client
-	studentInfoLoader     studentInfoLoader                   // 个人信息加载器
-	durableSessionStore   agenticsession.Store                // 认证会话存储
-	ephemeralSessionStore agenticsession.EphemeralStore       // 匿名会话存储
-	turnLocker            agenticsession.TurnLocker           // 会话执行锁
-	postgresSessionStore  *agenticsession.PostgresStore       // PostgreSQL 资源
-	redisSessionStore     *agenticsession.RedisEphemeralStore // Redis 资源
-	historyMessageLimit   int                                 // 上下文历史消息上限
+	runtime               sessionRuntime                    // Agent Runtime
+	mcpClient             *mcpclient.Client                 // MCP Client
+	knowledgeClient       *knowledge.Client                 // 知识库 Client
+	studentInfoLoader     studentInfoLoader                 // 个人信息加载器
+	durableSessionStore   agenticsession.Store              // 认证会话存储
+	ephemeralSessionStore agenticsession.EphemeralStore     // 匿名会话存储
+	turnLocker            agenticsession.TurnLocker         // 会话执行锁
+	postgresSessionStore  *sessionpostgres.PostgresStore    // PostgreSQL 资源
+	redisSessionStore     *sessionredis.RedisEphemeralStore // Redis 资源
+	taskPlanRepository    taskplan.TaskPlanRepository       // 当前会话任务计划
+	historyMessageLimit   int                               // 上下文历史消息上限
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -90,8 +95,6 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("convert mcp tools: %w", err)
 	}
-	tools := append(systemtools.Tools(), MCPTools...)
-
 	// skill 相关
 	skillCatalog, err := agenticskills.Catalog()
 	if err != nil {
@@ -114,6 +117,37 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		handlers = append(handlers, filesystemMiddleware)
 	}
 
+	// session 持久化相关
+	sessionConfig, err := sessionconfig.ConfigFromEnv()
+	if err != nil {
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("read session configuration: %w", err)
+	}
+	postgresStore, err := sessionpostgres.NewPostgresStoreFromEnv(ctx)
+	if err != nil {
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize PostgreSQL session store: %w", err)
+	}
+	if err := sessionpostgres.EnsurePostgresSchema(ctx, postgresStore); err != nil {
+		postgresStore.Close()
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize PostgreSQL session schema: %w", err)
+	}
+	redisStore, err := sessionredis.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
+	if err != nil {
+		postgresStore.Close()
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize Redis session store: %w", err)
+	}
+	// task plan 相关
+	taskPlanRepository, err := taskplan.NewTaskPlanRepository(postgresStore, redisStore)
+	if err != nil {
+		_ = redisStore.Close()
+		postgresStore.Close()
+		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize task plan repository: %w", err)
+	}
+	tools := append(systemtools.Tools(systemtools.WithTaskPlanRepository(taskPlanRepository)), MCPTools...)
 	rt, err := runtime.New(ctx, runtime.Config{
 		Name:          "Tongji Student Agent",
 		Description:   "Campus assistant that answers questions using approved Tongji services.",
@@ -125,31 +159,10 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		Handlers:      handlers,
 	})
 	if err != nil {
+		_ = redisStore.Close()
+		postgresStore.Close()
 		_ = mcpClient.Close()
 		return nil, err
-	}
-
-	// session 持久化相关
-	sessionConfig, err := agenticsession.ConfigFromEnv()
-	if err != nil {
-		_ = mcpClient.Close()
-		return nil, fmt.Errorf("read session configuration: %w", err)
-	}
-	postgresStore, err := agenticsession.NewPostgresStoreFromEnv(ctx)
-	if err != nil {
-		_ = mcpClient.Close()
-		return nil, fmt.Errorf("initialize PostgreSQL session store: %w", err)
-	}
-	if err := agenticsession.EnsurePostgresSchema(ctx, postgresStore); err != nil {
-		postgresStore.Close()
-		_ = mcpClient.Close()
-		return nil, fmt.Errorf("initialize PostgreSQL session schema: %w", err)
-	}
-	redisStore, err := agenticsession.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
-	if err != nil {
-		postgresStore.Close()
-		_ = mcpClient.Close()
-		return nil, fmt.Errorf("initialize Redis session store: %w", err)
 	}
 
 	return &Service{
@@ -162,6 +175,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		turnLocker:            redisStore,
 		postgresSessionStore:  postgresStore,
 		redisSessionStore:     redisStore,
+		taskPlanRepository:    taskPlanRepository,
 		historyMessageLimit:   sessionConfig.HistoryMessageLimit,
 	}, nil
 }
@@ -208,6 +222,14 @@ func ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]ag
 	return defaultService.ListSessionMessages(ctx, sessionID, limit)
 }
 
+// GetSessionTaskPlan 读取当前请求有权访问的会话任务计划。
+func GetSessionTaskPlan(ctx context.Context, sessionID string) (*taskplan.TaskPlan, error) {
+	if defaultService == nil {
+		return nil, fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.GetSessionTaskPlan(ctx, sessionID)
+}
+
 // Close 释放默认聊天服务持有的资源。
 func Close() error {
 	if defaultService == nil {
@@ -244,18 +266,73 @@ func (s *Service) StreamSession(ctx context.Context, sessionID, query string, se
 		return "", err
 	}
 	defer releaseTurn()
-
-	history, appendUser, err := s.sessionTurnOperations(ctx, sessionID, query, runID)
+	// 创建 taskPlanScope
+	scope, err := s.taskPlanScope(ctx, sessionID)
 	if err != nil {
 		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
-	return s.stream(ctx, runID, query, history, func() error {
+	// 绑定 taskPlanScope 到 context
+	runCtx := taskplan.WithTaskPlanScope(ctx, scope)
+	activeTaskPlan, err := s.activeTaskPlan(runCtx)
+	if err != nil {
+		s.emitSessionFailure(runID, send, err)
+		return "", err
+	}
+	runCtx = taskplan.WithActiveTaskPlan(runCtx, activeTaskPlan)
+
+	history, appendUser, err := s.sessionTurnOperations(runCtx, sessionID, query, runID)
+	if err != nil {
+		s.emitSessionFailure(runID, send, err)
+		return "", err
+	}
+	return s.stream(runCtx, runID, query, history, func() error {
 		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
 		return err
 	}, func(ctx context.Context, message *schema.Message) error {
 		return s.appendAgentMessage(ctx, sessionID, runID, message)
 	}, send)
+}
+
+// GetSessionTaskPlan 读取当前请求有权访问的会话任务计划。
+func (s *Service) GetSessionTaskPlan(ctx context.Context, sessionID string) (*taskplan.TaskPlan, error) {
+	scope, err := s.taskPlanScope(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.activeTaskPlan(taskplan.WithTaskPlanScope(ctx, scope))
+}
+
+func (s *Service) activeTaskPlan(ctx context.Context) (*taskplan.TaskPlan, error) {
+	if s == nil || s.taskPlanRepository == nil {
+		return nil, fmt.Errorf("task plan repository is not initialized")
+	}
+	return s.taskPlanRepository.GetTaskPlan(ctx)
+}
+
+// taskPlanScope 在 Runtime 启动前再次读取已授权 session，并据此创建 TaskPlanScope。
+func (s *Service) taskPlanScope(ctx context.Context, sessionID string) (taskplan.TaskPlanScope, error) {
+	if s == nil {
+		return taskplan.TaskPlanScope{}, fmt.Errorf("chat service is not initialized")
+	}
+	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
+		if s.durableSessionStore == nil {
+			return taskplan.TaskPlanScope{}, fmt.Errorf("durable session store is not initialized")
+		}
+		session, err := s.durableSessionStore.Get(ctx, sessionID, ownerUserID)
+		if err != nil {
+			return taskplan.TaskPlanScope{}, err
+		}
+		return taskplan.NewTaskPlanScope(session)
+	}
+	if s.ephemeralSessionStore == nil {
+		return taskplan.TaskPlanScope{}, fmt.Errorf("ephemeral session store is not initialized")
+	}
+	session, err := s.ephemeralSessionStore.Get(ctx, sessionID)
+	if err != nil {
+		return taskplan.TaskPlanScope{}, err
+	}
+	return taskplan.NewTaskPlanScope(session)
 }
 
 // acquireSessionTurn 为会话获取执行锁，确保并发安全。

@@ -1,3 +1,165 @@
+## CHANGELOG - 2026-08-06 - 接入会话级任务计划管理、实时事件与恢复接口
+
+### 背景与目标
+
+为多步骤 Agent 任务提供跨请求可恢复的计划状态：模型可在当前已授权会话内创建、调整、追加、更新或清理任务计划；前端可通过 SSE 实时更新进度，并在页面刷新后读取最新快照。
+
+### 核心改动
+
+- 新增 `system.manage_task_plan` 静态系统工具，并加入应用工具 allowlist 与系统工具注册表。
+- 工具支持五类操作：
+  - `create`：创建完整计划；
+  - `modify`：替换当前计划；
+  - `append`：追加任务；
+  - `update_status`：仅更新已有任务状态；
+  - `clear`：清空当前计划。
+- 工具参数使用严格 JSON 解码，拒绝未知字段；校验必填 `reason`、操作类型、任务列表和状态更新约束。
+- 工具执行始终通过 `TaskPlanRepository` 访问数据；不接受模型提供的 `session_id` 或 `owner_user_id`，避免模型篡改会话访问范围。
+- 创建、更新和清理操作使用 revision 乐观并发控制；发生并发冲突时返回稳定的 `plan_conflict` 结果。
+
+### 会话与运行时接入
+
+- Chat Service 在每轮 Agent 运行前重新验证会话归属并构造 `TaskPlanScope`：
+  - 认证会话绑定当前 `user_id`；
+  - 匿名会话绑定其 capability session ID；
+  - scope 注入当前 Run context，供任务计划工具访问。
+- 每轮运行开始时读取当前活动计划，并以转义后的 `<active-task-plan>` 动态提醒注入模型输入。
+- 任务描述被明确标记为状态快照而非指令，且 XML 特殊字符会被转义，避免计划内容破坏提示词边界。
+- Runtime 将当前 SSE 事件出口传入工具执行上下文，使工具无需依赖全局状态即可上报计划更新。
+
+### SSE 与 API
+
+- 新增 SSE 事件 `task_plan.updated`，包含：
+  - `action`：触发更新的操作；
+  - `revision`：最新计划版本；
+  - `tasks`：当前完整任务列表快照。
+- 前端应以该事件的完整 `tasks` 快照刷新进度面板，不依赖局部增量合并。
+- 新增 `GET /v1/sessions/:session_id/task-plan`：
+  - 认证会话按当前 `user_id` 校验归属；
+  - 匿名会话按 session capability 校验；
+  - 无活动计划时返回 `{"plan":null}`；
+  - 会话不存在或无权访问时返回 404。
+
+### 存储与生命周期
+
+- Redis 匿名会话普通消息追加时，现会同步续期 task-plan 键。
+- 活跃匿名会话持续产生消息时，任务计划不再因初始 TTL 到期而提前丢失。
+- PostgreSQL 持久会话与 Redis 匿名会话继续复用统一的任务计划模型、版本语义和访问范围约束。
+
+### 文档与测试
+
+- README 与开发文档补充任务计划 SSE 事件、查询接口和推荐调用顺序。
+- 新增或更新测试，覆盖：
+  - 工具注册与 allowlist；
+  - 创建、重复创建保护、状态更新和非法参数；
+  - scope 注入与认证/匿名会话路由；
+  - SSE `task_plan.updated` 事件；
+  - Handler 读取任务计划；
+  - 动态提醒中的计划转义；
+  - Redis TTL 续期。
+- 已通过 `go test ./...`、受影响包 `go test -race`、`go vet ./...` 与 `git diff HEAD --check`。
+
+### 建议 Commit Message
+
+`feat(agent): add session-scoped task plan management`
+
+## CHANGELOG - 2026-08-06 15:56 - 重构 Agent 会话模块并新增会话级任务计划存储
+
+### 撰写时间
+
+- 2026-08-06 15:56 CST
+
+### Base Commit
+
+- `9d1b2739ae31a74f490ca614993e8405bc7acfbc`
+
+### Compare Scope
+
+- `working_tree_only`
+
+### 背景与改动目标
+
+- 原会话实现将配置读取、模型上下文装配、PostgreSQL 持久化、Redis 匿名会话和领域模型集中在 `internal/agentic/session` 包内，职责边界不够清晰。
+- 本次将会话基础能力拆分为独立子包，并引入会话级任务计划模型、并发版本控制和双存储实现，为后续 Agent 管理多步骤任务提供持久化基础。
+- 匿名会话中，任务计划与消息历史都应跟随会话活跃周期；本次补齐消息追加时对任务计划键的 TTL 续期，避免活跃会话中的计划提前过期。
+
+### 改动概览
+
+- 将会话配置迁移至 `internal/agentic/session/config`，继续负责读取匿名会话 TTL、匿名消息上限和历史窗口上限。
+- 将上下文装配迁移至 `internal/agentic/session/context`，运行时改为通过 `sessioncontext.NewContextAssembler()` 构造模型输入。
+- 将 PostgreSQL 与 Redis 存储分别迁移至：
+  - `internal/agentic/session/store/postgres`
+  - `internal/agentic/session/store/redis`
+- `session` 根包保留会话、消息、持久化类型和通用错误；`ValidateMessage`、`NewID` 对外导出，供子包复用统一的消息校验和标识生成逻辑。
+- Chat Service 改为显式依赖拆分后的 config、PostgreSQL store 与 Redis store，初始化、建表和资源关闭路径保持原有行为。
+
+### 会话级任务计划
+
+- 新增 `internal/agentic/session/taskplan` 领域包，定义：
+  - `TaskPlan`：会话 ID、版本号、任务列表和更新时间；
+  - `TaskItem`：任务 ID、展示描述和状态；
+  - 任务状态：`pending`、`in_progress`、`done`、`failed`。
+- 对任务计划执行统一校验：
+  - 计划不能为空，最多 20 项；
+  - 任务 ID 长度受限且必须唯一；
+  - 描述去除首尾空白后不能为空，最多 160 个字符；
+  - 仅接受预定义状态值。
+- 引入 revision 乐观并发控制：
+  - 保存时必须提供期望版本；
+  - 版本不一致返回 `ErrTaskPlanConflict`；
+  - 清理任务计划同样受版本约束，避免旧快照覆盖新状态。
+
+### 可信会话访问范围
+
+- 新增 `TaskPlanScope`，基于已验证的 session 构造访问范围。
+- 持久化会话必须包含 owner user ID；匿名会话不得携带 owner user ID。
+- `TaskPlanRepository` 仅从 `context.Context` 获取 session scope，不接受模型直接提供的会话 ID 或用户 ID，避免工具调用绕过会话归属边界。
+- Repository 根据会话持久化类型自动路由至 PostgreSQL 或 Redis 实现。
+
+### PostgreSQL 持久化
+
+- 新增 `agent_session_task_plans` 表：
+  - `session_id` 为主键，并外键关联 `agent_sessions`；
+  - 保存 `revision`、JSONB 格式的任务列表及 `updated_at`；
+  - 会话删除时任务计划自动级联删除。
+- 新增 `GetTaskPlan`、`SaveTaskPlan`、`ClearTaskPlan`：
+  - 所有写操作在事务中锁定会话行；
+  - 认证会话始终通过 `session_id + owner_user_id` 校验归属；
+  - 写入或清理任务计划时同步刷新会话 `last_active_at`。
+- Schema 初始化逻辑会自动创建任务计划表，兼容已有会话表结构。
+
+### Redis 匿名会话
+
+- 新增独立的 `task-plan` Redis 键，用 JSON 保存匿名会话任务计划。
+- 保存和清理通过 Lua 脚本完成：
+  - 会话不存在时返回 `ErrNotFound`；
+  - 保存时原子校验 revision 并写入新计划；
+  - 清理时原子校验计划存在性与 revision。
+- 保存、清理和普通消息追加都会刷新会话元数据、消息历史和任务计划的 TTL。
+- 修复活跃匿名会话中的任务计划提前过期问题：普通 `Append` 现在将 task-plan 键传入 Lua 脚本并执行 `PEXPIRE`，使其生命周期与会话活跃状态保持一致。
+
+### 测试覆盖
+
+- 更新配置、上下文、PostgreSQL、Redis 和 Chat Service 引用路径测试。
+- 新增任务计划模型测试，覆盖规范化、空计划、重复 ID 和非法状态。
+- 新增任务计划 scope/repository 测试，覆盖：
+  - 无 scope 调用被拒绝；
+  - 认证会话路由至 durable store 并保留 owner；
+  - 匿名会话路由至 ephemeral store；
+  - 非法 persistence/owner 组合被拒绝。
+- 新增 PostgreSQL 任务计划持久化 mock 测试。
+- 新增 Redis 任务计划保存、读取、版本冲突、清理及 TTL 续期测试。
+
+### 验证结果
+
+- `go test ./internal/agentic/session/store/redis`
+- `go test -race ./internal/agentic/session/store/redis`
+- `git diff --check`
+
+### 建议 Commit Message
+
+`feat(session): add scoped task plan persistence and split session stores`
+
 ## CHANGELOG - 2026-08-06 01:06 - 接入 Ark Responses API 会话缓存并持久化 response chain
 
 ### 撰写时间

@@ -9,7 +9,8 @@ import (
 
 const (
 	// 静态系统 Tool
-	LoadSkillTool = "system.load_skill"
+	LoadSkillTool      = "system.load_skill"
+	ManageTaskPlanTool = "system.manage_task_plan"
 	// 远程 MCP Tool
 	TongjiAnnualBillTool          = "tongji.student.annual_bill"
 	TongjiCardSpendingFlowTool    = "tongji.student.card_spending_flow"
@@ -40,6 +41,7 @@ const (
 var (
 	allowedSystemTools = []string{
 		LoadSkillTool,
+		ManageTaskPlanTool,
 	}
 
 	allowedMCPTools = []string{

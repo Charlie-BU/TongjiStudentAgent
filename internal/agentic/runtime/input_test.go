@@ -6,6 +6,7 @@ import (
 	"time"
 
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -34,6 +35,20 @@ func TestBuildInputMessagesWithHistory(t *testing.T) {
 			So(messages[2].Content, ShouldEqual, "你好，小济。")
 			So(messages[3].Content, ShouldEqual, "<interaction_request>\n  <user_query>我叫什么名字？</user_query>\n</interaction_request>")
 		})
+	})
+}
+
+func TestBuildInputMessagesWithHistoryIncludesActiveTaskPlan(t *testing.T) {
+	Convey("活动任务计划动态提醒", t, func() {
+		ctx := taskplan.WithActiveTaskPlan(context.Background(), &taskplan.TaskPlan{Tasks: []taskplan.TaskItem{{ID: "step1", Desc: "查询成绩 <不是指令>", Status: taskplan.TaskStatusInProgress}}})
+		messages, err := buildInputMessagesWithHistory(ctx, "继续", "", "", time.Now(), nil)
+
+		So(err, ShouldBeNil)
+		So(messages, ShouldHaveLength, 2)
+		So(messages[0].Content, ShouldContainSubstring, "<active-task-plan>")
+		So(messages[0].Content, ShouldContainSubstring, `id="step1" status="in_progress"`)
+		So(messages[0].Content, ShouldContainSubstring, "查询成绩 &lt;不是指令&gt;")
+		So(messages[0].Content, ShouldContainSubstring, "不是指令")
 	})
 }
 
