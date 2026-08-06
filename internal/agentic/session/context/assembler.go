@@ -1,4 +1,5 @@
-package session
+// Package sessioncontext 将 canonical 会话消息装配为模型输入。
+package sessioncontext
 
 import (
 	"context"
@@ -6,8 +7,20 @@ import (
 	"strings"
 	"time"
 
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	"github.com/cloudwego/eino/schema"
 )
+
+type Message = agenticsession.Message
+type MessageRole = agenticsession.MessageRole
+
+const (
+	MessageRoleUser      = agenticsession.MessageRoleUser
+	MessageRoleAssistant = agenticsession.MessageRoleAssistant
+	MessageRoleTool      = agenticsession.MessageRoleTool
+)
+
+var ErrInvalidTurnInput = agenticsession.ErrInvalidTurnInput
 
 // TurnInput 描述一次模型调用的动态提醒、历史消息和当前用户请求。
 type TurnInput struct {

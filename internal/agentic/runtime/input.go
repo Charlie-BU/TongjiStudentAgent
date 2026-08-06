@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	sessioncontext "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/context"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -38,7 +39,7 @@ func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skil
 	reminder := "<system-reminder>\n" + strings.Join(reminderParts, "\n\n") + "\n</system-reminder>"
 
 	// 通过 ContextAssembler 构建最终模型输入
-	return agenticsession.NewContextAssembler().AssembleForTurn(ctx, agenticsession.TurnInput{
+	return sessioncontext.NewContextAssembler().AssembleForTurn(ctx, sessioncontext.TurnInput{
 		DynamicReminder: schema.UserMessage(reminder),
 		History:         history,
 		UserMessage:     schema.UserMessage(string(interactionRequest)),

@@ -1,4 +1,5 @@
-package session
+// Package redis 实现匿名会话及其任务计划的 Redis 存储。
+package redis
 
 import (
 	"context"
@@ -11,7 +12,42 @@ import (
 	"sync"
 	"time"
 
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/redis/go-redis/v9"
+)
+
+type Session = agenticsession.Session
+type Message = agenticsession.Message
+type NewMessage = agenticsession.NewMessage
+type AppendResult = agenticsession.AppendResult
+type TurnRelease = agenticsession.TurnRelease
+type TaskPlan = taskplan.TaskPlan
+type TaskItem = taskplan.TaskItem
+type TaskStatus = taskplan.TaskStatus
+
+const (
+	PersistenceEphemeral = agenticsession.PersistenceEphemeral
+	MessageRoleUser      = agenticsession.MessageRoleUser
+	MessageRoleAssistant = agenticsession.MessageRoleAssistant
+	TaskStatusPending    = taskplan.TaskStatusPending
+	TaskStatusInProgress = taskplan.TaskStatusInProgress
+	TaskStatusDone       = taskplan.TaskStatusDone
+	TaskStatusFailed     = taskplan.TaskStatusFailed
+)
+
+var (
+	ErrInvalidTTL          = agenticsession.ErrInvalidTTL
+	ErrInvalidMessageLimit = agenticsession.ErrInvalidMessageLimit
+	ErrInvalidSessionID    = agenticsession.ErrInvalidSessionID
+	ErrInvalidTaskPlan     = taskplan.ErrInvalidTaskPlan
+	ErrTaskPlanConflict    = taskplan.ErrTaskPlanConflict
+	ErrTaskPlanNotFound    = taskplan.ErrTaskPlanNotFound
+	ErrNotFound            = agenticsession.ErrNotFound
+	ErrTurnInProgress      = agenticsession.ErrTurnInProgress
+	newID                  = agenticsession.NewID
+	validateMessage        = agenticsession.ValidateMessage
+	validateTaskPlanTasks  = taskplan.ValidateTaskPlanTasks
 )
 
 const (
@@ -168,7 +204,7 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.ResponseID, strconv.FormatInt(input.ResponseCacheExpiresAt, 10), input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
+	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID), redisTaskPlanKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.ResponseID, strconv.FormatInt(input.ResponseCacheExpiresAt, 10), input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems)).Result()
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("append ephemeral message: %w", err)
 	}
@@ -213,9 +249,93 @@ func (s *RedisEphemeralStore) ListMessages(ctx context.Context, sessionID string
 	return messages, nil
 }
 
+// GetTaskPlan 读取匿名会话的活动任务计划。没有计划时返回 nil。
+func (s *RedisEphemeralStore) GetTaskPlan(ctx context.Context, sessionID string) (*TaskPlan, error) {
+	if _, err := s.Get(ctx, sessionID); err != nil {
+		return nil, err
+	}
+	encoded, err := s.client.Get(ctx, redisTaskPlanKey(sessionID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get ephemeral task plan: %w", err)
+	}
+	var plan TaskPlan
+	if err := json.Unmarshal([]byte(encoded), &plan); err != nil {
+		return nil, fmt.Errorf("decode ephemeral task plan: %w", err)
+	}
+	if plan.SessionID != sessionID {
+		return nil, errors.New("invalid Redis ephemeral task plan payload")
+	}
+	return &plan, nil
+}
+
+// SaveTaskPlan 以 expectedRevision 为前置条件保存匿名会话的完整任务计划。
+func (s *RedisEphemeralStore) SaveTaskPlan(ctx context.Context, sessionID string, expectedRevision int64, tasks []TaskItem) (TaskPlan, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return TaskPlan{}, ErrInvalidSessionID
+	}
+	if expectedRevision < 0 {
+		return TaskPlan{}, ErrInvalidTaskPlan
+	}
+	validatedTasks, err := validateTaskPlanTasks(tasks)
+	if err != nil {
+		return TaskPlan{}, err
+	}
+	plan := TaskPlan{SessionID: sessionID, Revision: expectedRevision + 1, Tasks: validatedTasks, UpdatedAt: time.Now().UTC()}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return TaskPlan{}, fmt.Errorf("marshal ephemeral task plan: %w", err)
+	}
+	result, err := redisSaveTaskPlanScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID), redisTaskPlanKey(sessionID)}, strconv.FormatInt(expectedRevision, 10), string(encoded), plan.UpdatedAt.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10)).Int64()
+	if err != nil {
+		return TaskPlan{}, fmt.Errorf("save ephemeral task plan: %w", err)
+	}
+	switch result {
+	case 1:
+		return plan, nil
+	case 0:
+		return TaskPlan{}, ErrNotFound
+	case 2:
+		return TaskPlan{}, ErrTaskPlanConflict
+	default:
+		return TaskPlan{}, errors.New("invalid Redis ephemeral task plan save result")
+	}
+}
+
+// ClearTaskPlan 按版本条件清理匿名会话的活动任务计划。
+func (s *RedisEphemeralStore) ClearTaskPlan(ctx context.Context, sessionID string, expectedRevision int64) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrInvalidSessionID
+	}
+	if expectedRevision <= 0 {
+		return ErrInvalidTaskPlan
+	}
+	result, err := redisClearTaskPlanScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID), redisTaskPlanKey(sessionID)}, strconv.FormatInt(expectedRevision, 10), time.Now().UTC().Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("clear ephemeral task plan: %w", err)
+	}
+	switch result {
+	case 1:
+		return nil
+	case 0:
+		return ErrNotFound
+	case 2:
+		return ErrTaskPlanNotFound
+	case 3:
+		return ErrTaskPlanConflict
+	default:
+		return errors.New("invalid Redis ephemeral task plan clear result")
+	}
+}
+
 func redisMetaKey(sessionID string) string { return "agent:anonymous-session:" + sessionID + ":meta" }
 func redisMessagesKey(sessionID string) string {
 	return "agent:anonymous-session:" + sessionID + ":messages"
+}
+func redisTaskPlanKey(sessionID string) string {
+	return "agent:anonymous-session:" + sessionID + ":task-plan"
 }
 func redisTurnLockKey(sessionID string) string { return "agent:session-turn:" + sessionID }
 
@@ -232,6 +352,7 @@ return redis.call('DEL', KEYS[1])
 var redisAppendScript = redis.NewScript(`
 local meta = KEYS[1]
 local messages = KEYS[2]
+local taskPlan = KEYS[3]
 if redis.call('EXISTS', meta) == 0 then return {0, ''} end
 local role = ARGV[1]
 local content = ARGV[2]
@@ -253,5 +374,41 @@ redis.call('LPUSH', messages, item)
 redis.call('LTRIM', messages, 0, maxItems - 1)
 redis.call('PEXPIRE', meta, ttl)
 redis.call('PEXPIRE', messages, ttl)
+redis.call('PEXPIRE', taskPlan, ttl)
 return {1, item}
+`)
+
+var redisSaveTaskPlanScript = redis.NewScript(`
+local meta = KEYS[1]
+local messages = KEYS[2]
+local taskPlan = KEYS[3]
+if redis.call('EXISTS', meta) == 0 then return 0 end
+local expectedRevision = tonumber(ARGV[1])
+local currentRevision = 0
+local existing = redis.call('GET', taskPlan)
+if existing then currentRevision = tonumber(cjson.decode(existing).revision) end
+if currentRevision ~= expectedRevision then return 2 end
+local now = ARGV[3]
+local ttl = tonumber(ARGV[4])
+redis.call('SET', taskPlan, ARGV[2], 'PX', ttl)
+redis.call('HSET', meta, 'last_active_at', now)
+redis.call('PEXPIRE', meta, ttl)
+redis.call('PEXPIRE', messages, ttl)
+return 1
+`)
+
+var redisClearTaskPlanScript = redis.NewScript(`
+local meta = KEYS[1]
+local messages = KEYS[2]
+local taskPlan = KEYS[3]
+if redis.call('EXISTS', meta) == 0 then return 0 end
+local existing = redis.call('GET', taskPlan)
+if not existing then return 2 end
+if tonumber(cjson.decode(existing).revision) ~= tonumber(ARGV[1]) then return 3 end
+local ttl = tonumber(ARGV[3])
+redis.call('DEL', taskPlan)
+redis.call('HSET', meta, 'last_active_at', ARGV[2])
+redis.call('PEXPIRE', meta, ttl)
+redis.call('PEXPIRE', messages, ttl)
+return 1
 `)

@@ -10,6 +10,9 @@ import (
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/runtime"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	sessionconfig "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/config"
+	sessionpostgres "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/store/postgres"
+	sessionredis "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/store/redis"
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	promptallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/prompt"
@@ -39,16 +42,16 @@ type sessionRuntime interface {
 
 // Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
-	runtime               sessionRuntime                      // Agent Runtime
-	mcpClient             *mcpclient.Client                   // MCP Client
-	knowledgeClient       *knowledge.Client                   // 知识库 Client
-	studentInfoLoader     studentInfoLoader                   // 个人信息加载器
-	durableSessionStore   agenticsession.Store                // 认证会话存储
-	ephemeralSessionStore agenticsession.EphemeralStore       // 匿名会话存储
-	turnLocker            agenticsession.TurnLocker           // 会话执行锁
-	postgresSessionStore  *agenticsession.PostgresStore       // PostgreSQL 资源
-	redisSessionStore     *agenticsession.RedisEphemeralStore // Redis 资源
-	historyMessageLimit   int                                 // 上下文历史消息上限
+	runtime               sessionRuntime                    // Agent Runtime
+	mcpClient             *mcpclient.Client                 // MCP Client
+	knowledgeClient       *knowledge.Client                 // 知识库 Client
+	studentInfoLoader     studentInfoLoader                 // 个人信息加载器
+	durableSessionStore   agenticsession.Store              // 认证会话存储
+	ephemeralSessionStore agenticsession.EphemeralStore     // 匿名会话存储
+	turnLocker            agenticsession.TurnLocker         // 会话执行锁
+	postgresSessionStore  *sessionpostgres.PostgresStore    // PostgreSQL 资源
+	redisSessionStore     *sessionredis.RedisEphemeralStore // Redis 资源
+	historyMessageLimit   int                               // 上下文历史消息上限
 }
 
 // Init 从环境变量初始化默认聊天服务。
@@ -130,22 +133,22 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}
 
 	// session 持久化相关
-	sessionConfig, err := agenticsession.ConfigFromEnv()
+	sessionConfig, err := sessionconfig.ConfigFromEnv()
 	if err != nil {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("read session configuration: %w", err)
 	}
-	postgresStore, err := agenticsession.NewPostgresStoreFromEnv(ctx)
+	postgresStore, err := sessionpostgres.NewPostgresStoreFromEnv(ctx)
 	if err != nil {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize PostgreSQL session store: %w", err)
 	}
-	if err := agenticsession.EnsurePostgresSchema(ctx, postgresStore); err != nil {
+	if err := sessionpostgres.EnsurePostgresSchema(ctx, postgresStore); err != nil {
 		postgresStore.Close()
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize PostgreSQL session schema: %w", err)
 	}
-	redisStore, err := agenticsession.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
+	redisStore, err := sessionredis.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
 	if err != nil {
 		postgresStore.Close()
 		_ = mcpClient.Close()

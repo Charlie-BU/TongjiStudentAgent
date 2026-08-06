@@ -7,6 +7,7 @@ import (
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	sessioncontext "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/context"
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
@@ -245,7 +246,7 @@ func TestAppendAgentMessagePersistsArkResponseCache(t *testing.T) {
 				ResponseID:             store.appended[0].ResponseID,
 				ResponseCacheExpiresAt: store.appended[0].ResponseCacheExpiresAt,
 			}
-			messages, assembleErr := agenticsession.NewContextAssembler().AssembleForTurn(context.Background(), agenticsession.TurnInput{
+			messages, assembleErr := sessioncontext.NewContextAssembler().AssembleForTurn(context.Background(), sessioncontext.TurnInput{
 				DynamicReminder: schema.UserMessage("<system-reminder>当前日期</system-reminder>"),
 				History:         []agenticsession.Message{history},
 				UserMessage:     schema.UserMessage("继续查询"),

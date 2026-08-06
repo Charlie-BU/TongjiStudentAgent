@@ -1,4 +1,5 @@
-package session
+// Package config 读取会话容量与历史窗口配置。
+package config
 
 import (
 	"fmt"

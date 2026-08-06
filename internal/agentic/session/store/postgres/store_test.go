@@ -1,4 +1,4 @@
-package session
+package postgres
 
 import (
 	"context"
@@ -34,7 +34,39 @@ func TestPostgresStoreValidation(t *testing.T) {
 			So(strings.Contains(schema, "run_id TEXT NOT NULL"), ShouldBeTrue)
 			So(strings.Contains(schema, "response_id TEXT NOT NULL"), ShouldBeTrue)
 			So(strings.Contains(schema, "response_cache_expires_at BIGINT NOT NULL"), ShouldBeTrue)
+			So(strings.Contains(schema, "CREATE TABLE IF NOT EXISTS agent_session_task_plans"), ShouldBeTrue)
+			So(strings.Contains(schema, "revision BIGINT NOT NULL"), ShouldBeTrue)
 		})
+	})
+}
+
+func TestPostgresStoreTaskPlanPersistence(t *testing.T) {
+	Convey("PostgreSQL 会话任务计划", t, func() {
+		pool, err := pgxmock.NewPool()
+		So(err, ShouldBeNil)
+		defer pool.Close()
+		store := &PostgresStore{pool: pool}
+
+		pool.ExpectBeginTx(pgx.TxOptions{})
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT id FROM agent_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`)).
+			WithArgs("ses-001", "user-001").
+			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("ses-001"))
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT revision FROM agent_session_task_plans WHERE session_id = $1 FOR UPDATE`)).
+			WithArgs("ses-001").
+			WillReturnError(pgx.ErrNoRows)
+		pool.ExpectExec(regexp.QuoteMeta(`INSERT INTO agent_session_task_plans (session_id, revision, tasks, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (session_id) DO UPDATE SET revision = EXCLUDED.revision, tasks = EXCLUDED.tasks, updated_at = EXCLUDED.updated_at`)).
+			WithArgs("ses-001", int64(1), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		pool.ExpectExec(regexp.QuoteMeta(`UPDATE agent_sessions SET last_active_at = $1 WHERE id = $2`)).
+			WithArgs(pgxmock.AnyArg(), "ses-001").
+			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+		pool.ExpectCommit()
+
+		plan, saveErr := store.SaveTaskPlan(context.Background(), "ses-001", "user-001", 0, []TaskItem{{ID: "step1", Desc: "查询成绩", Status: TaskStatusPending}})
+		So(saveErr, ShouldBeNil)
+		So(plan.Revision, ShouldEqual, int64(1))
+		So(plan.Tasks, ShouldResemble, []TaskItem{{ID: "step1", Desc: "查询成绩", Status: TaskStatusPending}})
+		So(pool.ExpectationsWereMet(), ShouldBeNil)
 	})
 }
 
