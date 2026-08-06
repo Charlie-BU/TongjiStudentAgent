@@ -3,11 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	logs "github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
@@ -18,82 +21,140 @@ import (
 )
 
 type chatRequest struct {
-	Message string `json:"message"`
+	Message string `json:"message"` // 本轮次用户消息
 }
 
-// 提成包级变量，方便测试时替换 streamChat 实现
-var streamChat = chat.Stream
+// createSession 用于测试时替换会话创建实现。
+var createSession = chat.CreateSession
 
-// Chat 调用 Agent 并非流式返回结果。
-func Chat(ctx context.Context, c *app.RequestContext) {
-	// 若 token 合法，将 token 写入上下文，否则对 context 不做处理
+// streamSession 用于测试时替换会话流式执行实现。
+var streamSession = chat.StreamSession
+
+// listSessionMessages 用于测试时替换会话历史读取实现。
+var listSessionMessages = chat.ListSessionMessages
+
+// getSessionTaskPlan 用于测试时替换会话任务计划读取实现。
+var getSessionTaskPlan = chat.GetSessionTaskPlan
+
+// CreateSession 创建与当前请求身份对应的会话。
+func CreateSession(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
-	query, ok := bindChatMessage(c)
+	session, err := createSession(requestContext)
+	if err != nil {
+		c.JSON(consts.StatusServiceUnavailable, utils.H{"error": "session service unavailable"})
+		return
+	}
+	c.JSON(consts.StatusCreated, utils.H{"session_id": session.ID, "persistence": session.Persistence})
+}
+
+// SessionMessageStream 向指定会话提交消息并以 SSE 返回本轮执行事件。
+func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
+	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	request, ok := bindSessionMessage(c)
 	if !ok {
 		return
 	}
-
-	response, err := chat.Chat(requestContext, query)
-	if err != nil {
-		c.JSON(consts.StatusInternalServerError, utils.H{"error": "agent invocation failed"})
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
 		return
 	}
-
-	c.JSON(consts.StatusOK, utils.H{"message": response})
-}
-
-// ChatStream 以 Server-Sent Events 返回 Agent 的安全运行过程与最终文本 delta。
-func ChatStream(ctx context.Context, c *app.RequestContext) {
-	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
-	// 为流式响应创建独立上下文，用于取消流
 	streamContext, cancel := context.WithCancel(requestContext)
 	defer cancel()
-	query, ok := bindChatMessage(c)
-	if !ok {
-		return
-	}
-
 	c.Response.Header.Set("X-Accel-Buffering", "no")
 	c.Response.SetStatusCode(consts.StatusOK)
-	writer := sse.NewWriter(c) // Server-Sent Events 写入器
+	writer := sse.NewWriter(c)
 	var streamStopped atomic.Bool
 	stopStream := func() {
 		if streamStopped.CompareAndSwap(false, true) {
 			cancel()
 		}
 	}
-	_, _ = streamChat(streamContext, query, func(event agentevent.Event) {
+	_, err := streamSession(streamContext, sessionID, request.Message, func(event agentevent.Event) {
 		if streamStopped.Load() {
 			return
 		}
-		data, err := json.Marshal(event)
-		if err != nil {
-			logs.CtxError(streamContext, "SSE event serialization failed")
+		event.SessionID = sessionID
+		data, marshalErr := json.Marshal(event)
+		if marshalErr != nil {
+			logs.CtxError(streamContext, "session SSE event serialization failed")
 			stopStream()
 			return
 		}
-		if err := writer.WriteEvent(strconv.FormatInt(event.Sequence, 10), event.Type, data); err != nil {
-			logs.CtxInfo(streamContext, "SSE response write failed: %v", err)
+		if writeErr := writer.WriteEvent(strconv.FormatInt(event.Sequence, 10), event.Type, data); writeErr != nil {
+			logs.CtxInfo(streamContext, "session SSE response write failed: %v", writeErr)
 			stopStream()
 		}
 	})
+	if err != nil && !streamStopped.Load() {
+		logs.CtxInfo(streamContext, "session message failed: %v", err)
+	}
 }
 
-// bindChatMessage 从请求体中提取用户消息。
-// 若消息缺失或格式错误，返回空字符串和 false。
-func bindChatMessage(c *app.RequestContext) (string, bool) {
+// SessionMessages 返回当前请求有权读取的会话 canonical 历史。
+func SessionMessages(ctx context.Context, c *app.RequestContext) {
+	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
+		return
+	}
+	limit := 20
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 || parsed > 100 {
+			c.JSON(consts.StatusBadRequest, utils.H{"error": "limit must be an integer between 1 and 100"})
+			return
+		}
+		limit = parsed
+	}
+	messages, err := listSessionMessages(requestContext, sessionID, limit)
+	if err != nil {
+		status := consts.StatusInternalServerError
+		if errors.Is(err, agenticsession.ErrNotFound) {
+			status = consts.StatusNotFound
+		}
+		c.JSON(status, utils.H{"error": "session not found"})
+		return
+	}
+	c.JSON(consts.StatusOK, utils.H{"messages": messages})
+}
+
+// SessionTaskPlan 返回当前请求有权访问的活动任务计划。
+func SessionTaskPlan(ctx context.Context, c *app.RequestContext) {
+	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
+		return
+	}
+	plan, err := getSessionTaskPlan(requestContext, sessionID)
+	if err != nil {
+		status := consts.StatusInternalServerError
+		if errors.Is(err, agenticsession.ErrNotFound) {
+			status = consts.StatusNotFound
+		}
+		c.JSON(status, utils.H{"error": "session not found"})
+		return
+	}
+	c.JSON(consts.StatusOK, struct {
+		Plan *taskplan.TaskPlan `json:"plan"`
+	}{Plan: plan})
+}
+
+// bindSessionMessage 从请求体中提取会话用户消息。
+func bindSessionMessage(c *app.RequestContext) (chatRequest, bool) {
 	var req chatRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "request body must be valid JSON"})
-		return "", false
+		return chatRequest{}, false
 	}
-
 	req.Message = strings.TrimSpace(req.Message)
 	if req.Message == "" {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "message is required"})
-		return "", false
+		return chatRequest{}, false
 	}
-	return req.Message, true
+	return req, true
 }
 
 // withChatAccessToken 将格式正确的 Chat Bearer 凭据写入调用上下文。

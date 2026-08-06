@@ -1,23 +1,30 @@
-// Package event 定义 Agent 运行过程对外可投影的安全事件。
+// Package event 定义 Agent 运行过程对外投影的 SSE 事件。
 package event
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
 	"time"
+
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 )
 
 const (
-	RunStarted        = "run.started"
-	AgentStatus       = "agent.status"
-	AssistantDelta    = "assistant.delta"
-	ToolCallStarted   = "tool.call.started"
-	ToolCallCompleted = "tool.call.completed"
-	ToolCallFailed    = "tool.call.failed"
-	RunCompleted      = "run.completed"
-	RunFailed         = "run.failed"
+	RunStarted         = "run.started"
+	AgentStatus        = "agent.status"
+	AssistantReasoning = "assistant.reasoning"
+	AssistantDelta     = "assistant.delta"
+	ToolCallStarted    = "tool.call.started"
+	ToolCallCompleted  = "tool.call.completed"
+	ToolCallFailed     = "tool.call.failed"
+	TaskPlanUpdated    = "task_plan.updated"
+	RunCompleted       = "run.completed"
+	RunFailed          = "run.failed"
 )
+
+type eventSinkContextKey struct{}
 
 // RunStartedData 表示 Run 启动时的展示信息。
 type RunStartedData struct {
@@ -35,11 +42,17 @@ type AssistantDeltaData struct {
 	Text string `json:"text"`
 }
 
+// AssistantReasoningData 表示模型明确返回的 reasoning 内容。
+type AssistantReasoningData struct {
+	Text string `json:"text"`
+}
+
 // ToolCallStartedData 表示模型已选择工具且等待执行的调用。
 type ToolCallStartedData struct {
 	CallID      string `json:"call_id"`
 	Tool        string `json:"tool"`
 	DisplayName string `json:"display_name"`
+	Arguments   string `json:"arguments"`
 }
 
 // ToolCallCompletedData 表示本轮 Agent 已接收到工具结果。
@@ -47,6 +60,7 @@ type ToolCallCompletedData struct {
 	CallID     string `json:"call_id"`
 	Tool       string `json:"tool"`
 	DurationMS int64  `json:"duration_ms"`
+	Result     string `json:"result"`
 }
 
 // ToolCallFailedData 表示工具调用执行失败的安全错误信息。
@@ -56,6 +70,13 @@ type ToolCallFailedData struct {
 	DurationMS int64  `json:"duration_ms"`
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+}
+
+// TaskPlanUpdatedData 是当前会话任务计划的完整最新快照。
+type TaskPlanUpdatedData struct {
+	Action   string              `json:"action"`
+	Revision int64               `json:"revision"`
+	Tasks    []taskplan.TaskItem `json:"tasks"`
 }
 
 // RunCompletedData 表示 Run 成功结束时的汇总信息。
@@ -69,14 +90,34 @@ type RunFailedData struct {
 	Message string `json:"message"`
 }
 
-// Event 是可安全发送给调用方的单个 Agent 运行事件。
-// Data 只允许携带经调用层裁剪后的展示数据，不能放入凭据、原始工具结果或模型推理内容。
+// Event 是单个 Agent 运行事件。
+// Data 按事件类型携带前端展示数据；当前协议允许 reasoning、工具参数和工具结果，
+// 但不得携带 Bearer token、数据库连接串或其他服务端凭据。
 type Event struct {
 	Type       string    `json:"type"`
 	RunID      string    `json:"run_id"`
+	SessionID  string    `json:"session_id,omitempty"`
 	Sequence   int64     `json:"seq"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Data       any       `json:"data,omitempty"`
+}
+
+// WithSink 将当前 Run 的事件出口传递给会话范围内的静态系统工具。
+func WithSink(ctx context.Context, sink func(Event)) context.Context {
+	return context.WithValue(ctx, eventSinkContextKey{}, sink)
+}
+
+// EmitFromContext 从系统工具向当前 Run 投影事件；缺少出口时安全忽略。
+func EmitFromContext(ctx context.Context, eventType string, data any) bool {
+	if ctx == nil {
+		return false
+	}
+	sink, ok := ctx.Value(eventSinkContextKey{}).(func(Event))
+	if !ok || sink == nil {
+		return false
+	}
+	sink(Event{Type: eventType, Data: data})
+	return true
 }
 
 // Emitter 为单次 Run 赋予单调递增的事件序号。
@@ -90,6 +131,7 @@ type Emitter struct {
 
 // NewEmitter 创建单次 Agent Run 的事件发送器。
 func NewEmitter(runID string, send func(Event)) *Emitter {
+	// 兜底：生成随机 Run 标识和空发送函数
 	if runID == "" {
 		runID = NewRunID()
 	}

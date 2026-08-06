@@ -21,6 +21,8 @@ func normalizeMCPToolResult(result *mcp.CallToolResult) *mcp.CallToolResult {
 	if result == nil {
 		return stableMCPToolResult(toolStatusExecutionUnavailable)
 	}
+	// StructuredContent 与 Content 重复，仅保留 Content。
+	result.StructuredContent = nil
 	if !result.IsError {
 		return result
 	}

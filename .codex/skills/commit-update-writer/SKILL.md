@@ -30,7 +30,7 @@ description: "基于用户指定的改动范围（默认当前工作区）分析
 
 1. 每次必须在文档中显式写出基线 commit id（`Base Commit`）。
 2. 每次必须读取并遵循风格参考：  
-   `.trae/skills/commit-update-writer/reference/language-style.md`
+   `.codex/skills/commit-update-writer/reference/language-style.md`
 3. 输出文件固定为：`docs/CHANGELOG.md`（注意拼写）。
 4. 只能**把新记录增量插入到文件最上方**，禁止修改/删除已有历史记录内容。
 5. 若 `docs/CHANGELOG.md` 不存在，先创建，再写入首条记录。

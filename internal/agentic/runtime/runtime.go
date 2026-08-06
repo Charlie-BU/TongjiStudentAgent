@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
@@ -63,14 +64,9 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog}, nil
 }
 
-// Stream 执行单轮查询，并通过 emit 输出已脱敏的模型文本与工具生命周期事件。
-// 它不会输出模型 reasoning content、工具参数或工具原始响应。
-func (r *Runtime) Stream(ctx context.Context, query string, emit func(agentevent.Event)) (string, error) {
-	return r.StreamWithUserInfo(ctx, query, "", emit)
-}
-
-// StreamWithUserInfo 执行单轮查询，并将调用方已获取的个人基础信息作为可信上下文注入输入。
-func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string, emit func(agentevent.Event)) (string, error) {
+// TODO：待拆解 tool call 处理
+// StreamWithHistoryAndMessages 执行查询，并将运行时输出**逐条**交给调用方持久化。
+func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, studentInfo string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	if r == nil || r.agent == nil {
 		return "", fmt.Errorf("agent runtime is not initialized")
 	}
@@ -78,11 +74,12 @@ func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string
 		emit = func(agentevent.Event) {}
 	}
 
-	messages, err := buildInputMessages(query, userInfo, r.skillCatalog, time.Now())
+	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, time.Now(), history)
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}
-	runCtx := agenticskills.WithRunState(ctx, agenticskills.NewRunState())
+	runCtx := agenticskills.WithRunState(ctx, agenticskills.NewRunState()) // 将本轮状态传递给静态系统工具
+	runCtx = agentevent.WithSink(runCtx, emit)                             // 将当前 Run 的事件出口传递给会话范围内的静态系统工具
 	runner := adk.NewRunner(runCtx, adk.RunnerConfig{Agent: r.agent, EnableStreaming: true})
 	iter := runner.Run(runCtx, messages)
 	var response string
@@ -109,8 +106,16 @@ func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string
 		if output == nil {
 			continue
 		}
+		if record != nil {
+			if err := record(ctx, output); err != nil {
+				return "", fmt.Errorf("record agent message: %w", err)
+			}
+		}
 		switch event.Output.MessageOutput.Role {
 		case schema.Assistant:
+			if output.ReasoningContent != "" {
+				emit(agentevent.Event{Type: agentevent.AssistantReasoning, Data: agentevent.AssistantReasoningData{Text: output.ReasoningContent}})
+			}
 			for _, toolCall := range output.ToolCalls {
 				if toolCall.ID == "" || toolCall.Function.Name == "" {
 					continue
@@ -118,7 +123,7 @@ func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string
 				if _, exists := pendingTools[toolCall.ID]; exists {
 					continue
 				}
-				toolData := agentevent.ToolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name}
+				toolData := agentevent.ToolCallStartedData{CallID: toolCall.ID, Tool: toolCall.Function.Name, DisplayName: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}
 				pendingTools[toolCall.ID] = toolData
 				toolStartedAt[toolCall.ID] = time.Now()
 				emit(agentevent.Event{Type: agentevent.ToolCallStarted, Data: toolData})
@@ -132,7 +137,7 @@ func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string
 				toolData = agentevent.ToolCallStartedData{CallID: output.ToolCallID, Tool: output.ToolName, DisplayName: output.ToolName}
 			}
 			emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: agentevent.ToolCallCompletedData{
-				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]),
+				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]), Result: output.Content,
 			}})
 			delete(pendingTools, output.ToolCallID)
 			delete(toolStartedAt, output.ToolCallID)
@@ -145,6 +150,7 @@ func (r *Runtime) StreamWithUserInfo(ctx context.Context, query, userInfo string
 	return response, nil
 }
 
+// failPendingTools 处理未完成的工具调用，将它们标记为失败。
 func failPendingTools(emit func(agentevent.Event), pendingTools map[string]agentevent.ToolCallStartedData, toolStartedAt map[string]time.Time) {
 	for callID, toolCall := range pendingTools {
 		emit(agentevent.Event{Type: agentevent.ToolCallFailed, Data: agentevent.ToolCallFailedData{
@@ -154,6 +160,8 @@ func failPendingTools(emit func(agentevent.Event), pendingTools map[string]agent
 	}
 }
 
+// readMessage 读取 Deep Agent 的输出消息，根据是否为流式响应进行处理。
+// 它会将流式响应转换为非流式响应，同时触发 `emit` 事件。
 func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*schema.Message, error) {
 	if !output.IsStreaming {
 		if output.Message != nil && output.Role == schema.Assistant && output.Message.Content != "" {
@@ -184,6 +192,7 @@ func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*sche
 	return schema.ConcatMessages(messages)
 }
 
+// elapsedMilliseconds 计算从指定时间开始到当前时间的毫秒数。
 func elapsedMilliseconds(start time.Time) int64 {
 	if start.IsZero() {
 		return 0

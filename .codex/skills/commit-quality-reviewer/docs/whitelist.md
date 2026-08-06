@@ -12,13 +12,46 @@
 ## 当前豁免
 
 ```yaml
+- id: WL-20260805-002
+  enabled: true
+  severity: CRITICAL
+  type: session_raw_agent_trace_exposure
+  match:
+    file: internal/agentic/event/event.go
+    contains: "AssistantReasoning = \"assistant.reasoning\""
+  reason: "产品确认前端需要在会话历史和 SSE 中展示模型 reasoning、工具参数与工具结果；相应内容的会话归属、访问控制和前端展示责任由当前产品方案承担。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-08-05"
+  expires_at: "2026-09-05"
+- id: WL-20260805-001
+  enabled: true
+  severity: HIGH
+  type: session_api_breaking_change
+  match:
+    file: router.go
+    contains: "r.POST(\"/v1/sessions\", handler.CreateSession)"
+  reason: "产品已确认本次以会话 API 替换旧 /v1/agent/chat 与 /v1/agent/chat/stream 接口；客户端将随本次发布同步迁移，不保留兼容窗口。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-08-05"
+  expires_at: "2026-09-05"
+- id: WL-20260731-001
+  enabled: true
+  severity: HIGH
+  type: synchronous_user_identity_lookup_in_context_setter
+  match:
+    file: internal/platform/auth/context.go
+    contains: "userID, err := resolveUserID(ctx, accessToken)"
+  reason: "当前版本要求在将合法校园 access token 写入请求 context 时同步查询用户基础信息并补充 user_id。该查询发生在 HTTP JSON 请求体校验之前，且 WithAccessToken 因此具有网络副作用；产品负责人已确认短期接受。"
+  owner: "TongjiStudentAgent"
+  created_at: "2026-07-31"
+  expires_at: "2026-08-30"
 - id: WL-20260730-002
   enabled: true
   severity: CRITICAL
   type: personal_data_model_context
   match:
     file: internal/integration/tongjiapi/user_info.go
-    contains: "appendField(\"家庭地址\", userInfo.MailingAddress)"
+    contains: "appendField(\"家庭地址\", studentInfo.MailingAddress)"
   reason: "当前 Agent 需要完整个人资料作为回答上下文，已由变更负责人确认；后续按模型数据处理边界实施最小化。"
   owner: "TongjiStudentAgent"
   created_at: "2026-07-30"

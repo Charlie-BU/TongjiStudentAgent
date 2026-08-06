@@ -9,18 +9,66 @@ import (
 
 const (
 	// 静态系统 Tool
-	LoadSkillTool = "system.load_skill"
+	LoadSkillTool      = "system.load_skill"
+	ManageTaskPlanTool = "system.manage_task_plan"
 	// 远程 MCP Tool
-	TongjiStudentScoreTool = "tongji.student.score"
+	TongjiAnnualBillTool          = "tongji.student.annual_bill"
+	TongjiCardSpendingFlowTool    = "tongji.student.card_spending_flow"
+	TongjiStudentTimetableTool    = "tongji.student.timetable"
+	TongjiStudentDetailedInfoTool = "tongji.student.detailed_info"
+	TongjiStudentScoreTool        = "tongji.student.score"
+	TongjiTermCalendarTool        = "tongji.student.term-calendar"
+	TongjiCurrentTermCalendarTool = "tongji.student.current-term-calendar"
+	TongjiCETScoreTool            = "tongji.student.cet-score"
+	TongjiBookLendInfoTool        = "tongji.student.book-lend-info"
+	TongjiStatisticsInfoTool      = "tongji.student.statistics-info"
+	TongjiStipendInfoTool         = "tongji.student.stipend-info"
+	TongjiAccommodationInfoTool   = "tongji.student.accommodation-info"
+	TongjiCompetitionPrizeTool    = "tongji.student.competition_prize"
+	TongjiHonoraryTitleTool       = "tongji.student.honorary_title"
+	TongjiScholarshipInfoTool     = "tongji.student.scholarship_info"
+	TongjiSchoolAccessTool        = "tongji.student.school_access"
+	TongjiLibraryAccessTool       = "tongji.student.library_access"
+	TongjiUserBasicInfoTool       = "tongji.user.basic_info"
+	TongjiCourseDetailTool        = "tongji.student.course-detail"
+	TongjiCourseRelatedTool       = "tongji.student.course-related"
+	TongjiFindMajorByGradeTool    = "tongji.student.find-major-by-grade"
+	TongjiCourseCatalogTool       = "tongji.course.catalog"
+	TongjiCalendarListTool        = "tongji.course.calendar_list"
+	TongjiGradeListTool           = "tongji.course.grade_list"
 )
 
 var (
 	allowedSystemTools = []string{
 		LoadSkillTool,
+		ManageTaskPlanTool,
 	}
 
 	allowedMCPTools = []string{
+		TongjiAnnualBillTool,
+		TongjiCardSpendingFlowTool,
+		TongjiStudentTimetableTool,
+		TongjiStudentDetailedInfoTool,
 		TongjiStudentScoreTool,
+		TongjiTermCalendarTool,
+		TongjiCurrentTermCalendarTool,
+		TongjiCETScoreTool,
+		TongjiBookLendInfoTool,
+		TongjiStatisticsInfoTool,
+		TongjiStipendInfoTool,
+		TongjiAccommodationInfoTool,
+		TongjiCompetitionPrizeTool,
+		TongjiHonoraryTitleTool,
+		TongjiScholarshipInfoTool,
+		TongjiSchoolAccessTool,
+		TongjiLibraryAccessTool,
+		TongjiUserBasicInfoTool,
+		TongjiCourseDetailTool,
+		TongjiCourseRelatedTool,
+		TongjiFindMajorByGradeTool,
+		TongjiCourseCatalogTool,
+		TongjiCalendarListTool,
+		TongjiGradeListTool,
 	}
 )
 

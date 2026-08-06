@@ -4,14 +4,16 @@ import (
 	"context"
 	"testing"
 
+	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
+	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/managetaskplan"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestSystemToolsRequireToolAllowlist(t *testing.T) {
 	Convey("静态系统工具注册", t, func() {
 		Convey("未加白工具不应注册", func() {
-			So(buildTools(func(string) bool { return false }), ShouldBeEmpty)
+			So(buildTools(func(string) bool { return false }, nil), ShouldBeEmpty)
 		})
 
 		Convey("已加白工具应注册", func() {
@@ -22,5 +24,24 @@ func TestSystemToolsRequireToolAllowlist(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(info.Name, ShouldEqual, loadskill.LoadSkillToolName)
 		})
+
+		Convey("注入任务计划 repository 后应注册管理工具", func() {
+			tools := Tools(WithTaskPlanRepository(&fakeTaskPlanRepository{}))
+
+			So(tools, ShouldHaveLength, 2)
+			info, err := tools[1].Info(context.Background())
+			So(err, ShouldBeNil)
+			So(info.Name, ShouldEqual, managetaskplan.ManageTaskPlanToolName)
+		})
 	})
 }
+
+type fakeTaskPlanRepository struct{}
+
+func (*fakeTaskPlanRepository) GetTaskPlan(context.Context) (*taskplan.TaskPlan, error) {
+	return nil, nil
+}
+func (*fakeTaskPlanRepository) SaveTaskPlan(context.Context, int64, []taskplan.TaskItem) (taskplan.TaskPlan, error) {
+	return taskplan.TaskPlan{}, nil
+}
+func (*fakeTaskPlanRepository) ClearTaskPlan(context.Context, int64) error { return nil }
