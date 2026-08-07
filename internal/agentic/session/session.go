@@ -162,5 +162,3 @@ func NewID(prefix string) string {
 	}
 	return prefix + "_" + time.Now().UTC().Format("20060102150405.000000000")
 }
-
-func newID(prefix string) string { return NewID(prefix) }

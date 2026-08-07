@@ -7,13 +7,15 @@ import (
 	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/managetaskplan"
+	searchknowledge "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/searchknowledge"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestSystemToolsRequireToolAllowlist(t *testing.T) {
 	Convey("静态系统工具注册", t, func() {
 		Convey("未加白工具不应注册", func() {
-			So(buildTools(func(string) bool { return false }, nil), ShouldBeEmpty)
+			So(buildTools(func(string) bool { return false }, nil, nil), ShouldBeEmpty)
 		})
 
 		Convey("已加白工具应注册", func() {
@@ -32,6 +34,15 @@ func TestSystemToolsRequireToolAllowlist(t *testing.T) {
 			info, err := tools[1].Info(context.Background())
 			So(err, ShouldBeNil)
 			So(info.Name, ShouldEqual, managetaskplan.ManageTaskPlanToolName)
+		})
+
+		Convey("仅在知识库客户端已启用时注册检索工具", func() {
+			tools := Tools(WithKnowledgeClient(&knowledge.Client{}))
+
+			So(tools, ShouldHaveLength, 2)
+			info, err := tools[1].Info(context.Background())
+			So(err, ShouldBeNil)
+			So(info.Name, ShouldEqual, searchknowledge.SearchKnowledgeToolName)
 		})
 	})
 }

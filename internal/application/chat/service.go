@@ -85,6 +85,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
 
+	// 系统提示词相关
 	// 工具相关
 	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
 	if err != nil {
@@ -147,7 +148,10 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize task plan repository: %w", err)
 	}
-	tools := append(systemtools.Tools(systemtools.WithTaskPlanRepository(taskPlanRepository)), MCPTools...)
+	tools := append(systemtools.Tools(
+		systemtools.WithTaskPlanRepository(taskPlanRepository),
+		systemtools.WithKnowledgeClient(knowledgeClient),
+	), MCPTools...)
 	rt, err := runtime.New(ctx, runtime.Config{
 		Name:          "Tongji Student Agent",
 		Description:   "Campus assistant that answers questions using approved Tongji services.",
@@ -180,7 +184,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	}, nil
 }
 
-// loadSystemInstruction 从环境变量加载 system prompt。
+// loadSystemInstruction 从 Cozeloop PromptHub 加载 system prompt。
 func loadSystemInstruction(ctx context.Context) (string, error) {
 	if !cozeloop.Enabled() {
 		return "", nil
