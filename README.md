@@ -7,7 +7,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 ## 当前能力
 
 - 开源 Hertz HTTP 服务，默认监听 `8080` 端口。
-- 健康检查接口：`GET /`、`GET /ping`、`GET /v1/ping`。
+- 健康检查接口：`GET /v1/ping`。
 - Agent 调用接口：创建会话后，通过 `POST /v1/sessions/:session_id/messages` 以 SSE 执行并持久化每轮对话。
 - 基于 Ark 兼容配置初始化 Eino Agent Graph。
 - 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
@@ -94,20 +94,26 @@ TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 
 服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考本 README 中的配置示例。
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/v1/tongji/oauth/authorize` | 创建签名 `state`，并 302 跳转到同济统一认证页面。 |
-| `POST` | `/v1/tongji/oauth/token` | callback 页面提交 `code` 和 `state`，服务校验 state 后换取并返回短期 Bearer access token。 |
+| 方法   | 路径                         | 用途                                                                                       |
+| ------ | ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/tongji/oauth/authorize` | 创建签名 `state`，并 302 跳转到同济统一认证页面。                                          |
+| `POST` | `/v1/tongji/oauth/token`     | callback 页面提交 `code` 和 `state`，服务校验 state 后换取并返回短期 Bearer access token。 |
 
 浏览器访问 `https://<你的 Go 服务域名>/v1/tongji/oauth/authorize` 后，开放平台会重定向到已登记的 `https://app.tongji.edu.cn/wallbreakerAuth/callback.html?code=...&state=...`。由于该回调页不在 Go 服务域名下，它必须将参数提交回 Go 服务：
 
 ```js
 const params = new URLSearchParams(window.location.search);
-const response = await fetch("https://<你的 Go 服务域名>/v1/tongji/oauth/token", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ code: params.get("code"), state: params.get("state") }),
-});
+const response = await fetch(
+    "https://<你的 Go 服务域名>/v1/tongji/oauth/token",
+    {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            code: params.get("code"),
+            state: params.get("state"),
+        }),
+    },
+);
 const bearerToken = await response.json();
 ```
 
@@ -156,15 +162,13 @@ go build -o bin/tongjistudent .
 服务启动后，另开一个终端执行：
 
 ```bash
-curl http://127.0.0.1:8080/
-curl http://127.0.0.1:8080/ping
 curl http://127.0.0.1:8080/v1/ping
 ```
 
 三个接口都会返回 HTTP `200` 和 JSON 响应，例如：
 
 ```json
-{"message":"hey yo!"}
+{ "message": "hey yo!" }
 ```
 
 运行测试以验证远程 MCP 适配及其他已覆盖模块：
@@ -187,53 +191,21 @@ go run .
 
 ### API 详细定义
 
-#### `GET /`
-
-描述：基础服务响应，可用于最简单的服务连通性检查。
-
-请求参数：
-
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| - | - | - | - | 无请求参数 | - |
-
-响应参数：
-
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `message` | `string` | 是 | 固定响应文案 | `"hey yo!"` |
-
-#### `GET /ping`
+#### `GET /v1/ping`
 
 描述：健康检查接口，用于服务存活探测。
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| - | - | - | - | 无请求参数 | - |
+| 参数位置 | 参数名 | 类型 | 必填 | 描述       | 默认值 |
+| -------- | ------ | ---- | ---- | ---------- | ------ |
+| -        | -      | -    | -    | 无请求参数 | -      |
 
 响应参数：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `message` | `string` | 是 | 固定响应文案 | `"hey yo!"` |
-
-#### `GET /v1/ping`
-
-描述：兼容部署平台的存活检查接口。
-
-请求参数：
-
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| - | - | - | - | 无请求参数 | - |
-
-响应参数：
-
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `message` | `string` | 是 | 固定响应文案 | `"hey yo!"` |
+| 参数名    | 类型     | 必返 | 描述         | 默认值      |
+| --------- | -------- | ---- | ------------ | ----------- |
+| `message` | `string` | 是   | 固定响应文案 | `"hey yo!"` |
 
 #### `GET /v1/tongji/oauth/authorize`
 
@@ -241,15 +213,15 @@ go run .
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| - | - | - | - | 无请求参数 | - |
+| 参数位置 | 参数名 | 类型 | 必填 | 描述       | 默认值 |
+| -------- | ------ | ---- | ---- | ---------- | ------ |
+| -        | -      | -    | -    | 无请求参数 | -      |
 
 响应参数：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `Location` | `string` | 是 | 302 跳转目标 URL，指向同济统一认证页面 | 动态生成 |
+| 参数名     | 类型     | 必返 | 描述                                   | 默认值   |
+| ---------- | -------- | ---- | -------------------------------------- | -------- |
+| `Location` | `string` | 是   | 302 跳转目标 URL，指向同济统一认证页面 | 动态生成 |
 
 #### `POST /v1/tongji/oauth/token`
 
@@ -257,20 +229,20 @@ go run .
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| Header | `Content-Type` | `string` | 是 | 请求体编码类型 | `application/json` |
-| Body | `code` | `string` | 是 | 同济开放平台回调附带的授权码 | 无 |
-| Body | `state` | `string` | 是 | 授权阶段签发并回传的 state，用于防篡改校验 | 无 |
+| 参数位置 | 参数名         | 类型     | 必填 | 描述                                       | 默认值             |
+| -------- | -------------- | -------- | ---- | ------------------------------------------ | ------------------ |
+| Header   | `Content-Type` | `string` | 是   | 请求体编码类型                             | `application/json` |
+| Body     | `code`         | `string` | 是   | 同济开放平台回调附带的授权码               | 无                 |
+| Body     | `state`        | `string` | 是   | 授权阶段签发并回传的 state，用于防篡改校验 | 无                 |
 
 响应参数：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `access_token` | `string` | 是 | 当前浏览器会话使用的短期 Bearer token | 无 |
-| `token_type` | `string` | 是 | Token 类型 | `"Bearer"` |
-| `expires_in` | `number` | 是 | token 过期时间，单位秒 | 由开放平台决定 |
-| `scope` | `string` | 是 | 当前 token 的 scope | 由开放平台决定 |
+| 参数名         | 类型     | 必返 | 描述                                  | 默认值         |
+| -------------- | -------- | ---- | ------------------------------------- | -------------- |
+| `access_token` | `string` | 是   | 当前浏览器会话使用的短期 Bearer token | 无             |
+| `token_type`   | `string` | 是   | Token 类型                            | `"Bearer"`     |
+| `expires_in`   | `number` | 是   | token 过期时间，单位秒                | 由开放平台决定 |
+| `scope`        | `string` | 是   | 当前 token 的 scope                   | 由开放平台决定 |
 
 #### `POST /v1/sessions`
 
@@ -278,16 +250,16 @@ go run .
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| Header | `Authorization` | `string` | 否 | 认证会话传 `Bearer <access_token>`；匿名会话可不传 | 无 |
+| 参数位置 | 参数名          | 类型     | 必填 | 描述                                               | 默认值 |
+| -------- | --------------- | -------- | ---- | -------------------------------------------------- | ------ |
+| Header   | `Authorization` | `string` | 否   | 认证会话传 `Bearer <access_token>`；匿名会话可不传 | 无     |
 
 响应参数：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `session_id` | `string` | 是 | 会话 ID；匿名会话通常为 `anon_` 前缀 | 动态生成 |
-| `persistence` | `string` | 是 | 会话持久化类型，取值为 `ephemeral` 或 `durable` | 根据鉴权结果决定 |
+| 参数名        | 类型     | 必返 | 描述                                            | 默认值           |
+| ------------- | -------- | ---- | ----------------------------------------------- | ---------------- |
+| `session_id`  | `string` | 是   | 会话 ID；匿名会话通常为 `anon_` 前缀            | 动态生成         |
+| `persistence` | `string` | 是   | 会话持久化类型，取值为 `ephemeral` 或 `durable` | 根据鉴权结果决定 |
 
 #### `POST /v1/sessions/:session_id/messages`
 
@@ -295,51 +267,51 @@ go run .
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| Path | `session_id` | `string` | 是 | 目标会话 ID | 无 |
-| Header | `Content-Type` | `string` | 是 | 请求体编码类型 | `application/json` |
-| Header | `Authorization` | `string` | 否 | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无 |
-| Body | `message` | `string` | 是 | 本轮用户输入，不能为空字符串 | 无 |
+| 参数位置 | 参数名          | 类型     | 必填 | 描述                                                                       | 默认值             |
+| -------- | --------------- | -------- | ---- | -------------------------------------------------------------------------- | ------------------ |
+| Path     | `session_id`    | `string` | 是   | 目标会话 ID                                                                | 无                 |
+| Header   | `Content-Type`  | `string` | 是   | 请求体编码类型                                                             | `application/json` |
+| Header   | `Authorization` | `string` | 否   | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无                 |
+| Body     | `message`       | `string` | 是   | 本轮用户输入，不能为空字符串                                               | 无                 |
 
 响应参数：
 
 响应为 `text/event-stream`，每条 SSE 事件的公共字段如下：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `id` | `string` | 是 | 事件唯一 ID，当前与 `seq` 相同 | 按事件递增生成 |
-| `event` | `string` | 是 | 事件名称，如 `run.started`、`assistant.delta`、`run.completed` | 无 |
-| `data.run_id` | `string` | 是 | 本次运行 ID | 动态生成 |
-| `data.session_id` | `string` | 是 | 所属会话 ID | 当前请求的 `session_id` |
-| `data.seq` | `number` | 是 | 当前运行内的事件序号，从 `1` 开始递增 | 从 `1` 开始 |
-| `data.occurred_at` | `string` | 是 | 事件发生时间，UTC 时间戳 | 动态生成 |
+| 参数名             | 类型     | 必返 | 描述                                                           | 默认值                  |
+| ------------------ | -------- | ---- | -------------------------------------------------------------- | ----------------------- |
+| `id`               | `string` | 是   | 事件唯一 ID，当前与 `seq` 相同                                 | 按事件递增生成          |
+| `event`            | `string` | 是   | 事件名称，如 `run.started`、`assistant.delta`、`run.completed` | 无                      |
+| `data.run_id`      | `string` | 是   | 本次运行 ID                                                    | 动态生成                |
+| `data.session_id`  | `string` | 是   | 所属会话 ID                                                    | 当前请求的 `session_id` |
+| `data.seq`         | `number` | 是   | 当前运行内的事件序号，从 `1` 开始递增                          | 从 `1` 开始             |
+| `data.occurred_at` | `string` | 是   | 事件发生时间，UTC 时间戳                                       | 动态生成                |
 
 不同事件的 `data` 业务字段如下：
 
-| 事件名 | 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| `run.started` | `message` | `string` | 是 | Run 已接受并开始处理的提示文案 | 无 |
-| `agent.status` | `phase` | `string` | 是 | 当前执行阶段 | 无 |
-| `agent.status` | `message` | `string` | 是 | 面向客户端展示的阶段描述 | 无 |
-| `assistant.delta` | `text` | `string` | 是 | 最终自然语言回答的增量文本 | 无 |
-| `tool.call.started` | `call_id` | `string` | 是 | 工具调用 ID | 动态生成 |
-| `tool.call.started` | `tool` | `string` | 是 | 工具标识 | 无 |
-| `tool.call.started` | `display_name` | `string` | 是 | 面向展示的工具名称 | 无 |
-| `tool.call.completed` | `call_id` | `string` | 是 | 工具调用 ID | 无 |
-| `tool.call.completed` | `tool` | `string` | 是 | 工具标识 | 无 |
-| `tool.call.completed` | `duration_ms` | `number` | 是 | 本次工具调用耗时，单位毫秒 | 动态生成 |
-| `tool.call.failed` | `call_id` | `string` | 是 | 工具调用 ID | 无 |
-| `tool.call.failed` | `tool` | `string` | 是 | 工具标识 | 无 |
-| `tool.call.failed` | `duration_ms` | `number` | 是 | 本次工具调用耗时，单位毫秒 | 动态生成 |
-| `tool.call.failed` | `code` | `string` | 是 | 工具失败码 | 无 |
-| `tool.call.failed` | `message` | `string` | 是 | 工具失败说明 | 无 |
-| `task_plan.updated` | `action` | `string` | 是 | 触发更新的任务计划操作 | 无 |
-| `task_plan.updated` | `revision` | `number` | 是 | 最新任务计划版本 | 动态生成 |
-| `task_plan.updated` | `tasks` | `array<object>` | 是 | 当前任务计划完整快照 | `[]` |
-| `run.completed` | `duration_ms` | `number` | 是 | 本次运行总耗时，单位毫秒 | 动态生成 |
-| `run.failed` | `code` | `string` | 是 | 失败码，如 `turn_in_progress`、`session_unavailable`、`session_write_failed`、`agent_execution_failed` | 无 |
-| `run.failed` | `message` | `string` | 是 | 失败说明 | 无 |
+| 事件名                | 参数名         | 类型            | 必返 | 描述                                                                                                   | 默认值   |
+| --------------------- | -------------- | --------------- | ---- | ------------------------------------------------------------------------------------------------------ | -------- |
+| `run.started`         | `message`      | `string`        | 是   | Run 已接受并开始处理的提示文案                                                                         | 无       |
+| `agent.status`        | `phase`        | `string`        | 是   | 当前执行阶段                                                                                           | 无       |
+| `agent.status`        | `message`      | `string`        | 是   | 面向客户端展示的阶段描述                                                                               | 无       |
+| `assistant.delta`     | `text`         | `string`        | 是   | 最终自然语言回答的增量文本                                                                             | 无       |
+| `tool.call.started`   | `call_id`      | `string`        | 是   | 工具调用 ID                                                                                            | 动态生成 |
+| `tool.call.started`   | `tool`         | `string`        | 是   | 工具标识                                                                                               | 无       |
+| `tool.call.started`   | `display_name` | `string`        | 是   | 面向展示的工具名称                                                                                     | 无       |
+| `tool.call.completed` | `call_id`      | `string`        | 是   | 工具调用 ID                                                                                            | 无       |
+| `tool.call.completed` | `tool`         | `string`        | 是   | 工具标识                                                                                               | 无       |
+| `tool.call.completed` | `duration_ms`  | `number`        | 是   | 本次工具调用耗时，单位毫秒                                                                             | 动态生成 |
+| `tool.call.failed`    | `call_id`      | `string`        | 是   | 工具调用 ID                                                                                            | 无       |
+| `tool.call.failed`    | `tool`         | `string`        | 是   | 工具标识                                                                                               | 无       |
+| `tool.call.failed`    | `duration_ms`  | `number`        | 是   | 本次工具调用耗时，单位毫秒                                                                             | 动态生成 |
+| `tool.call.failed`    | `code`         | `string`        | 是   | 工具失败码                                                                                             | 无       |
+| `tool.call.failed`    | `message`      | `string`        | 是   | 工具失败说明                                                                                           | 无       |
+| `task_plan.updated`   | `action`       | `string`        | 是   | 触发更新的任务计划操作                                                                                 | 无       |
+| `task_plan.updated`   | `revision`     | `number`        | 是   | 最新任务计划版本                                                                                       | 动态生成 |
+| `task_plan.updated`   | `tasks`        | `array<object>` | 是   | 当前任务计划完整快照                                                                                   | `[]`     |
+| `run.completed`       | `duration_ms`  | `number`        | 是   | 本次运行总耗时，单位毫秒                                                                               | 动态生成 |
+| `run.failed`          | `code`         | `string`        | 是   | 失败码，如 `turn_in_progress`、`session_unavailable`、`session_write_failed`、`agent_execution_failed` | 无       |
+| `run.failed`          | `message`      | `string`        | 是   | 失败说明                                                                                               | 无       |
 
 #### `GET /v1/sessions/:session_id/messages`
 
@@ -347,40 +319,40 @@ go run .
 
 请求参数：
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| Path | `session_id` | `string` | 是 | 目标会话 ID | 无 |
-| Query | `limit` | `number` | 否 | 返回消息条数，取值范围 `1..100` | `20` |
-| Header | `Authorization` | `string` | 否 | 认证会话继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无 |
+| 参数位置 | 参数名          | 类型     | 必填 | 描述                                                                   | 默认值 |
+| -------- | --------------- | -------- | ---- | ---------------------------------------------------------------------- | ------ |
+| Path     | `session_id`    | `string` | 是   | 目标会话 ID                                                            | 无     |
+| Query    | `limit`         | `number` | 否   | 返回消息条数，取值范围 `1..100`                                        | `20`   |
+| Header   | `Authorization` | `string` | 否   | 认证会话继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无     |
 
 响应参数：
 
-| 参数名 | 类型 | 必返 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- |
-| `messages` | `array<object>` | 是 | 消息列表 | `[]` |
-| `messages[].ID` | `string` | 是 | 消息 ID | 动态生成 |
-| `messages[].SessionID` | `string` | 是 | 所属会话 ID | 当前会话 ID |
-| `messages[].Sequence` | `number` | 是 | 会话内消息序号 | 按存储顺序生成 |
-| `messages[].Role` | `string` | 是 | 消息角色，如 `user`、`assistant` | 无 |
-| `messages[].Content` | `string` | 是 | 消息文本内容 | 无 |
-| `messages[].CreatedAt` | `string` | 是 | 消息创建时间，UTC 时间戳 | 动态生成 |
+| 参数名                 | 类型            | 必返 | 描述                             | 默认值         |
+| ---------------------- | --------------- | ---- | -------------------------------- | -------------- |
+| `messages`             | `array<object>` | 是   | 消息列表                         | `[]`           |
+| `messages[].ID`        | `string`        | 是   | 消息 ID                          | 动态生成       |
+| `messages[].SessionID` | `string`        | 是   | 所属会话 ID                      | 当前会话 ID    |
+| `messages[].Sequence`  | `number`        | 是   | 会话内消息序号                   | 按存储顺序生成 |
+| `messages[].Role`      | `string`        | 是   | 消息角色，如 `user`、`assistant` | 无             |
+| `messages[].Content`   | `string`        | 是   | 消息文本内容                     | 无             |
+| `messages[].CreatedAt` | `string`        | 是   | 消息创建时间，UTC 时间戳         | 动态生成       |
 
 #### `GET /v1/sessions/:session_id/task-plan`
 
 描述：读取指定会话当前活动任务计划；认证会话按当前 `user_id` 校验归属，匿名会话按 `session_id` capability 校验。当前不存在活动计划时返回 `{"plan":null}`。
 
-| 参数位置 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
-| --- | --- | --- | --- | --- | --- |
-| Path | `session_id` | `string` | 是 | 目标会话 ID | 无 |
-| Header | `Authorization` | `string` | 否 | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无 |
+| 参数位置 | 参数名          | 类型     | 必填 | 描述                                                                       | 默认值 |
+| -------- | --------------- | -------- | ---- | -------------------------------------------------------------------------- | ------ |
+| Path     | `session_id`    | `string` | 是   | 目标会话 ID                                                                | 无     |
+| Header   | `Authorization` | `string` | 否   | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无     |
 
 响应体中的 `plan` 为 `null` 或包含 `session_id`、`revision`、`tasks`、`updated_at` 的任务计划快照。
 
 ### 推荐调用顺序
 
-| 场景 | 调用顺序 |
-| --- | --- |
-| 匿名会话 | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
+| 场景         | 调用顺序                                                                                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 匿名会话     | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan`                                                                      |
 | 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
 
 ### 1. 发起同济开放平台授权
@@ -404,16 +376,16 @@ const API_BASE = "http://127.0.0.1:8080";
 const params = new URLSearchParams(window.location.search);
 
 const tokenResponse = await fetch(`${API_BASE}/v1/tongji/oauth/token`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    code: params.get("code"),
-    state: params.get("state"),
-  }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+        code: params.get("code"),
+        state: params.get("state"),
+    }),
 });
 
 if (!tokenResponse.ok) {
-  throw new Error(`token exchange failed: ${tokenResponse.status}`);
+    throw new Error(`token exchange failed: ${tokenResponse.status}`);
 }
 
 const tokenPayload = await tokenResponse.json();
@@ -424,10 +396,10 @@ const accessToken = tokenPayload.access_token;
 
 ```json
 {
-  "access_token": "<token>",
-  "token_type": "Bearer",
-  "expires_in": 7200,
-  "scope": "..."
+    "access_token": "<token>",
+    "token_type": "Bearer",
+    "expires_in": 7200,
+    "scope": "..."
 }
 ```
 
@@ -443,11 +415,11 @@ const accessToken = tokenPayload.access_token;
 const API_BASE = "http://127.0.0.1:8080";
 
 const sessionResponse = await fetch(`${API_BASE}/v1/sessions`, {
-  method: "POST",
+    method: "POST",
 });
 
 if (!sessionResponse.ok) {
-  throw new Error(`create session failed: ${sessionResponse.status}`);
+    throw new Error(`create session failed: ${sessionResponse.status}`);
 }
 
 const sessionPayload = await sessionResponse.json();
@@ -457,7 +429,7 @@ const sessionId = sessionPayload.session_id;
 成功返回：
 
 ```json
-{"session_id":"anon_<random>","persistence":"ephemeral"}
+{ "session_id": "anon_<random>", "persistence": "ephemeral" }
 ```
 
 匿名会话保存在 Redis。默认 24 小时无活动后过期，每个会话最多保留最近 20 条消息；可用 `SESSION_ANONYMOUS_TTL` 与 `SESSION_ANONYMOUS_MAX_MESSAGES` 调整。`session_id` 是匿名会话的访问能力，获得它的调用方能够继续提交和读取该会话，因此应像短期凭据一样保管。
@@ -471,14 +443,14 @@ const API_BASE = "http://127.0.0.1:8080";
 const accessToken = "<access_token>";
 
 const sessionResponse = await fetch(`${API_BASE}/v1/sessions`, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${accessToken}`,
-  },
+    method: "POST",
+    headers: {
+        Authorization: `Bearer ${accessToken}`,
+    },
 });
 
 if (!sessionResponse.ok) {
-  throw new Error(`create session failed: ${sessionResponse.status}`);
+    throw new Error(`create session failed: ${sessionResponse.status}`);
 }
 
 const sessionPayload = await sessionResponse.json();
@@ -498,26 +470,26 @@ const sessionId = "<session_id>";
 const accessToken = "<access_token>"; // 匿名会话可省略
 
 const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/messages`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-  },
-  body: JSON.stringify({ message: "现在几点了？" }),
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify({ message: "现在几点了？" }),
 });
 
 if (!response.ok || !response.body) {
-  throw new Error(`send message failed: ${response.status}`);
+    throw new Error(`send message failed: ${response.status}`);
 }
 
 const reader = response.body.getReader();
 const decoder = new TextDecoder();
 
 while (true) {
-  const { value, done } = await reader.read();
-  if (done) break;
-  const chunk = decoder.decode(value, { stream: true });
-  console.log(chunk);
+    const { value, done } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    console.log(chunk);
 }
 ```
 
@@ -533,16 +505,14 @@ const sessionId = "<session_id>";
 const accessToken = "<access_token>"; // 匿名会话可省略
 
 const historyResponse = await fetch(
-  `${API_BASE}/v1/sessions/${sessionId}/messages?limit=20`,
-  {
-    headers: accessToken
-      ? { Authorization: `Bearer ${accessToken}` }
-      : {},
-  }
+    `${API_BASE}/v1/sessions/${sessionId}/messages?limit=20`,
+    {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    },
 );
 
 if (!historyResponse.ok) {
-  throw new Error(`load history failed: ${historyResponse.status}`);
+    throw new Error(`load history failed: ${historyResponse.status}`);
 }
 
 const historyPayload = await historyResponse.json();
@@ -553,16 +523,16 @@ console.log(historyPayload.messages);
 
 ```json
 {
-  "messages": [
-    {
-      "ID": "msg_<random>",
-      "SessionID": "ses_<random>",
-      "Sequence": 1,
-      "Role": "user",
-      "Content": "现在几点了？",
-      "CreatedAt": "2026-08-05T00:00:00Z"
-    }
-  ]
+    "messages": [
+        {
+            "ID": "msg_<random>",
+            "SessionID": "ses_<random>",
+            "Sequence": 1,
+            "Role": "user",
+            "Content": "现在几点了？",
+            "CreatedAt": "2026-08-05T00:00:00Z"
+        }
+    ]
 }
 ```
 
@@ -576,17 +546,17 @@ console.log(historyPayload.messages);
 
 所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。当前协议会发送模型 reasoning、工具参数和工具结果，前端必须按会话归属处理这些内容；事件不会包含 Bearer token、数据库连接串或其他服务端凭据。
 
-| 事件 | `data` 契约 | 含义 |
-| --- | --- | --- |
-| `run.started` | `message` | Run 已接受并开始处理。 |
-| `agent.status` | `phase`, `message` | 可展示的执行阶段。 |
-| `assistant.delta` | `text` | 最终自然语言回答的增量文本。 |
-| `tool.call.started` | `call_id`, `tool`, `display_name` | 模型已选择该工具，调用即将执行。 |
-| `tool.call.completed` | `call_id`, `tool`, `duration_ms` | Agent 已收到工具结果；不代表上游业务一定成功。 |
-| `tool.call.failed` | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。 |
-| `task_plan.updated` | `action`, `revision`, `tasks` | 当前会话任务计划已更新；前端应以完整快照刷新进度面板。 |
-| `run.completed` | `duration_ms` | Run 成功结束。 |
-| `run.failed` | `code`, `message` | Run 无法完成。 |
+| 事件                  | `data` 契约                                         | 含义                                                   |
+| --------------------- | --------------------------------------------------- | ------------------------------------------------------ |
+| `run.started`         | `message`                                           | Run 已接受并开始处理。                                 |
+| `agent.status`        | `phase`, `message`                                  | 可展示的执行阶段。                                     |
+| `assistant.delta`     | `text`                                              | 最终自然语言回答的增量文本。                           |
+| `tool.call.started`   | `call_id`, `tool`, `display_name`                   | 模型已选择该工具，调用即将执行。                       |
+| `tool.call.completed` | `call_id`, `tool`, `duration_ms`                    | Agent 已收到工具结果；不代表上游业务一定成功。         |
+| `tool.call.failed`    | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。     |
+| `task_plan.updated`   | `action`, `revision`, `tasks`                       | 当前会话任务计划已更新；前端应以完整快照刷新进度面板。 |
+| `run.completed`       | `duration_ms`                                       | Run 成功结束。                                         |
+| `run.failed`          | `code`, `message`                                   | Run 无法完成。                                         |
 
 `run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
@@ -598,27 +568,25 @@ console.log(historyPayload.messages);
 
 主 Agent 固定启用 Ark Responses API 的 response-chain 会话缓存，TTL 为 600 秒。每轮 Agent 输出的 `response_id` 和缓存到期时间会随 canonical 会话消息写入 PostgreSQL 或 Redis，并在下一轮恢复到模型历史；Ark SDK 因而会自动发送 `previous_response_id` 与未缓存的增量上下文。缓存过期或历史中没有可用 response ID 时，服务会自动回退为完整历史请求，不影响会话正确性。
 
-会话消息接口会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 系列接口只用于服务存活检查。
+会话消息接口会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 接口只用于服务存活检查。
 
 当前允许暴露给 Agent 的远程 MCP 工具为：
 
-| 工具 | 作用 |
-| --- | --- |
+| 工具                   | 作用                                                     |
+| ---------------------- | -------------------------------------------------------- |
 | `tongji.student.score` | 将请求内校园 access token 转交远程 MCP，查询指定学期成绩 |
 
 每次 Tool 调用会从当前请求 context 读取格式正确的 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时 Tool 在本地返回未授权提示，不会发起 MCP 请求。远程 MCP 与同济开放平台仍必须验证 token 的有效性、用户绑定和 scope；部署远程 MCP 时必须保护该请求头，不能写入普通日志。
 
 ## 路由一览
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/` | 基础服务响应 |
-| `GET` | `/ping` | 健康检查 |
-| `GET` | `/v1/ping` | 兼容部署平台的存活检查 |
-| `POST` | `/v1/sessions` | 创建认证或匿名会话 |
-| `POST` | `/v1/sessions/:session_id/messages` | 以 SSE 执行并保存一轮会话消息 |
-| `GET` | `/v1/sessions/:session_id/messages` | 读取会话历史 |
-| `GET` | `/v1/sessions/:session_id/task-plan` | 读取活动任务计划 |
+| 方法   | 路径                                 | 用途                          |
+| ------ | ------------------------------------ | ----------------------------- |
+| `GET`  | `/v1/ping`                           | 健康检查                      |
+| `POST` | `/v1/sessions`                       | 创建认证或匿名会话            |
+| `POST` | `/v1/sessions/:session_id/messages`  | 以 SSE 执行并保存一轮会话消息 |
+| `GET`  | `/v1/sessions/:session_id/messages`  | 读取会话历史                  |
+| `GET`  | `/v1/sessions/:session_id/task-plan` | 读取活动任务计划              |
 
 ## 说明
 

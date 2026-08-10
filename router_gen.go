@@ -3,13 +3,10 @@
 package main
 
 import (
-	"github.com/Charlie-BU/TongjiStudent/biz/handler"
 	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 // register register routes based on the IDL 'api.${HTTP Method}' annotation.
 func register(r *server.Hertz) {
 	customizeRegister(r)
-
-	r.GET("/ping", handler.Ping)
 }
