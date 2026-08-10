@@ -210,6 +210,30 @@ func CreateSession(ctx context.Context) (agenticsession.Session, error) {
 	return defaultService.CreateSession(ctx)
 }
 
+// CreateSessionWithName 为当前请求创建带名称的会话。
+func CreateSessionWithName(ctx context.Context, name string) (agenticsession.Session, error) {
+	if defaultService == nil {
+		return agenticsession.Session{}, fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.CreateSessionWithName(ctx, name)
+}
+
+// ListSessions 返回当前已认证用户的全部持久会话。
+func ListSessions(ctx context.Context) ([]agenticsession.Session, error) {
+	if defaultService == nil {
+		return nil, fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.ListSessions(ctx)
+}
+
+// RenameSession 修改当前已认证用户拥有的持久会话名称。
+func RenameSession(ctx context.Context, sessionID, name string) (agenticsession.Session, error) {
+	if defaultService == nil {
+		return agenticsession.Session{}, fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.RenameSession(ctx, sessionID, name)
+}
+
 // StreamSession 提交会话消息并以 SSE 事件返回本轮执行过程。
 func StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
 	if defaultService == nil {
@@ -244,6 +268,11 @@ func Close() error {
 
 // CreateSession 为当前请求的身份状态创建会话。
 func (s *Service) CreateSession(ctx context.Context) (agenticsession.Session, error) {
+	return s.CreateSessionWithName(ctx, "")
+}
+
+// CreateSessionWithName 为当前请求的身份状态创建带名称的会话。
+func (s *Service) CreateSessionWithName(ctx context.Context, name string) (agenticsession.Session, error) {
 	if s == nil {
 		return agenticsession.Session{}, fmt.Errorf("chat service is not initialized")
 	}
@@ -252,6 +281,9 @@ func (s *Service) CreateSession(ctx context.Context) (agenticsession.Session, er
 		if s.durableSessionStore == nil {
 			return agenticsession.Session{}, fmt.Errorf("durable session store is not initialized")
 		}
+		if creator, ok := s.durableSessionStore.(agenticsession.NamedSessionCreator); ok {
+			return creator.CreateWithName(ctx, ownerUserID, name)
+		}
 		return s.durableSessionStore.Create(ctx, ownerUserID)
 	}
 	// userId 不存在时，创建临时会话
@@ -259,6 +291,38 @@ func (s *Service) CreateSession(ctx context.Context) (agenticsession.Session, er
 		return agenticsession.Session{}, fmt.Errorf("ephemeral session store is not initialized")
 	}
 	return s.ephemeralSessionStore.Create(ctx)
+}
+
+// ListSessions 返回当前已认证用户的全部持久会话。
+func (s *Service) ListSessions(ctx context.Context) ([]agenticsession.Session, error) {
+	if s == nil || s.durableSessionStore == nil {
+		return nil, fmt.Errorf("durable session store is not initialized")
+	}
+	ownerUserID, ok := platformauth.UserIDFromContext(ctx)
+	if !ok {
+		return nil, agenticsession.ErrInvalidOwner
+	}
+	lister, ok := s.durableSessionStore.(agenticsession.SessionLister)
+	if !ok {
+		return nil, fmt.Errorf("durable session store does not support listing sessions")
+	}
+	return lister.List(ctx, ownerUserID)
+}
+
+// RenameSession 修改当前已认证用户拥有的持久会话名称。
+func (s *Service) RenameSession(ctx context.Context, sessionID, name string) (agenticsession.Session, error) {
+	if s == nil || s.durableSessionStore == nil {
+		return agenticsession.Session{}, fmt.Errorf("durable session store is not initialized")
+	}
+	ownerUserID, ok := platformauth.UserIDFromContext(ctx)
+	if !ok {
+		return agenticsession.Session{}, agenticsession.ErrInvalidOwner
+	}
+	renamer, ok := s.durableSessionStore.(agenticsession.SessionRenamer)
+	if !ok {
+		return agenticsession.Session{}, fmt.Errorf("durable session store does not support renaming sessions")
+	}
+	return renamer.Rename(ctx, sessionID, ownerUserID, name)
 }
 
 // StreamSession 将当前用户消息、历史和最终回答写入同一会话。

@@ -36,6 +36,55 @@ func TestPostgresStoreValidation(t *testing.T) {
 			So(strings.Contains(schema, "response_cache_expires_at BIGINT NOT NULL"), ShouldBeTrue)
 			So(strings.Contains(schema, "CREATE TABLE IF NOT EXISTS agent_session_task_plans"), ShouldBeTrue)
 			So(strings.Contains(schema, "revision BIGINT NOT NULL"), ShouldBeTrue)
+			So(strings.Contains(schema, "name TEXT NOT NULL DEFAULT ''"), ShouldBeTrue)
+			So(strings.Contains(schema, "agent_sessions_owner_last_active_index"), ShouldBeTrue)
+		})
+	})
+}
+
+func TestPostgresStoreNamedSessionPersistence(t *testing.T) {
+	Convey("PostgreSQL 会话名称、列表与重命名", t, func() {
+		pool, err := pgxmock.NewPool()
+		So(err, ShouldBeNil)
+		defer pool.Close()
+		store := &PostgresStore{pool: pool}
+		originalNewID := newID
+		newID = func(string) string { return "ses-001" }
+		defer func() { newID = originalNewID }()
+
+		Convey("创建时保存名称，并按归属查询和更新", func() {
+			pool.ExpectExec(regexp.QuoteMeta(`INSERT INTO agent_sessions (id, owner_user_id, name, created_at, last_active_at) VALUES ($1, $2, $3, $4, $5)`)).
+				WithArgs("ses-001", "user-001", "成绩查询", pgxmock.AnyArg(), pgxmock.AnyArg()).
+				WillReturnResult(pgxmock.NewResult("INSERT", 1))
+			created, createErr := store.CreateWithName(context.Background(), " user-001 ", " 成绩查询 ")
+			So(createErr, ShouldBeNil)
+			So(created.Name, ShouldEqual, "成绩查询")
+
+			createdAt := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE owner_user_id = $1 ORDER BY last_active_at DESC, created_at DESC`)).
+				WithArgs("user-001").
+				WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "name", "created_at", "last_active_at"}).
+					AddRow("ses-002", "user-001", "课表查询", createdAt, createdAt).
+					AddRow("ses-001", "user-001", "成绩查询", createdAt, createdAt))
+			sessions, listErr := store.List(context.Background(), "user-001")
+			So(listErr, ShouldBeNil)
+			So(sessions, ShouldHaveLength, 2)
+			So(sessions[0].Name, ShouldEqual, "课表查询")
+
+			pool.ExpectQuery(regexp.QuoteMeta(`UPDATE agent_sessions SET name = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id, owner_user_id, name, created_at, last_active_at`)).
+				WithArgs("新名称", "ses-001", "user-001").
+				WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "name", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", "新名称", createdAt, createdAt))
+			renamed, renameErr := store.Rename(context.Background(), "ses-001", "user-001", " 新名称 ")
+			So(renameErr, ShouldBeNil)
+			So(renamed.Name, ShouldEqual, "新名称")
+			So(pool.ExpectationsWereMet(), ShouldBeNil)
+		})
+
+		Convey("无 owner 时拒绝列表与重命名", func() {
+			_, listErr := store.List(context.Background(), " ")
+			So(errors.Is(listErr, ErrInvalidOwner), ShouldBeTrue)
+			_, renameErr := store.Rename(context.Background(), "ses-001", "", "新名称")
+			So(errors.Is(renameErr, ErrInvalidOwner), ShouldBeTrue)
 		})
 	})
 }
@@ -108,9 +157,9 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			createdAt := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
 			toolCallsJSON, marshalErr := json.Marshal(toolCalls)
 			So(marshalErr, ShouldBeNil)
-			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
 				WithArgs("ses-001", "user-001").
-				WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", createdAt, createdAt))
+				WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "name", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", "成绩查询", createdAt, createdAt))
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`)).
 				WithArgs("ses-001", 20).
 				WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "response_id", "response_cache_expires_at", "created_at"}).

@@ -86,15 +86,16 @@ func TestBindSessionMessage(t *testing.T) {
 
 func TestCreateSession(t *testing.T) {
 	Convey("创建会话接口", t, func() {
-		originalCreateSession := createSession
-		t.Cleanup(func() { createSession = originalCreateSession })
+		originalCreateSessionWithName := createSessionWithName
+		t.Cleanup(func() { createSessionWithName = originalCreateSessionWithName })
 
 		Convey("会返回创建的会话标识与持久化类型", func() {
-			createSession = func(ctx context.Context) (agenticsession.Session, error) {
+			createSessionWithName = func(ctx context.Context, name string) (agenticsession.Session, error) {
 				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
 				So(ok, ShouldBeTrue)
 				So(accessToken, ShouldEqual, "test-access-token")
-				return agenticsession.Session{ID: "ses-001", Persistence: agenticsession.PersistenceDurable}, nil
+				So(name, ShouldEqual, "New Session")
+				return agenticsession.Session{ID: "ses-001", Name: name, Persistence: agenticsession.PersistenceDurable}, nil
 			}
 			requestContext := app.NewContext(0)
 			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
@@ -111,8 +112,29 @@ func TestCreateSession(t *testing.T) {
 			So(response.Persistence, ShouldEqual, agenticsession.PersistenceDurable)
 		})
 
+		Convey("会保留请求体中的会话名称", func() {
+			createSessionWithName = func(_ context.Context, name string) (agenticsession.Session, error) {
+				So(name, ShouldEqual, "成绩查询")
+				return agenticsession.Session{ID: "ses-001", Name: name, Persistence: agenticsession.PersistenceDurable}, nil
+			}
+			requestContext := newAgentJSONRequest(`{"name":" 成绩查询 "}`)
+
+			CreateSession(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusCreated)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"成绩查询"`)
+		})
+
+		Convey("请求体不是合法 JSON 时返回 400", func() {
+			requestContext := newAgentJSONRequest(`{"name":`)
+
+			CreateSession(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
+		})
+
 		Convey("服务不可用时返回 503", func() {
-			createSession = func(context.Context) (agenticsession.Session, error) {
+			createSessionWithName = func(context.Context, string) (agenticsession.Session, error) {
 				return agenticsession.Session{}, errors.New("store unavailable")
 			}
 			requestContext := app.NewContext(0)
@@ -120,6 +142,77 @@ func TestCreateSession(t *testing.T) {
 			CreateSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusServiceUnavailable)
+		})
+	})
+}
+
+func TestSessionsAndRenameSession(t *testing.T) {
+	Convey("会话列表与重命名接口", t, func() {
+		originalListSessions := listSessions
+		originalRenameSession := renameSession
+		t.Cleanup(func() {
+			listSessions = originalListSessions
+			renameSession = originalRenameSession
+		})
+
+		Convey("会根据当前访问凭据返回全部会话", func() {
+			listSessions = func(ctx context.Context) ([]agenticsession.Session, error) {
+				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
+				So(ok, ShouldBeTrue)
+				So(accessToken, ShouldEqual, "test-access-token")
+				return []agenticsession.Session{{ID: "ses-001", Name: "成绩查询", Persistence: agenticsession.PersistenceDurable}}, nil
+			}
+			requestContext := app.NewContext(0)
+			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
+
+			Sessions(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"id":"ses-001"`)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"成绩查询"`)
+		})
+
+		Convey("会校验重命名输入并返回更新后的会话", func() {
+			renameSession = func(_ context.Context, sessionID, name string) (agenticsession.Session, error) {
+				So(sessionID, ShouldEqual, "ses-001")
+				So(name, ShouldEqual, "新名称")
+				return agenticsession.Session{ID: sessionID, Name: name, Persistence: agenticsession.PersistenceDurable}, nil
+			}
+			requestContext := app.NewContext(0)
+			requestContext.Request.Header.Set("Content-Type", "application/json")
+			requestContext.Request.SetBodyString(`{"session_id":"ses-001","name":" 新名称 "}`)
+
+			RenameSession(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"新名称"`)
+		})
+
+		Convey("无有效身份时列表与重命名均返回 401", func() {
+			listSessions = func(context.Context) ([]agenticsession.Session, error) { return nil, agenticsession.ErrInvalidOwner }
+			requestContext := app.NewContext(0)
+			Sessions(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
+
+			renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
+				return agenticsession.Session{}, agenticsession.ErrInvalidOwner
+			}
+			requestContext = newAgentJSONRequest(`{"session_id":"ses-001","name":"新名称"}`)
+			RenameSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
+		})
+
+		Convey("重命名非本人或不存在的会话返回 404，缺少字段返回 400", func() {
+			renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
+				return agenticsession.Session{}, agenticsession.ErrNotFound
+			}
+			requestContext := newAgentJSONRequest(`{"session_id":"ses-other","name":"新名称"}`)
+			RenameSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
+
+			requestContext = newAgentJSONRequest(`{"session_id":"ses-001"}`)
+			RenameSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 		})
 	})
 }

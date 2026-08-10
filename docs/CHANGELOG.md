@@ -1,3 +1,53 @@
+## CHANGELOG - 2026-08-10 16:00 - 为认证会话补齐命名、列表与重命名能力
+
+### 撰写时间
+
+- 2026-08-10 16:00
+
+### Base Commit
+
+- `d65e27ffda646e1ebfcbe69c11dabef292644c59`
+
+### Compare Scope
+
+- `working_tree_only`
+
+### 背景与改动目标
+
+此前认证用户可以创建和持续使用 PostgreSQL 持久会话，但前端无法恢复“当前用户有哪些会话”，也不能为会话提供稳定、可读的名称。匿名会话依赖 Redis TTL，本身也不适合作为跨请求的用户会话列表。
+
+这次把目标收敛为认证持久会话的最小管理能力：创建时保存名称、通过当前 Bearer token 列表恢复、并只允许所属用户重命名。没有把匿名会话纳入列表或重命名，以免把 capability 型 `session_id` 误当成用户身份。
+
+### 改动概览
+
+- `agent_sessions` 新增 `name` 列；启动时通过 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 兼容已有数据库，并为按用户、最近活跃时间的列表查询建立索引。
+- `POST /v1/sessions` 接受可选 `{"name":"..."}`；缺失或仅包含空白时使用默认值 `"New Session"`，创建响应同步返回名称。
+- 新增 `GET /v1/sessions`，返回当前认证用户的全部持久会话，并按 `last_active_at`、`created_at` 倒序排列。
+- 新增 `POST /v1/session/rename`，使用 `session_id` 与 `name` 更新会话名称。
+- README 和 `docs/DEVELOPMENT.md` 同步接口契约、默认命名、认证边界与调用顺序。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：Handler 继续通过 `withChatAccessToken` 写入 access token；`platformauth.WithAccessToken` 解析可信 `user_id`。`chat.Service` 仅在该 ID 存在时进入 PostgreSQL 持久会话路径。
+- 当前改动：`PostgresStore.List` 的查询条件固定为 `owner_user_id = $1`；`PostgresStore.Rename` 以 `id + owner_user_id` 作为 `UPDATE ... RETURNING` 条件。Handler 将身份缺失映射为 `401`，找不到会话或会话不属于当前用户映射为 `404`。
+- 下游影响：会话列表响应仅投影 `id`、`name`、持久化类型和时间字段，不泄露 `owner_user_id`。现有消息、任务计划与匿名 Redis 会话链路保持原有接口和归属规则。
+
+### 改动结果与业务影响
+
+认证用户现在可以在页面初始化时调用 `GET /v1/sessions` 恢复历史会话，并通过重命名接口维护会话标题。名称持久化在 PostgreSQL 中；匿名会话虽然也会在创建响应中带名称，但不会进入用户列表，生命周期仍由 Redis TTL 管理。
+
+为了避免本次存储与授权改动只停留在 Handler mock，补充了显式命名、非法 JSON、未认证、非本人会话、缺失字段，以及 PostgreSQL 创建、列表、重命名和 owner 校验的离线测试。无用的 `createSession` Handler 测试替身已删除。
+
+### 风险与待办
+
+- 当前没有为会话名称设置长度上限或字符集策略；名称直接作为普通文本存储和返回，前端仍应按文本节点渲染，避免将名称作为 HTML 注入。
+- `GET /v1/sessions` 当前返回全部持久会话，尚未引入分页；当单个用户会话数量明显增长时，需要补充 `limit`、cursor 和索引使用情况验证。
+- 已验证 `go test ./...`、受影响包 `go test -race` 与 `go vet`；未使用真实同济 access token 或生产 PostgreSQL 数据库进行验证。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): add named session listing and rename APIs`
+
 ## CHANGELOG - 2026-08-07 - 将 Ark 知识库接入为按需调用的受控系统工具
 
 ### 背景与目标

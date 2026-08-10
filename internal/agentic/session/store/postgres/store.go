@@ -97,13 +97,19 @@ func (s *PostgresStore) Close() {
 
 // Create 创建由 ownerUserID 拥有的持久会话。
 func (s *PostgresStore) Create(ctx context.Context, ownerUserID string) (Session, error) {
+	return s.CreateWithName(ctx, ownerUserID, "")
+}
+
+// CreateWithName 创建由 ownerUserID 拥有且带名称的持久会话。
+func (s *PostgresStore) CreateWithName(ctx context.Context, ownerUserID, name string) (Session, error) {
 	ownerUserID = strings.TrimSpace(ownerUserID)
 	if ownerUserID == "" {
 		return Session{}, ErrInvalidOwner
 	}
+	name = strings.TrimSpace(name)
 	now := time.Now().UTC()
-	result := Session{ID: newID("ses"), OwnerUserID: ownerUserID, Persistence: PersistenceDurable, CreatedAt: now, LastActiveAt: now}
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_sessions (id, owner_user_id, created_at, last_active_at) VALUES ($1, $2, $3, $4)`, result.ID, result.OwnerUserID, result.CreatedAt, result.LastActiveAt)
+	result := Session{ID: newID("ses"), OwnerUserID: ownerUserID, Name: name, Persistence: PersistenceDurable, CreatedAt: now, LastActiveAt: now}
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_sessions (id, owner_user_id, name, created_at, last_active_at) VALUES ($1, $2, $3, $4, $5)`, result.ID, result.OwnerUserID, result.Name, result.CreatedAt, result.LastActiveAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("create durable session: %w", err)
 	}
@@ -116,12 +122,54 @@ func (s *PostgresStore) Get(ctx context.Context, sessionID, ownerUserID string) 
 		return Session{}, err
 	}
 	result := Session{Persistence: PersistenceDurable}
-	err := s.pool.QueryRow(ctx, `SELECT id, owner_user_id, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&result.ID, &result.OwnerUserID, &result.CreatedAt, &result.LastActiveAt)
+	err := s.pool.QueryRow(ctx, `SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&result.ID, &result.OwnerUserID, &result.Name, &result.CreatedAt, &result.LastActiveAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrNotFound
 	}
 	if err != nil {
 		return Session{}, fmt.Errorf("get durable session: %w", err)
+	}
+	return result, nil
+}
+
+// List 按最近活跃时间倒序读取 ownerUserID 的全部持久会话。
+func (s *PostgresStore) List(ctx context.Context, ownerUserID string) ([]Session, error) {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return nil, ErrInvalidOwner
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE owner_user_id = $1 ORDER BY last_active_at DESC, created_at DESC`, ownerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list durable sessions: %w", err)
+	}
+	defer rows.Close()
+	sessions := make([]Session, 0)
+	for rows.Next() {
+		item := Session{Persistence: PersistenceDurable}
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.CreatedAt, &item.LastActiveAt); err != nil {
+			return nil, fmt.Errorf("scan durable session: %w", err)
+		}
+		sessions = append(sessions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate durable sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+// Rename 修改属于 ownerUserID 的持久会话名称。
+func (s *PostgresStore) Rename(ctx context.Context, sessionID, ownerUserID, name string) (Session, error) {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return Session{}, err
+	}
+	name = strings.TrimSpace(name)
+	result := Session{Persistence: PersistenceDurable}
+	err := s.pool.QueryRow(ctx, `UPDATE agent_sessions SET name = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id, owner_user_id, name, created_at, last_active_at`, name, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID)).Scan(&result.ID, &result.OwnerUserID, &result.Name, &result.CreatedAt, &result.LastActiveAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, ErrNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("rename durable session: %w", err)
 	}
 	return result, nil
 }
@@ -348,9 +396,17 @@ var postgresSchemaStatements = []string{
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL,
     last_active_at TIMESTAMPTZ NOT NULL
 );
+`,
+	`
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
+`,
+	`
+CREATE INDEX IF NOT EXISTS agent_sessions_owner_last_active_index
+    ON agent_sessions (owner_user_id, last_active_at DESC, created_at DESC);
 `,
 	`
 CREATE TABLE IF NOT EXISTS agent_session_messages (

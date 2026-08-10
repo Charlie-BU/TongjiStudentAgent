@@ -355,6 +355,8 @@ Loop 的硬边界：
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `POST` | `/v1/sessions` | 创建会话，返回 `session_id` |
+| `GET` | `/v1/sessions` | 返回当前认证用户的全部持久会话 |
+| `POST` | `/v1/session/rename` | 重命名当前认证用户拥有的持久会话 |
 | `POST` | `/v1/sessions/:session_id/messages` | 提交消息并返回 SSE 事件流 |
 | `POST` | `/v1/runs/:run_id/resume` | 提交 HITL 确认并恢复 |
 | `POST` | `/v1/runs/:run_id/cancel` | 取消当前 Run |
@@ -362,7 +364,7 @@ Loop 的硬边界：
 | `GET` | `/v1/sessions/:session_id/messages` | 分页读取历史消息 |
 | `GET` | `/v1/sessions/:session_id/task-plan` | 读取当前活动任务计划 |
 
-当前已落地创建、提交消息、读取历史与读取活动任务计划四个接口。`POST /v1/sessions/:session_id/messages` 的请求体为 `{"message":"..."}`。认证请求以 request context 的 `user_id` 访问 PostgreSQL 会话，未获得该 ID 的请求仅可访问 Redis 匿名会话。
+当前已落地创建、列表、重命名、提交消息、读取历史与读取活动任务计划六个接口。`POST /v1/sessions` 可接收可选 `{"name":"..."}`，省略或传入空白名称时使用 `"New Session"`；`POST /v1/session/rename` 接收 `{"session_id":"...","name":"..."}`。列表与重命名要求从 Bearer token 解析出 request context 的 `user_id`，并以该 ID 约束 PostgreSQL 会话归属；未获得该 ID 时返回 `401`。
 
 会话消息表同时保存 user、assistant 与 tool 三类消息。每次用户提交会生成一个 `run_id`，并写入该次运行产生的全部消息，以便按完整 turn 边界读取；assistant 消息保留 `tool_calls` 和 `reasoning_content`，tool 消息保留 `tool_call_id`、`tool_name` 与完整结果。历史接口直接返回这些字段，下一轮上下文按原角色恢复它们；SSE 使用相同的 `run_id`，并发送 `assistant.reasoning`、工具参数、工具结果和 `task_plan.updated` 计划快照，供前端实时展示。活动计划不混入 canonical 消息历史，而是作为动态 reminder 注入后续模型输入，并由独立查询接口在页面刷新后恢复。
 

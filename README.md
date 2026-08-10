@@ -253,13 +253,39 @@ go run .
 | 参数位置 | 参数名          | 类型     | 必填 | 描述                                               | 默认值 |
 | -------- | --------------- | -------- | ---- | -------------------------------------------------- | ------ |
 | Header   | `Authorization` | `string` | 否   | 认证会话传 `Bearer <access_token>`；匿名会话可不传 | 无     |
+| Header   | `Content-Type`  | `string` | 否   | 传入请求体时使用 `application/json`               | 无     |
+| Body     | `name`          | `string` | 否   | 会话名称；首尾空白会被裁剪                         | `"New Session"` |
 
 响应参数：
 
 | 参数名        | 类型     | 必返 | 描述                                            | 默认值           |
 | ------------- | -------- | ---- | ----------------------------------------------- | ---------------- |
 | `session_id`  | `string` | 是   | 会话 ID；匿名会话通常为 `anon_` 前缀            | 动态生成         |
+| `name`        | `string` | 是   | 会话名称                                        | 请求值或 `"New Session"` |
 | `persistence` | `string` | 是   | 会话持久化类型，取值为 `ephemeral` 或 `durable` | 根据鉴权结果决定 |
+
+#### `GET /v1/sessions`
+
+描述：根据有效 Bearer access token 返回当前用户的全部持久会话，按最近活跃时间倒序排列。匿名会话不在此列表中。
+
+| 参数位置 | 参数名 | 类型 | 必填 | 描述 |
+| -------- | ------ | ---- | ---- | ---- |
+| Header | `Authorization` | `string` | 是 | `Bearer <access_token>`；无效或无法解析用户身份时返回 `401` |
+
+响应体为 `{"sessions":[...]}`；每项包含 `id`、`name`、`persistence`、`created_at` 与 `last_active_at`。
+
+#### `POST /v1/session/rename`
+
+描述：修改当前用户拥有的持久会话名称。
+
+| 参数位置 | 参数名 | 类型 | 必填 | 描述 |
+| -------- | ------ | ---- | ---- | ---- |
+| Header | `Authorization` | `string` | 是 | `Bearer <access_token>` |
+| Header | `Content-Type` | `string` | 是 | `application/json` |
+| Body | `session_id` | `string` | 是 | 要重命名的会话 ID |
+| Body | `name` | `string` | 是 | 新名称，不能为空 |
+
+成功返回 `200 OK` 与响应体 `{"id":"ses_<random>","name":"新名称","persistence":"durable","created_at":"<RFC3339>","last_active_at":"<RFC3339>"}`。未认证返回 `401 {"error":"valid access token is required"}`，会话不存在或不属于当前用户返回 `404 {"error":"session not found"}`；会话服务不可用时返回 `503 {"error":"session service unavailable"}`。
 
 #### `POST /v1/sessions/:session_id/messages`
 
@@ -353,7 +379,7 @@ go run .
 | 场景         | 调用顺序                                                                                                                                                                                      |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 匿名会话     | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan`                                                                      |
-| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
+| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `GET /v1/sessions` / `POST /v1/session/rename` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
 
 ### 1. 发起同济开放平台授权
 
@@ -416,6 +442,8 @@ const API_BASE = "http://127.0.0.1:8080";
 
 const sessionResponse = await fetch(`${API_BASE}/v1/sessions`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "成绩查询" }),
 });
 
 if (!sessionResponse.ok) {
@@ -429,7 +457,7 @@ const sessionId = sessionPayload.session_id;
 成功返回：
 
 ```json
-{ "session_id": "anon_<random>", "persistence": "ephemeral" }
+{ "session_id": "anon_<random>", "name": "成绩查询", "persistence": "ephemeral" }
 ```
 
 匿名会话保存在 Redis。默认 24 小时无活动后过期，每个会话最多保留最近 20 条消息；可用 `SESSION_ANONYMOUS_TTL` 与 `SESSION_ANONYMOUS_MAX_MESSAGES` 调整。`session_id` 是匿名会话的访问能力，获得它的调用方能够继续提交和读取该会话，因此应像短期凭据一样保管。
@@ -446,7 +474,9 @@ const sessionResponse = await fetch(`${API_BASE}/v1/sessions`, {
     method: "POST",
     headers: {
         Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
     },
+    body: JSON.stringify({ name: "成绩查询" }),
 });
 
 if (!sessionResponse.ok) {
@@ -458,7 +488,9 @@ const sessionId = sessionPayload.session_id;
 const persistence = sessionPayload.persistence;
 ```
 
-服务能够从该 token 解析到 `user_id` 时，返回的 `persistence` 为 `durable`，会话及消息保存到 PostgreSQL，并按 `user_id` 限制读取与写入。如果 token 无效、无法解析用户 ID 或未传 token，服务不会拒绝创建请求，而是返回 `ephemeral` 匿名会话；客户端应检查 `persistence`，不要把匿名会话误当成可恢复的用户会话。
+省略 `name` 或传入空白名称时，服务使用 `"New Session"`。服务能够从该 token 解析到 `user_id` 时，返回的 `persistence` 为 `durable`，会话及消息保存到 PostgreSQL，并按 `user_id` 限制读取与写入。如果 token 无效、无法解析用户 ID 或未传 token，服务不会拒绝创建请求，而是返回 `ephemeral` 匿名会话；客户端应检查 `persistence`，不要把匿名会话误当成可恢复的用户会话。
+
+认证持久会话可通过 `GET /v1/sessions` 恢复列表；重命名时发送 `POST /v1/session/rename`，请求体为 `{"session_id":"ses_<random>","name":"新名称"}`。
 
 ### 4. 提交一轮消息并消费 SSE
 
@@ -584,6 +616,8 @@ console.log(historyPayload.messages);
 | ------ | ------------------------------------ | ----------------------------- |
 | `GET`  | `/v1/ping`                           | 健康检查                      |
 | `POST` | `/v1/sessions`                       | 创建认证或匿名会话            |
+| `GET`  | `/v1/sessions`                       | 列出当前用户的持久会话        |
+| `POST` | `/v1/session/rename`                 | 重命名当前用户的持久会话      |
 | `POST` | `/v1/sessions/:session_id/messages`  | 以 SSE 执行并保存一轮会话消息 |
 | `GET`  | `/v1/sessions/:session_id/messages`  | 读取会话历史                  |
 | `GET`  | `/v1/sessions/:session_id/task-plan` | 读取活动任务计划              |

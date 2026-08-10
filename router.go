@@ -9,6 +9,8 @@ import (
 func customizeRegister(r *server.Hertz) {
 	r.GET("/v1/ping", handler.Ping)
 	r.POST("/v1/sessions", handler.CreateSession)
+	r.GET("/v1/sessions", handler.Sessions)
+	r.POST("/v1/session/rename", handler.RenameSession)
 	r.POST("/v1/sessions/:session_id/messages", handler.SessionMessageStream)
 	r.GET("/v1/sessions/:session_id/messages", handler.SessionMessages)
 	r.GET("/v1/sessions/:session_id/task-plan", handler.SessionTaskPlan)
