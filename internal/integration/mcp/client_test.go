@@ -106,13 +106,13 @@ func TestRequestScopedMCPTool(t *testing.T) {
 		invokable, ok := tools[0].(tool.InvokableTool)
 		So(ok, ShouldBeTrue)
 
-		Convey("缺失凭据时不应发起 MCP 请求", func() {
+		Convey("缺失凭据时应继续发起 MCP 请求并透传空凭据", func() {
 			result, invokeErr := invokable.InvokableRun(context.Background(), `{}`)
 
 			So(invokeErr, ShouldBeNil)
-			So(result, ShouldContainSubstring, `"status":"unauthorized"`)
+			So(result, ShouldContainSubstring, "score result")
 			receivedTokensMu.Lock()
-			So(receivedTokens, ShouldBeEmpty)
+			So(receivedTokens, ShouldResemble, []string{""})
 			receivedTokensMu.Unlock()
 		})
 

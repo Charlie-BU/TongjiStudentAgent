@@ -608,7 +608,7 @@ console.log(historyPayload.messages);
 | ---------------------- | -------------------------------------------------------- |
 | `tongji.student.score` | 将请求内校园 access token 转交远程 MCP，查询指定学期成绩 |
 
-每次 Tool 调用会从当前请求 context 读取格式正确的 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时 Tool 在本地返回未授权提示，不会发起 MCP 请求。远程 MCP 与同济开放平台仍必须验证 token 的有效性、用户绑定和 scope；部署远程 MCP 时必须保护该请求头，不能写入普通日志。
+每次 Tool 调用会从当前请求 context 读取格式正确的 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时仍会继续发起 MCP 请求，但请求头值为空，由远程 MCP 与同济开放平台继续验证 token 的有效性、用户绑定和 scope。部署远程 MCP 时必须保护该请求头，不能写入普通日志。
 
 ## 路由一览
 
