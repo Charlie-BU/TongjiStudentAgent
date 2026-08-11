@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-08-11 - 新增当前授权用户基础信息查询 API
+
+### 撰写时间
+
+- 2026-08-11 CST
+
+### Compare Scope
+
+- `working_tree_only`
+
+### 背景与改动目标
+
+前端在完成同济开放平台 OAuth 授权后，需要在不创建 Agent 会话、不触发模型调用的前提下，读取当前 access token 所属用户的基础信息，以展示用户身份并决定后续认证会话流程。
+
+### 改动概览
+
+- 新增 `GET /v1/tongji/user/basic-info`。
+- 接口仅接受 `Authorization: Bearer <access_token>`；缺失或格式错误时返回 `401`。
+- Handler 使用 `tongjiapi.Client.GetUserBasicInfo` 查询开放平台，并返回 `name`、`userId`、`userTypeName`。
+- 开放平台客户端配置不可用时返回 `500`；上游查询失败或未返回用户信息时返回 `502`。
+- README 补充授权接口总览、完整接口契约、响应示例、错误语义与路由一览。
+
+### 关键链路解析（含上下游）
+
+- 上游：客户端先通过 `/v1/tongji/oauth/authorize` 与 `/v1/tongji/oauth/token` 获得短期 access token，再通过 HTTP `Authorization` 请求本接口。
+- 当前改动：`TongjiUserBasicInfo` 使用 `platformauth.ExtractBearerToken` 做严格 Bearer 格式校验，并只将已提取的 token 传入 `Client.GetUserBasicInfo`。
+- 下游：同济开放平台调用 `GET /v2/rt/user/all_info`；仅将 `UserBasicInfo` 已声明的三个字段返回给调用方，不创建会话、不写入会话存储，也不将 token 放入响应。
+
+### 审阅结论
+
+- 路由、鉴权、客户端调用和 README 的路径一致：`GET /v1/tongji/user/basic-info`。
+- token 不会进入响应体或普通错误信息；Handler 对 nil 上游结果也返回稳定失败响应，避免成功状态下返回空值。
+- 新增测试覆盖成功调用、Bearer token 缺失或格式错误，以及上游失败的 HTTP 状态码。
+- 未发现阻断合入的问题。
+
+### 风险与待办
+
+- 当前将上游的所有调用失败统一映射为 `502`，包括 access token 过期或上游拒绝授权；若前端需要针对 token 过期自动重新授权，可在开放平台客户端提供可判别的鉴权错误后细分为 `401`。
+- 该接口不设置浏览器跨域响应头；若调用方与服务不在同源，需要由网关或后续 Handler 明确配置允许的 CORS Origin 和 Header。
+
+### 测试与验证
+
+- 已通过 `go test ./biz/handler ./internal/integration/tongjiapi`。
+- 已通过 `git diff --check`。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(api): add authenticated user basic info endpoint`
+
 ## CHANGELOG - 2026-08-10 16:00 - 为认证会话补齐命名、列表与重命名能力
 
 ### 撰写时间

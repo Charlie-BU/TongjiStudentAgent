@@ -98,6 +98,7 @@ TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
 | ------ | ---------------------------- | ------------------------------------------------------------------------------------------ |
 | `GET`  | `/v1/tongji/oauth/authorize` | 创建签名 `state`，并 302 跳转到同济统一认证页面。                                          |
 | `POST` | `/v1/tongji/oauth/token`     | callback 页面提交 `code` 和 `state`，服务校验 state 后换取并返回短期 Bearer access token。 |
+| `GET`  | `/v1/tongji/user/basic-info` | 使用 Bearer access token 查询当前授权用户的基础信息。                                      |
 
 浏览器访问 `https://<你的 Go 服务域名>/v1/tongji/oauth/authorize` 后，开放平台会重定向到已登记的 `https://app.tongji.edu.cn/wallbreakerAuth/callback.html?code=...&state=...`。由于该回调页不在 Go 服务域名下，它必须将参数提交回 Go 服务：
 
@@ -243,6 +244,28 @@ go run .
 | `token_type`   | `string` | 是   | Token 类型                            | `"Bearer"`     |
 | `expires_in`   | `number` | 是   | token 过期时间，单位秒                | 由开放平台决定 |
 | `scope`        | `string` | 是   | 当前 token 的 scope                   | 由开放平台决定 |
+
+#### `GET /v1/tongji/user/basic-info`
+
+描述：使用当前 Bearer access token 调用同济开放平台的用户基础信息接口。
+
+请求参数：
+
+| 参数位置 | 参数名          | 类型     | 必填 | 描述                    |
+| -------- | --------------- | -------- | ---- | ----------------------- |
+| Header   | `Authorization` | `string` | 是   | `Bearer <access_token>` |
+
+成功时返回 `200 OK`：
+
+```json
+{
+    "name": "测试同学",
+    "userId": "2350939",
+    "userTypeName": "本科生"
+}
+```
+
+字段 `name`、`userId` 和 `userTypeName` 分别表示姓名、用户标识和用户类型。缺少或格式错误的 Bearer token 返回 `401 {"error":"valid access token is required"}`；同济开放平台查询失败返回 `502 {"error":"get user basic info failed"}`；服务端未配置开放平台凭据时返回 `500`。
 
 #### `POST /v1/sessions`
 
@@ -615,6 +638,7 @@ console.log(historyPayload.messages);
 | 方法   | 路径                                 | 用途                          |
 | ------ | ------------------------------------ | ----------------------------- |
 | `GET`  | `/v1/ping`                           | 健康检查                      |
+| `GET`  | `/v1/tongji/user/basic-info`         | 查询当前授权用户的基础信息    |
 | `POST` | `/v1/sessions`                       | 创建认证或匿名会话            |
 | `GET`  | `/v1/sessions`                       | 列出当前用户的持久会话        |
 | `POST` | `/v1/session/rename`                 | 重命名当前用户的持久会话      |
