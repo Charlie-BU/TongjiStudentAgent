@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cloudwego/eino/schema"
 	"github.com/redis/go-redis/v9"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -57,6 +58,37 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(messages[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
 			So(messages[1].RunID, ShouldEqual, "run-002")
+		})
+
+		Convey("工具调用历史可按 JSON tag 完整恢复", func() {
+			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{
+				RunID: "run-001",
+				Role:  MessageRoleAssistant,
+				ToolCalls: []schema.ToolCall{{
+					ID:       "call-001",
+					Function: schema.FunctionCall{Name: "tongji.user_info", Arguments: `{}`},
+				}},
+			})
+			So(appendErr, ShouldBeNil)
+			So(assistant.Message.SessionID, ShouldEqual, session.ID)
+			So(assistant.Message.ToolCalls, ShouldHaveLength, 1)
+			So(assistant.Message.ToolCalls[0].ID, ShouldEqual, "call-001")
+
+			_, appendErr = store.Append(context.Background(), session.ID, NewMessage{
+				RunID: "run-001", Role: MessageRoleTool, Content: `{"status":"ok"}`,
+				ToolCallID: "call-001", ToolName: "tongji.user_info",
+			})
+			So(appendErr, ShouldBeNil)
+
+			messages, listErr := store.ListMessages(context.Background(), session.ID, 10)
+			So(listErr, ShouldBeNil)
+			So(messages, ShouldHaveLength, 2)
+			So(messages[0].SessionID, ShouldEqual, session.ID)
+			So(messages[0].ToolCalls, ShouldHaveLength, 1)
+			So(messages[0].ToolCalls[0].ID, ShouldEqual, "call-001")
+			So(messages[1].SessionID, ShouldEqual, session.ID)
+			So(messages[1].ToolCallID, ShouldEqual, "call-001")
+			So(messages[1].ToolName, ShouldEqual, "tongji.user_info")
 		})
 
 		Convey("任务计划按版本保存、读取和清理", func() {
