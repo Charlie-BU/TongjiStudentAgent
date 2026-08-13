@@ -6,8 +6,8 @@ import (
 
 	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
-	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/managetaskplan"
-	searchknowledge "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/searchknowledge"
+	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/manage_task_plan"
+	searchknowledge "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/search_knowledge"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	"github.com/cloudwego/eino/components/tool"
