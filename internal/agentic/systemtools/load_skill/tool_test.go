@@ -15,12 +15,13 @@ func TestLoadSkillTool(t *testing.T) {
 			return agenticskills.WithRunState(context.Background(), agenticskills.NewRunState())
 		}
 
-		Convey("已加白的 Skill 应返回嵌入式手册", func() {
+		Convey("已加白的 Skill 应返回嵌入式手册及其参考资源", func() {
 			result, err := tool.InvokableRun(newRunContext(), `{"skill_id":"doc-generator","reason":"需要生成文档"}`)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldContainSubstring, `"status":"ok"`)
 			So(result, ShouldContainSubstring, "文档")
+			So(result, ShouldContainSubstring, "references/ARTICLE1.md")
 			So(result, ShouldNotContainSubstring, "/Users/")
 		})
 

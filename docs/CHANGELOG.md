@@ -1,3 +1,36 @@
+## CHANGELOG - 2026-08-14 - 扩展按需 Skill 加载以携带嵌入式参考资源
+
+### 改动概览
+
+- `skills.Load` 从仅返回 `SKILL.md`，扩展为返回主手册及 Skill 目录下的嵌入式 UTF-8 文本资源。
+- 聚合结果在主手册后增加 `# Embedded Skill Resources` 区段，并以相对路径作为二级标题，帮助模型识别每份参考资料的来源。
+- Skill 包总输出保持 64 KiB 上限；主手册、资源正文和追加的格式化头部共同计入限制。
+- 二进制或非 UTF-8 资源不会注入模型上下文。
+
+### 行为与安全边界
+
+- 调用方仍只能按已校验的 skill ID 加载资源，不能指定任意文件路径。
+- 保留路径遍历与反斜杠校验，未知或非法 Skill 继续返回稳定错误。
+- `system.load_skill` 在同一 Agent Run 内仍只会成功加载一次；重复调用返回 `already_loaded`，不会重复传输完整手册和参考资料。
+- 返回内容继续不包含宿主机文件系统路径。
+
+### 文档与提示词
+
+- 更新系统提示词规则：
+    - 工具调用 `reason` 的语言应与用户输入保持一致；
+    - 默认使用标准 Markdown 输出；
+    - 包含图片时也必须使用 Markdown 可渲染形式表达。
+
+### 测试
+
+- 更新 repository 测试，验证 `doc-generator` 的 `ARTICLE1.md`、`ARTICLE2.md` 会随主手册返回。
+- 更新 `system.load_skill` 测试，验证工具结果携带参考资源路径且不泄露本机路径。
+- 已通过全仓测试、受影响链路竞态测试、`go vet ./...` 与差异格式检查。
+
+### 建议 Commit Message
+
+`feat(skills): load embedded reference resources with manuals`
+
 ## CHANGELOG - 2026-08-11 - 新增当前授权用户基础信息查询 API
 
 ### 撰写时间
@@ -113,8 +146,8 @@
 ### 工具契约与数据边界
 
 - 工具接受：
-  - `query`：归纳后的校园信息查询；
-  - `reason`：面向用户的简短调用原因。
+    - `query`：归纳后的校园信息查询；
+    - `reason`：面向用户的简短调用原因。
 - 严格拒绝未知 JSON 字段、空参数和超长 query/reason。
 - 工具明确仅适用于校规校历、报到、住宿、校园服务、办事流程、系统使用和学院通知等公开校园信息。
 - 明确禁止用于成绩、课表、校园卡、借阅记录等个人实时数据；这些场景仍应使用对应 Tongji MCP 工具。
@@ -127,9 +160,9 @@
 - 新增并完善 `docs/SYSTEM.md`，定义“同济同学”校园助手的角色、事实优先原则、身份匹配规则、工具调用边界及校园知识库使用流程。
 - 对校园公开信息、时效性信息、流程规则、办事入口和官方依据类问题，要求在没有适用 skill 时优先使用知识库或对应工具核验。
 - 统一来源展示策略：
-  - 默认不向用户展示来源名称、知识库名称、工具名或检索过程；
-  - 仅当用户明确要求来源、依据、通知原文或链接时，才提供工具结果中实际存在的来源标题和内容；
-  - 不得虚构 URL、发布时间、核验时间或未返回的事实。
+    - 默认不向用户展示来源名称、知识库名称、工具名或检索过程；
+    - 仅当用户明确要求来源、依据、通知原文或链接时，才提供工具结果中实际存在的来源标题和内容；
+    - 不得虚构 URL、发布时间、核验时间或未返回的事实。
 
 ### 文档与维护
 
@@ -140,18 +173,18 @@
 ### 测试与验证
 
 - 新增知识库工具测试，覆盖：
-  - 工具描述与个人数据边界；
-  - 成功检索与结构化来源输出；
-  - 未知字段、缺失参数和超长内容；
-  - 空结果与上游失败降级；
-  - 来源条数及正文截断；
-  - 知识库客户端启用/未启用时的工具注册行为。
+    - 工具描述与个人数据边界；
+    - 成功检索与结构化来源输出；
+    - 未知字段、缺失参数和超长内容；
+    - 空结果与上游失败降级；
+    - 来源条数及正文截断；
+    - 知识库客户端启用/未启用时的工具注册行为。
 - 已通过：
-  - `go test ./...`
-  - `go test -race ./internal/agentic/systemtools/... ./internal/application/chat ./internal/agentic/session`
-  - `go vet ./...`
-  - `go test ./internal/agentic/systemtools/searchknowledge`
-  - `git diff --check`
+    - `go test ./...`
+    - `go test -race ./internal/agentic/systemtools/... ./internal/application/chat ./internal/agentic/session`
+    - `go vet ./...`
+    - `go test ./internal/agentic/systemtools/searchknowledge`
+    - `git diff --check`
 
 ### 建议 Commit Message
 
@@ -167,11 +200,11 @@
 
 - 新增 `system.manage_task_plan` 静态系统工具，并加入应用工具 allowlist 与系统工具注册表。
 - 工具支持五类操作：
-  - `create`：创建完整计划；
-  - `modify`：替换当前计划；
-  - `append`：追加任务；
-  - `update_status`：仅更新已有任务状态；
-  - `clear`：清空当前计划。
+    - `create`：创建完整计划；
+    - `modify`：替换当前计划；
+    - `append`：追加任务；
+    - `update_status`：仅更新已有任务状态；
+    - `clear`：清空当前计划。
 - 工具参数使用严格 JSON 解码，拒绝未知字段；校验必填 `reason`、操作类型、任务列表和状态更新约束。
 - 工具执行始终通过 `TaskPlanRepository` 访问数据；不接受模型提供的 `session_id` 或 `owner_user_id`，避免模型篡改会话访问范围。
 - 创建、更新和清理操作使用 revision 乐观并发控制；发生并发冲突时返回稳定的 `plan_conflict` 结果。
@@ -179,9 +212,9 @@
 ### 会话与运行时接入
 
 - Chat Service 在每轮 Agent 运行前重新验证会话归属并构造 `TaskPlanScope`：
-  - 认证会话绑定当前 `user_id`；
-  - 匿名会话绑定其 capability session ID；
-  - scope 注入当前 Run context，供任务计划工具访问。
+    - 认证会话绑定当前 `user_id`；
+    - 匿名会话绑定其 capability session ID；
+    - scope 注入当前 Run context，供任务计划工具访问。
 - 每轮运行开始时读取当前活动计划，并以转义后的 `<active-task-plan>` 动态提醒注入模型输入。
 - 任务描述被明确标记为状态快照而非指令，且 XML 特殊字符会被转义，避免计划内容破坏提示词边界。
 - Runtime 将当前 SSE 事件出口传入工具执行上下文，使工具无需依赖全局状态即可上报计划更新。
@@ -189,15 +222,15 @@
 ### SSE 与 API
 
 - 新增 SSE 事件 `task_plan.updated`，包含：
-  - `action`：触发更新的操作；
-  - `revision`：最新计划版本；
-  - `tasks`：当前完整任务列表快照。
+    - `action`：触发更新的操作；
+    - `revision`：最新计划版本；
+    - `tasks`：当前完整任务列表快照。
 - 前端应以该事件的完整 `tasks` 快照刷新进度面板，不依赖局部增量合并。
 - 新增 `GET /v1/sessions/:session_id/task-plan`：
-  - 认证会话按当前 `user_id` 校验归属；
-  - 匿名会话按 session capability 校验；
-  - 无活动计划时返回 `{"plan":null}`；
-  - 会话不存在或无权访问时返回 404。
+    - 认证会话按当前 `user_id` 校验归属；
+    - 匿名会话按 session capability 校验；
+    - 无活动计划时返回 `{"plan":null}`；
+    - 会话不存在或无权访问时返回 404。
 
 ### 存储与生命周期
 
@@ -209,13 +242,13 @@
 
 - README 与开发文档补充任务计划 SSE 事件、查询接口和推荐调用顺序。
 - 新增或更新测试，覆盖：
-  - 工具注册与 allowlist；
-  - 创建、重复创建保护、状态更新和非法参数；
-  - scope 注入与认证/匿名会话路由；
-  - SSE `task_plan.updated` 事件；
-  - Handler 读取任务计划；
-  - 动态提醒中的计划转义；
-  - Redis TTL 续期。
+    - 工具注册与 allowlist；
+    - 创建、重复创建保护、状态更新和非法参数；
+    - scope 注入与认证/匿名会话路由；
+    - SSE `task_plan.updated` 事件；
+    - Handler 读取任务计划；
+    - 动态提醒中的计划转义；
+    - Redis TTL 续期。
 - 已通过 `go test ./...`、受影响包 `go test -race`、`go vet ./...` 与 `git diff HEAD --check`。
 
 ### 建议 Commit Message
@@ -247,26 +280,26 @@
 - 将会话配置迁移至 `internal/agentic/session/config`，继续负责读取匿名会话 TTL、匿名消息上限和历史窗口上限。
 - 将上下文装配迁移至 `internal/agentic/session/context`，运行时改为通过 `sessioncontext.NewContextAssembler()` 构造模型输入。
 - 将 PostgreSQL 与 Redis 存储分别迁移至：
-  - `internal/agentic/session/store/postgres`
-  - `internal/agentic/session/store/redis`
+    - `internal/agentic/session/store/postgres`
+    - `internal/agentic/session/store/redis`
 - `session` 根包保留会话、消息、持久化类型和通用错误；`ValidateMessage`、`NewID` 对外导出，供子包复用统一的消息校验和标识生成逻辑。
 - Chat Service 改为显式依赖拆分后的 config、PostgreSQL store 与 Redis store，初始化、建表和资源关闭路径保持原有行为。
 
 ### 会话级任务计划
 
 - 新增 `internal/agentic/session/taskplan` 领域包，定义：
-  - `TaskPlan`：会话 ID、版本号、任务列表和更新时间；
-  - `TaskItem`：任务 ID、展示描述和状态；
-  - 任务状态：`pending`、`in_progress`、`done`、`failed`。
+    - `TaskPlan`：会话 ID、版本号、任务列表和更新时间；
+    - `TaskItem`：任务 ID、展示描述和状态；
+    - 任务状态：`pending`、`in_progress`、`done`、`failed`。
 - 对任务计划执行统一校验：
-  - 计划不能为空，最多 20 项；
-  - 任务 ID 长度受限且必须唯一；
-  - 描述去除首尾空白后不能为空，最多 160 个字符；
-  - 仅接受预定义状态值。
+    - 计划不能为空，最多 20 项；
+    - 任务 ID 长度受限且必须唯一；
+    - 描述去除首尾空白后不能为空，最多 160 个字符；
+    - 仅接受预定义状态值。
 - 引入 revision 乐观并发控制：
-  - 保存时必须提供期望版本；
-  - 版本不一致返回 `ErrTaskPlanConflict`；
-  - 清理任务计划同样受版本约束，避免旧快照覆盖新状态。
+    - 保存时必须提供期望版本；
+    - 版本不一致返回 `ErrTaskPlanConflict`；
+    - 清理任务计划同样受版本约束，避免旧快照覆盖新状态。
 
 ### 可信会话访问范围
 
@@ -278,22 +311,22 @@
 ### PostgreSQL 持久化
 
 - 新增 `agent_session_task_plans` 表：
-  - `session_id` 为主键，并外键关联 `agent_sessions`；
-  - 保存 `revision`、JSONB 格式的任务列表及 `updated_at`；
-  - 会话删除时任务计划自动级联删除。
+    - `session_id` 为主键，并外键关联 `agent_sessions`；
+    - 保存 `revision`、JSONB 格式的任务列表及 `updated_at`；
+    - 会话删除时任务计划自动级联删除。
 - 新增 `GetTaskPlan`、`SaveTaskPlan`、`ClearTaskPlan`：
-  - 所有写操作在事务中锁定会话行；
-  - 认证会话始终通过 `session_id + owner_user_id` 校验归属；
-  - 写入或清理任务计划时同步刷新会话 `last_active_at`。
+    - 所有写操作在事务中锁定会话行；
+    - 认证会话始终通过 `session_id + owner_user_id` 校验归属；
+    - 写入或清理任务计划时同步刷新会话 `last_active_at`。
 - Schema 初始化逻辑会自动创建任务计划表，兼容已有会话表结构。
 
 ### Redis 匿名会话
 
 - 新增独立的 `task-plan` Redis 键，用 JSON 保存匿名会话任务计划。
 - 保存和清理通过 Lua 脚本完成：
-  - 会话不存在时返回 `ErrNotFound`；
-  - 保存时原子校验 revision 并写入新计划；
-  - 清理时原子校验计划存在性与 revision。
+    - 会话不存在时返回 `ErrNotFound`；
+    - 保存时原子校验 revision 并写入新计划；
+    - 清理时原子校验计划存在性与 revision。
 - 保存、清理和普通消息追加都会刷新会话元数据、消息历史和任务计划的 TTL。
 - 修复活跃匿名会话中的任务计划提前过期问题：普通 `Append` 现在将 task-plan 键传入 Lua 脚本并执行 `PEXPIRE`，使其生命周期与会话活跃状态保持一致。
 
@@ -302,10 +335,10 @@
 - 更新配置、上下文、PostgreSQL、Redis 和 Chat Service 引用路径测试。
 - 新增任务计划模型测试，覆盖规范化、空计划、重复 ID 和非法状态。
 - 新增任务计划 scope/repository 测试，覆盖：
-  - 无 scope 调用被拒绝；
-  - 认证会话路由至 durable store 并保留 owner；
-  - 匿名会话路由至 ephemeral store；
-  - 非法 persistence/owner 组合被拒绝。
+    - 无 scope 调用被拒绝；
+    - 认证会话路由至 durable store 并保留 owner；
+    - 匿名会话路由至 ephemeral store；
+    - 非法 persistence/owner 组合被拒绝。
 - 新增 PostgreSQL 任务计划持久化 mock 测试。
 - 新增 Redis 任务计划保存、读取、版本冲突、清理及 TTL 续期测试。
 
