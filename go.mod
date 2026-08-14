@@ -17,9 +17,11 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.43.0
+	github.com/pashagolub/pgxmock/v4 v4.8.0
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/volcengine/volc-sdk-golang v1.0.172
+	github.com/volcengine/volcengine-go-sdk v1.1.49
 )
 
 require (
@@ -62,10 +64,8 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/nikolalohinski/gonja/v2 v2.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.0.71 // indirect
-	github.com/pashagolub/pgxmock/v4 v4.8.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.2-0.20201214064552-5dd12d0cfe7f // indirect
-	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
@@ -77,7 +77,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/vincent-petithory/dataurl v1.0.0 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.1.49 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
