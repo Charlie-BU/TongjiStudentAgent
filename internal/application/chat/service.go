@@ -33,6 +33,8 @@ import (
 
 var defaultService *Service
 
+const deleteSessionTurnRetryInterval = 10 * time.Millisecond
+
 // studentInfoLoader 按当前请求凭据获取学生基础信息。
 type studentInfoLoader func(ctx context.Context, accessToken string) (*tongjiapi.StudentInfo, error)
 
@@ -234,6 +236,14 @@ func RenameSession(ctx context.Context, sessionID, name string) (agenticsession.
 	return defaultService.RenameSession(ctx, sessionID, name)
 }
 
+// DeleteSession 删除当前已认证用户拥有的持久会话。
+func DeleteSession(ctx context.Context, sessionID string) error {
+	if defaultService == nil {
+		return fmt.Errorf("chat service is not initialized")
+	}
+	return defaultService.DeleteSession(ctx, sessionID)
+}
+
 // StreamSession 提交会话消息并以 SSE 事件返回本轮执行过程。
 func StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
 	if defaultService == nil {
@@ -325,6 +335,27 @@ func (s *Service) RenameSession(ctx context.Context, sessionID, name string) (ag
 	return renamer.Rename(ctx, sessionID, ownerUserID, name)
 }
 
+// DeleteSession 删除当前已认证用户拥有的持久会话。
+func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
+	if s == nil || s.durableSessionStore == nil {
+		return fmt.Errorf("durable session store is not initialized")
+	}
+	ownerUserID, ok := platformauth.UserIDFromContext(ctx)
+	if !ok {
+		return agenticsession.ErrInvalidOwner
+	}
+	deleter, ok := s.durableSessionStore.(agenticsession.SessionDeleter)
+	if !ok {
+		return fmt.Errorf("durable session store does not support deleting sessions")
+	}
+	releaseTurn, err := s.waitForSessionTurn(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	defer releaseTurn()
+	return deleter.Delete(ctx, sessionID, ownerUserID)
+}
+
 // StreamSession 将当前用户消息、历史和最终回答写入同一会话。
 func (s *Service) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
 	runID := agentevent.NewRunID()
@@ -409,6 +440,28 @@ func (s *Service) acquireSessionTurn(ctx context.Context, sessionID string) (age
 		return nil, fmt.Errorf("session turn locker is not initialized")
 	}
 	return s.turnLocker.AcquireTurn(ctx, sessionID)
+}
+
+// waitForSessionTurn 等待正在执行的会话轮次结束后获取执行锁。
+func (s *Service) waitForSessionTurn(ctx context.Context, sessionID string) (agenticsession.TurnRelease, error) {
+	for {
+		releaseTurn, err := s.acquireSessionTurn(ctx, sessionID)
+		if !errors.Is(err, agenticsession.ErrTurnInProgress) {
+			return releaseTurn, err
+		}
+		timer := time.NewTimer(deleteSessionTurnRetryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // emitSessionFailure 发送会话失败事件。

@@ -86,6 +86,28 @@ func TestPostgresStoreNamedSessionPersistence(t *testing.T) {
 			_, renameErr := store.Rename(context.Background(), "ses-001", "", "新名称")
 			So(errors.Is(renameErr, ErrInvalidOwner), ShouldBeTrue)
 		})
+
+		Convey("删除时按会话归属匹配，并由外键级联关联数据", func() {
+			pool.ExpectExec(regexp.QuoteMeta(`DELETE FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+				WithArgs("ses-001", "user-001").
+				WillReturnResult(pgxmock.NewResult("DELETE", 1))
+
+			deleteErr := store.Delete(context.Background(), " ses-001 ", " user-001 ")
+
+			So(deleteErr, ShouldBeNil)
+			So(pool.ExpectationsWereMet(), ShouldBeNil)
+		})
+
+		Convey("删除不存在或不属于当前用户的会话返回未找到", func() {
+			pool.ExpectExec(regexp.QuoteMeta(`DELETE FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+				WithArgs("ses-001", "user-001").
+				WillReturnResult(pgxmock.NewResult("DELETE", 0))
+
+			deleteErr := store.Delete(context.Background(), "ses-001", "user-001")
+
+			So(errors.Is(deleteErr, ErrNotFound), ShouldBeTrue)
+			So(pool.ExpectationsWereMet(), ShouldBeNil)
+		})
 	})
 }
 

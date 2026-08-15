@@ -122,6 +122,11 @@ type SessionRenamer interface {
 	Rename(ctx context.Context, sessionID, ownerUserID, name string) (Session, error)
 }
 
+// SessionDeleter 支持删除属于指定所有者的持久会话。
+type SessionDeleter interface {
+	Delete(ctx context.Context, sessionID, ownerUserID string) error
+}
+
 // EphemeralStore 定义匿名临时会话的最小存储契约。
 type EphemeralStore interface {
 	Create(ctx context.Context) (Session, error)

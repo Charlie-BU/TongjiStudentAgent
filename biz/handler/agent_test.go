@@ -217,6 +217,45 @@ func TestSessionsAndRenameSession(t *testing.T) {
 	})
 }
 
+func TestDeleteSession(t *testing.T) {
+	Convey("删除会话接口", t, func() {
+		originalDeleteSession := deleteSession
+		t.Cleanup(func() { deleteSession = originalDeleteSession })
+
+		Convey("会校验会话标识并删除当前用户的会话", func() {
+			deleteSession = func(ctx context.Context, sessionID string) error {
+				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
+				So(ok, ShouldBeTrue)
+				So(accessToken, ShouldEqual, "test-access-token")
+				So(sessionID, ShouldEqual, "ses-001")
+				return nil
+			}
+			requestContext := newAgentJSONRequest(`{"session_id":" ses-001 "}`)
+			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
+
+			DeleteSession(context.Background(), requestContext)
+
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNoContent)
+		})
+
+		Convey("未认证、会话不存在及缺少会话标识时返回对应状态", func() {
+			deleteSession = func(context.Context, string) error { return agenticsession.ErrInvalidOwner }
+			requestContext := newAgentJSONRequest(`{"session_id":"ses-001"}`)
+			DeleteSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
+
+			deleteSession = func(context.Context, string) error { return agenticsession.ErrNotFound }
+			requestContext = newAgentJSONRequest(`{"session_id":"ses-001"}`)
+			DeleteSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
+
+			requestContext = newAgentJSONRequest(`{}`)
+			DeleteSession(context.Background(), requestContext)
+			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
+		})
+	})
+}
+
 func TestSessionMessages(t *testing.T) {
 	Convey("读取会话历史接口", t, func() {
 		originalListSessionMessages := listSessionMessages

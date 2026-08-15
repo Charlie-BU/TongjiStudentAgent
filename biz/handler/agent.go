@@ -34,6 +34,10 @@ type renameSessionRequest struct {
 	Name      string `json:"name"`
 }
 
+type deleteSessionRequest struct {
+	SessionID string `json:"session_id"`
+}
+
 type sessionResponse struct {
 	ID           string                     `json:"id"`
 	Name         string                     `json:"name"`
@@ -50,6 +54,9 @@ var listSessions = chat.ListSessions
 
 // renameSession 用于测试时替换会话重命名实现。
 var renameSession = chat.RenameSession
+
+// deleteSession 用于测试时替换会话删除实现。
+var deleteSession = chat.DeleteSession
 
 // streamSession 用于测试时替换会话流式执行实现。
 var streamSession = chat.StreamSession
@@ -114,6 +121,27 @@ func RenameSession(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, newSessionResponse(session))
+}
+
+// DeleteSession 删除当前 AccessToken 对应用户拥有的会话及其关联数据。
+func DeleteSession(ctx context.Context, c *app.RequestContext) {
+	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
+	request, ok := bindDeleteSession(c)
+	if !ok {
+		return
+	}
+	if err := deleteSession(requestContext, request.SessionID); err != nil {
+		switch {
+		case errors.Is(err, agenticsession.ErrInvalidOwner):
+			c.JSON(consts.StatusUnauthorized, utils.H{"error": "valid access token is required"})
+		case errors.Is(err, agenticsession.ErrNotFound):
+			c.JSON(consts.StatusNotFound, utils.H{"error": "session not found"})
+		default:
+			c.JSON(consts.StatusServiceUnavailable, utils.H{"error": "session service unavailable"})
+		}
+		return
+	}
+	c.SetStatusCode(consts.StatusNoContent)
 }
 
 // SessionMessageStream 向指定会话提交消息并以 SSE 返回本轮执行事件。
@@ -259,6 +287,21 @@ func bindRenameSession(c *app.RequestContext) (renameSessionRequest, bool) {
 	if request.Name == "" {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "name is required"})
 		return renameSessionRequest{}, false
+	}
+	return request, true
+}
+
+// bindDeleteSession 从请求体中提取待删除会话标识。
+func bindDeleteSession(c *app.RequestContext) (deleteSessionRequest, bool) {
+	var request deleteSessionRequest
+	if err := c.BindJSON(&request); err != nil {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "request body must be valid JSON"})
+		return deleteSessionRequest{}, false
+	}
+	request.SessionID = strings.TrimSpace(request.SessionID)
+	if request.SessionID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
+		return deleteSessionRequest{}, false
 	}
 	return request, true
 }

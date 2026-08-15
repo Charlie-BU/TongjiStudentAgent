@@ -174,6 +174,21 @@ func (s *PostgresStore) Rename(ctx context.Context, sessionID, ownerUserID, name
 	return result, nil
 }
 
+// Delete 删除属于 ownerUserID 的持久会话；关联消息与任务计划由外键级联删除。
+func (s *PostgresStore) Delete(ctx context.Context, sessionID, ownerUserID string) error {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return err
+	}
+	result, err := s.pool.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`, strings.TrimSpace(sessionID), strings.TrimSpace(ownerUserID))
+	if err != nil {
+		return fmt.Errorf("delete durable session: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Append 追加 canonical 消息。
 func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID string, input NewMessage) (AppendResult, error) {
 	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {

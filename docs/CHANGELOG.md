@@ -1,3 +1,61 @@
+## CHANGELOG - 2026-08-15 18:23 - 为认证持久会话提供安全的删除链路
+
+### 撰写时间
+
+- 2026-08-15 18:23
+
+### Base Commit
+
+- `7a09757d24e8eb284905d6108cbc1bf487509245`
+
+### Compare Scope
+
+- `working_tree_only`
+
+### 背景与改动目标
+
+认证持久会话此前已有创建、列表、重命名、消息流与任务计划恢复能力，但用户无法主动删除不再需要的会话。仅补一条直接删除数据库记录的 API 看似简单，却会和正在运行的 Agent turn 相互干扰：`StreamSession` 在模型和工具执行期间持有跨实例的会话锁，而删除若绕过该锁，会在运行尚未落库时级联清理消息和任务计划，最终将一轮已经产生外部调用的执行变成 `session not found`。
+
+这次目标因此不是提供“立即删除”，而是提供受认证归属约束的删除能力，并让删除请求在当前会话正在生成时等待该轮结束，再执行不可恢复的级联删除。
+
+### 改动概览
+
+- 新增 `DELETE /v1/sessions`，请求体为 `{"session_id":"ses_<random>"}`；成功返回 `204 No Content`。
+- `biz/handler.DeleteSession` 沿用 `withChatAccessToken` 解析 Bearer token，并校验 JSON 与非空 `session_id`。身份无法解析时返回 `401`，会话不存在或不属于当前用户时返回 `404`，其他会话基础设施错误返回 `503`。
+- 在领域层新增可选的 `agenticsession.SessionDeleter` 契约，避免扩大既有 `Store` 最小接口的实现负担。
+- `PostgresStore.Delete` 以 `id + owner_user_id` 作为单条 `DELETE` 条件；数据库既有的 `ON DELETE CASCADE` 继续清理 `agent_session_messages` 和 `agent_session_task_plans`，不会遗留关联数据。
+- `chat.Service.DeleteSession` 在调用存储层前通过 `waitForSessionTurn` 获取同一个 `TurnLocker`。当 `StreamSession` 已持锁时，删除以 10 ms 间隔重试；锁释放后才执行删除，调用方取消或超时则按其 `context` 退出等待。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：客户端先经同济 OAuth 获得 access token。Handler 将 token 交给 `platformauth.WithAccessToken` 解析可信 `user_id`；没有可信身份的请求不能进入 PostgreSQL 持久会话删除路径。
+- 当前改动：`router.go` 将 `DELETE /v1/sessions` 绑定至 Handler，随后依次经过参数校验、`chat.DeleteSession`、服务层的归属校验与 turn lock、`SessionDeleter.Delete`，最后由 PostgreSQL 按 owner 条件删除父会话。锁在数据库操作结束后释放，因此同一 `session_id` 的新一轮执行不会与删除并行。
+- 下游影响：`StreamSession` 不需要改变其既有的 `AcquireTurn` 行为；它完成时释放锁，已等待的删除请求才可继续。消息和任务计划读取接口在删除后自然返回会话不存在，不会读取到悬挂的子记录。
+- 客户端约束：该仓库不包含会话列表 UI。使用 SSE 调用消息接口的前端应从提交请求开始，将对应会话的删除按钮设为 `disabled`，并在 `run.completed`、`run.failed`、网络异常或主动取消后恢复；这既避免用户看到长时间等待的删除请求，也与服务端“等待当前轮次结束”的语义保持一致。
+
+### 改动结果与业务影响
+
+认证用户现在可以在确认后删除自己的持久会话及其历史消息、任务计划。删除不会跨用户命中同名或猜测到的会话 ID；数据库返回零行时统一呈现为 `404`，不暴露该会话是否属于其他用户。
+
+一开始删除链路没有参与 `TurnLocker`，这种实现虽能依靠外键保持表结构完整，却不能保持完整 Run 生命周期。最终将删除放入同一把跨实例锁之后，服务端把“生成结束再删除”作为一致性边界，而不是让客户端依赖时序猜测。
+
+### 测试与验证
+
+- 新增 Handler 测试，覆盖正常删除、Bearer token 传递、无可信身份、会话不存在和缺失 `session_id` 的状态码。
+- 新增 PostgreSQL mock 测试，覆盖 owner 条件、输入裁剪以及零行删除返回 `ErrNotFound`。
+- 新增 `TestWaitForSessionTurn`，验证删除等待锁占用时不会提前取得删除锁，锁释放后才能继续。
+- 已通过 `go test ./internal/application/chat`、`go test -race ./internal/application/chat`、`go vet ./internal/application/chat` 与 `git diff --check`。
+
+### 风险与待办
+
+- 删除等待使用短周期轮询，而不是 Redis 的事件通知；在会话执行时间较长或删除请求量较大时，会额外占用 HTTP 请求与 Redis 轮询资源。当前以调用方 `context` 的取消/超时为上界，后续如出现此类负载，应评估队列化删除或锁释放通知机制。
+- 当前接口采用 `DELETE` 携带 JSON 请求体。接入层、反向代理和客户端必须保留该请求体；若未来需要更广泛的 HTTP 客户端兼容性，可评估改为 `/v1/sessions/:session_id` 路径参数形式，但这属于兼容性变更，不能静默替换。
+- 前端删除按钮的 `disabled` 行为尚未在本仓实现，需在实际 UI 仓按上述 SSE 生命周期补齐并做端到端验证。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): add serialized durable session deletion`
+
 ## CHANGELOG - 2026-08-14 - 扩展按需 Skill 加载以携带嵌入式参考资源
 
 ### 改动概览
