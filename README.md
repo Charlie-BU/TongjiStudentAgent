@@ -297,6 +297,20 @@ go run .
 
 响应体为 `{"sessions":[...]}`；每项包含 `id`、`name`、`persistence`、`created_at` 与 `last_active_at`。
 
+#### `DELETE /v1/sessions`
+
+描述：删除当前认证用户拥有的持久会话，以及该会话关联的消息和任务计划。匿名临时会话不支持此接口。
+
+| 参数位置 | 参数名 | 类型 | 必填 | 描述 |
+| -------- | ------ | ---- | ---- | ---- |
+| Header | `Authorization` | `string` | 是 | `Bearer <access_token>` |
+| Header | `Content-Type` | `string` | 是 | `application/json` |
+| Body | `session_id` | `string` | 是 | 要删除的持久会话 ID |
+
+成功返回 `204 No Content`，不包含响应体。缺少可信用户身份时返回 `401 {"error":"valid access token is required"}`；会话不存在或不属于当前用户时返回 `404 {"error":"session not found"}`；会话存储或执行锁不可用时返回 `503 {"error":"session service unavailable"}`。
+
+如果该会话正在生成，服务会等待当前 Agent turn 结束后再删除。调用方应在发起消息请求至收到 `run.completed`、`run.failed`、网络异常或主动取消期间，将该会话的删除按钮设为 `disabled`；恢复可操作状态后再允许删除，避免用户发起长时间等待的删除请求。
+
 #### `POST /v1/session/rename`
 
 描述：修改当前用户拥有的持久会话名称。
@@ -402,7 +416,7 @@ go run .
 | 场景         | 调用顺序                                                                                                                                                                                      |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 匿名会话     | `POST /v1/sessions` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan`                                                                      |
-| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `GET /v1/sessions` / `POST /v1/session/rename` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan` |
+| 认证持久会话 | `GET /v1/tongji/oauth/authorize` -> `POST /v1/tongji/oauth/token` -> `POST /v1/sessions` -> `GET /v1/sessions` / `POST /v1/session/rename` -> `POST /v1/sessions/:session_id/messages` -> `GET /v1/sessions/:session_id/messages` / `task-plan`；不再需要时调用 `DELETE /v1/sessions` |
 
 ### 1. 发起同济开放平台授权
 
@@ -513,7 +527,7 @@ const persistence = sessionPayload.persistence;
 
 省略 `name` 或传入空白名称时，服务使用 `"New Session"`。服务能够从该 token 解析到 `user_id` 时，返回的 `persistence` 为 `durable`，会话及消息保存到 PostgreSQL，并按 `user_id` 限制读取与写入。如果 token 无效、无法解析用户 ID 或未传 token，服务不会拒绝创建请求，而是返回 `ephemeral` 匿名会话；客户端应检查 `persistence`，不要把匿名会话误当成可恢复的用户会话。
 
-认证持久会话可通过 `GET /v1/sessions` 恢复列表；重命名时发送 `POST /v1/session/rename`，请求体为 `{"session_id":"ses_<random>","name":"新名称"}`。
+认证持久会话可通过 `GET /v1/sessions` 恢复列表；重命名时发送 `POST /v1/session/rename`，请求体为 `{"session_id":"ses_<random>","name":"新名称"}`；不再需要时可调用 `DELETE /v1/sessions` 删除该会话及其关联数据。
 
 ### 4. 提交一轮消息并消费 SSE
 
@@ -615,6 +629,8 @@ console.log(historyPayload.messages);
 
 `run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
+前端应按 `session_id` 维护生成状态。SSE 请求已发出但尚未收到终态事件时，禁用对应会话的删除按钮；收到 `run.completed` 或 `run.failed`，以及请求发生网络异常或被主动取消后，再恢复按钮。服务端同样会等待活动 turn 结束才删除，因此该 UI 状态是减少无效等待的交互约束，并不能替代服务端的并发保护。
+
 可使用 `GET /v1/sessions/:session_id/messages?limit=20` 读取当前请求有权访问的 canonical 历史消息，或使用 `GET /v1/sessions/:session_id/task-plan` 在页面刷新后恢复当前任务计划。
 
 ## 模型与 MCP 的现状
@@ -641,6 +657,7 @@ console.log(historyPayload.messages);
 | `GET`  | `/v1/tongji/user/basic-info`         | 查询当前授权用户的基础信息    |
 | `POST` | `/v1/sessions`                       | 创建认证或匿名会话            |
 | `GET`  | `/v1/sessions`                       | 列出当前用户的持久会话        |
+| `DELETE` | `/v1/sessions`                     | 删除当前用户的持久会话及关联数据 |
 | `POST` | `/v1/session/rename`                 | 重命名当前用户的持久会话      |
 | `POST` | `/v1/sessions/:session_id/messages`  | 以 SSE 执行并保存一轮会话消息 |
 | `GET`  | `/v1/sessions/:session_id/messages`  | 读取会话历史                  |
