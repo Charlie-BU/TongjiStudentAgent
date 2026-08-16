@@ -635,19 +635,20 @@ console.log(historyPayload.messages);
 
 ## 模型与 MCP 的现状
 
-启动过程中会依次创建 Ark Responses API 模型客户端、远程 Streamable HTTP MCP Client、allowlist 中的 MCP 工具和 DeepAgent。因此，服务能成功启动代表模型配置格式、远程 MCP 初始化及允许工具发现均已通过。
+启动过程中会依次加载 system prompt（启用 CozeLoop 时）、Ark Responses API 模型客户端、可选 Ark 知识库客户端、远程 Streamable HTTP MCP Client、PostgreSQL/Redis 会话存储、任务计划仓库、allowlist 中的系统 Tool 与远程 MCP Tool，并最终创建 DeepAgent Runtime。因此，服务能成功启动不仅代表模型配置格式、远程 MCP 初始化和允许工具发现通过，也代表会话基础设施已经就绪。
 
 主 Agent 固定启用 Ark Responses API 的 response-chain 会话缓存，TTL 为 600 秒。每轮 Agent 输出的 `response_id` 和缓存到期时间会随 canonical 会话消息写入 PostgreSQL 或 Redis，并在下一轮恢复到模型历史；Ark SDK 因而会自动发送 `previous_response_id` 与未缓存的增量上下文。缓存过期或历史中没有可用 response ID 时，服务会自动回退为完整历史请求，不影响会话正确性。
 
-会话消息接口会触发实际模型推理，并允许 Agent 选择已注册的 MCP 工具；默认运行时使用 DeepAgent 的标准模型—工具循环，单轮最多进行 12 次迭代。`/ping` 接口只用于服务存活检查。
+会话消息接口会触发实际模型推理。默认运行时使用单个 DeepAgent 的标准模型—工具循环，关闭内置通用子 Agent，并通过 `system.manage_task_plan` 管理任务计划；单轮最多进行 12 次迭代。`/ping` 接口只用于服务存活检查。
 
-当前允许暴露给 Agent 的远程 MCP 工具为：
+当前可能暴露给 Agent 的系统 Tool 与远程 MCP Tool 如下：
 
-| 工具                   | 作用                                                     |
-| ---------------------- | -------------------------------------------------------- |
-| `tongji.student.score` | 将请求内校园 access token 转交远程 MCP，查询指定学期成绩 |
+- 系统 Tool：
+  `system.load_skill`、`system.manage_task_plan`，以及在启用 Ark 知识库时额外注册的 `system.search_knowledge`。
+- 远程 MCP Tool：
+  `tongji.student.annual_bill`、`tongji.student.card_spending_flow`、`tongji.student.timetable`、`tongji.student.detailed_info`、`tongji.student.score`、`tongji.student.term-calendar`、`tongji.student.current-term-calendar`、`tongji.student.cet-score`、`tongji.student.book-lend-info`、`tongji.student.statistics-info`、`tongji.student.stipend-info`、`tongji.student.accommodation-info`、`tongji.student.competition_prize`、`tongji.student.honorary_title`、`tongji.student.scholarship_info`、`tongji.student.school_access`、`tongji.student.library_access`、`tongji.user.basic_info`、`tongji.student.course-detail`、`tongji.student.course-related`、`tongji.student.find-major-by-grade`、`tongji.course.catalog`、`tongji.course.calendar_list`、`tongji.course.grade_list`。
 
-每次 Tool 调用会从当前请求 context 读取格式正确的 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时仍会继续发起 MCP 请求，但请求头值为空，由远程 MCP 与同济开放平台继续验证 token 的有效性、用户绑定和 scope。部署远程 MCP 时必须保护该请求头，不能写入普通日志。
+每次远程 MCP Tool 调用都会从当前请求 context 读取 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时仍会继续发起 MCP 请求，但请求头值为空，由远程 MCP 与同济开放平台继续验证 token 的有效性、用户绑定和 scope。MCP 业务错误会在本地收敛为稳定结果，避免把上游原始错误正文暴露给模型、SSE 或普通日志；部署远程 MCP 时仍必须保护该请求头，不能写入普通日志。
 
 ## 路由一览
 
