@@ -29,11 +29,12 @@ func TestSearchKnowledgeTool(t *testing.T) {
 		}}}}
 		tool := NewTool(func(name string) bool { return name == SearchKnowledgeToolName }, searcher)
 
-		Convey("应声明适用范围、来源要求与个人数据边界", func() {
+		Convey("应声明适用范围、串行限制与个人数据边界", func() {
 			info, err := tool.Info(context.Background())
 			So(err, ShouldBeNil)
 			So(info.Name, ShouldEqual, SearchKnowledgeToolName)
 			So(info.Desc, ShouldContainSubstring, "官方依据")
+			So(info.Desc, ShouldContainSubstring, "收到上一次 tool call result 后")
 			So(info.Desc, ShouldContainSubstring, "个人实时数据")
 		})
 
