@@ -1,4 +1,4 @@
-// 请求级 Token 注入、未授权短路、传输错误处理、代理包装。
+// 请求级 Token 注入、传输错误处理、代理包装。
 package mcp
 
 import (
@@ -26,10 +26,11 @@ func (t *requestScopedTool) Info(ctx context.Context) (*schema.ToolInfo, error) 
 
 // InvokableRun 使用当前请求上下文中的校园访问凭据调用底层 MCP Tool。
 func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON string, options ...tool.Option) (string, error) {
-	accessToken, ok := platformauth.AccessTokenFromContext(ctx)
-	if !ok {
-		return `{"status":"unauthorized","message":"请先完成同济账号授权后再查询个人数据。"}`, nil
-	}
+	accessToken, _ := platformauth.AccessTokenFromContext(ctx)
+	// 不需要：在 MCP 层鉴权
+	// if !ok {
+	// 	return `{"status":"unauthorized","message":"请先完成同济账号授权后再查询个人数据。"}`, nil
+	// }
 
 	headers := map[string]string{tongjiAccessTokenHeader: accessToken}
 	options = append(options, einoext.WithCustomHeaders(headers))

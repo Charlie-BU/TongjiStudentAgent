@@ -30,6 +30,7 @@ const (
 	PersistenceEphemeral = agenticsession.PersistenceEphemeral
 	MessageRoleUser      = agenticsession.MessageRoleUser
 	MessageRoleAssistant = agenticsession.MessageRoleAssistant
+	MessageRoleTool      = agenticsession.MessageRoleTool
 	TaskStatusPending    = taskplan.TaskStatusPending
 	TaskStatusInProgress = taskplan.TaskStatusInProgress
 	TaskStatusDone       = taskplan.TaskStatusDone
@@ -369,7 +370,7 @@ local ttl = tonumber(ARGV[12])
 local maxItems = tonumber(ARGV[13])
 local sequence = redis.call('HINCRBY', meta, 'next_sequence', 1)
 redis.call('HSET', meta, 'last_active_at', now)
-local item = cjson.encode({ID=messageID, SessionID=string.match(meta, '([^:]+):meta$'), run_id=runID, Sequence=sequence, Role=role, Content=content, ToolCalls=cjson.decode(toolCalls), ToolCallID=toolCallID, ToolName=toolName, ReasoningContent=reasoningContent, response_id=responseID, response_cache_expires_at=responseCacheExpiresAt, CreatedAt=now})
+local item = cjson.encode({id=messageID, session_id=string.match(meta, '([^:]+):meta$'), run_id=runID, sequence=sequence, role=role, content=content, tool_calls=cjson.decode(toolCalls), tool_call_id=toolCallID, tool_name=toolName, reasoning_content=reasoningContent, response_id=responseID, response_cache_expires_at=responseCacheExpiresAt, created_at=now})
 redis.call('LPUSH', messages, item)
 redis.call('LTRIM', messages, 0, maxItems - 1)
 redis.call('PEXPIRE', meta, ttl)

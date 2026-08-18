@@ -57,6 +57,7 @@ const (
 type Session struct {
 	ID           string
 	OwnerUserID  string
+	Name         string
 	Persistence  Persistence
 	CreatedAt    time.Time
 	LastActiveAt time.Time
@@ -104,6 +105,26 @@ type Store interface {
 	Get(ctx context.Context, sessionID, ownerUserID string) (Session, error)
 	Append(ctx context.Context, sessionID, ownerUserID string, message NewMessage) (AppendResult, error)
 	ListMessages(ctx context.Context, sessionID, ownerUserID string, limit int) ([]Message, error)
+}
+
+// NamedSessionCreator 支持在创建持久会话时保存名称。
+type NamedSessionCreator interface {
+	CreateWithName(ctx context.Context, ownerUserID, name string) (Session, error)
+}
+
+// SessionLister 支持按所有者读取其全部持久会话。
+type SessionLister interface {
+	List(ctx context.Context, ownerUserID string) ([]Session, error)
+}
+
+// SessionRenamer 支持修改属于指定所有者的持久会话名称。
+type SessionRenamer interface {
+	Rename(ctx context.Context, sessionID, ownerUserID, name string) (Session, error)
+}
+
+// SessionDeleter 支持删除属于指定所有者的持久会话。
+type SessionDeleter interface {
+	Delete(ctx context.Context, sessionID, ownerUserID string) error
 }
 
 // EphemeralStore 定义匿名临时会话的最小存储契约。
@@ -162,5 +183,3 @@ func NewID(prefix string) string {
 	}
 	return prefix + "_" + time.Now().UTC().Format("20060102150405.000000000")
 }
-
-func newID(prefix string) string { return NewID(prefix) }

@@ -6,8 +6,10 @@ import (
 
 	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
-	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/managetaskplan"
+	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/manage_task_plan"
+	searchknowledge "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/search_knowledge"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	"github.com/cloudwego/eino/components/tool"
 )
 
@@ -15,12 +17,19 @@ import (
 type Option func(*options)
 
 type options struct {
-	taskPlans taskplan.TaskPlanRepository
+	taskPlans       taskplan.TaskPlanRepository
+	knowledgeClient *knowledge.Client
 }
 
 // WithTaskPlanRepository 注入管理当前会话任务计划所需的 scope-bound repository。
 func WithTaskPlanRepository(repository taskplan.TaskPlanRepository) Option {
 	return func(options *options) { options.taskPlans = repository }
+}
+
+// WithKnowledgeClient 注入已启用的 Ark 知识库客户端。
+// nil 表示知识库能力未启用，因此不会向模型注册检索工具。
+func WithKnowledgeClient(client *knowledge.Client) Option {
+	return func(options *options) { options.knowledgeClient = client }
 }
 
 // Tools 返回已通过应用 allowlist 审核的静态系统工具。
@@ -31,15 +40,18 @@ func Tools(opts ...Option) []tool.BaseTool {
 			opt(&options)
 		}
 	}
-	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans)
+	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans, options.knowledgeClient)
 }
 
 // buildTools 构建已通过应用 allowlist 审核的静态系统工具。
-func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanRepository) []tool.BaseTool {
-	registeredTools := make([]tool.BaseTool, 0, 2)
+func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanRepository, knowledgeClient *knowledge.Client) []tool.BaseTool {
+	registeredTools := make([]tool.BaseTool, 0, 3)
 	candidates := []tool.InvokableTool{loadskill.NewTool(isAllowed)}
 	if repository != nil {
 		candidates = append(candidates, managetaskplan.NewTool(isAllowed, repository))
+	}
+	if knowledgeClient != nil {
+		candidates = append(candidates, searchknowledge.NewTool(isAllowed, knowledgeClient))
 	}
 	for _, candidate := range candidates {
 		info, err := candidate.Info(context.TODO())

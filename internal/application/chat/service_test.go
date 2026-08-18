@@ -223,6 +223,32 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 	})
 }
 
+func TestWaitForSessionTurn(t *testing.T) {
+	Convey("等待会话轮次", t, func() {
+		locker := &deleteWaitTurnLocker{blocked: make(chan struct{}), allowAcquire: make(chan struct{})}
+		service := &Service{turnLocker: locker}
+		done := make(chan agenticsession.TurnRelease, 1)
+		errs := make(chan error, 1)
+
+		go func() {
+			release, err := service.waitForSessionTurn(context.Background(), "ses-001")
+			done <- release
+			errs <- err
+		}()
+
+		<-locker.blocked
+		select {
+		case <-done:
+			t.Fatal("当前轮次结束前不应获取删除锁")
+		default:
+		}
+		close(locker.allowAcquire)
+
+		So(<-errs, ShouldBeNil)
+		So(<-done, ShouldNotBeNil)
+	})
+}
+
 func TestAppendAgentMessagePersistsArkResponseCache(t *testing.T) {
 	Convey("Agent 输出的 Ark response-chain 元数据", t, func() {
 		operations := make([]string, 0, 1)
@@ -325,6 +351,25 @@ type noOpTurnLocker struct{}
 
 func (noOpTurnLocker) AcquireTurn(context.Context, string) (agenticsession.TurnRelease, error) {
 	return func() {}, nil
+}
+
+type deleteWaitTurnLocker struct {
+	blocked      chan struct{}
+	allowAcquire chan struct{}
+}
+
+func (l *deleteWaitTurnLocker) AcquireTurn(context.Context, string) (agenticsession.TurnRelease, error) {
+	select {
+	case <-l.allowAcquire:
+		return func() {}, nil
+	default:
+	}
+	select {
+	case <-l.blocked:
+	default:
+		close(l.blocked)
+	}
+	return nil, agenticsession.ErrTurnInProgress
 }
 
 func eventTypes(events []agentevent.Event) []string {
