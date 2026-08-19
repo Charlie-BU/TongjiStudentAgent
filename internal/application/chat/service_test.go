@@ -64,6 +64,17 @@ func TestServiceLoadUserInfo(t *testing.T) {
 	})
 }
 
+func TestRunFailedData(t *testing.T) {
+	Convey("Run 失败事件包含错误原因和 HTTP 状态码", t, func() {
+		data := runFailedData("agent_execution_failed", "Agent 执行失败", errors.New("model request failed: status code: 429"))
+
+		So(data.Code, ShouldEqual, "agent_execution_failed")
+		So(data.Message, ShouldEqual, "Agent 执行失败")
+		So(data.Reason, ShouldEqual, "model request failed: status code: 429")
+		So(data.StatusCode, ShouldEqual, 429)
+	})
+}
+
 func TestFormatStudentInfo(t *testing.T) {
 	Convey("裁剪个人基础信息", t, func() {
 		info := tongjiapi.FormatStudentInfo(&tongjiapi.StudentInfo{

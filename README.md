@@ -375,6 +375,8 @@ go run .
 | `run.completed`       | `duration_ms`  | `number`        | 是   | 本次运行总耗时，单位毫秒                                                                               | 动态生成 |
 | `run.failed`          | `code`         | `string`        | 是   | 失败码，如 `turn_in_progress`、`session_unavailable`、`session_write_failed`、`agent_execution_failed` | 无       |
 | `run.failed`          | `message`      | `string`        | 是   | 失败说明                                                                                               | 无       |
+| `run.failed`          | `reason`       | `string`        | 否   | Agent 返回的原始错误原因                                                                                | 无       |
+| `run.failed`          | `status_code`  | `number`        | 否   | 从错误原因识别出的 HTTP 状态码，如 `429`                                                                | 无       |
 
 #### `GET /v1/sessions/:session_id/messages`
 
@@ -625,7 +627,7 @@ console.log(historyPayload.messages);
 | `tool.call.failed`    | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。     |
 | `task_plan.updated`   | `action`, `revision`, `tasks`                       | 当前会话任务计划已更新；前端应以完整快照刷新进度面板。 |
 | `run.completed`       | `duration_ms`                                       | Run 成功结束。                                         |
-| `run.failed`          | `code`, `message`                                   | Run 无法完成。                                         |
+| `run.failed`          | `code`, `message`, `reason?`, `status_code?`        | Run 无法完成；若可识别则附带原始原因和 HTTP 状态码。   |
 
 `run.completed` 与 `run.failed` 是互斥的终态事件：每个 Run 必须且只能发送其中一个，终态事件后不再发送其他事件。当前接口不支持断线重连、心跳、跨请求取消或 HITL Resume；客户端断开时服务会取消仍在执行的本次 Run。
 
