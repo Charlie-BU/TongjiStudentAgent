@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
@@ -34,6 +36,8 @@ import (
 var defaultService *Service
 
 const deleteSessionTurnRetryInterval = 10 * time.Millisecond
+
+var httpStatusCodePattern = regexp.MustCompile(`(?i)\b(?:http|status(?:\s+code)?|code)\s*[:=]?\s*([1-5][0-9]{2})\b`)
 
 // studentInfoLoader 按当前请求凭据获取学生基础信息。
 type studentInfoLoader func(ctx context.Context, accessToken string) (*tongjiapi.StudentInfo, error)
@@ -472,7 +476,7 @@ func (s *Service) emitSessionFailure(runID string, send func(agentevent.Event), 
 	if errors.Is(err, agenticsession.ErrTurnInProgress) {
 		code, message = "turn_in_progress", "该会话正在处理中，请稍后重试"
 	}
-	emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: code, Message: message})
+	emitter.Emit(agentevent.RunFailed, runFailedData(code, message, err))
 }
 
 // ListSessionMessages 读取当前请求可访问的会话消息。
@@ -562,7 +566,7 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 	emitter := agentevent.NewEmitter(runID, send)
 	if s == nil || s.runtime == nil {
 		emitter.Emit(agentevent.RunStarted, agentevent.RunStartedData{Message: "Agent 已开始处理请求"})
-		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_unavailable", Message: "Agent 服务暂不可用"})
+		emitter.Emit(agentevent.RunFailed, runFailedData("agent_unavailable", "Agent 服务暂不可用", fmt.Errorf("chat service is not initialized")))
 		return "", fmt.Errorf("chat service is not initialized")
 	}
 	startedAt := time.Now()
@@ -570,7 +574,7 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "context", Message: "正在准备回答上下文"})
 	studentInfo, err := s.loadFormattedStudentInfo(ctx)
 	if err != nil {
-		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "student_info_unavailable", Message: "学生基础信息暂时不可用，请稍后重试"})
+		emitter.Emit(agentevent.RunFailed, runFailedData("student_info_unavailable", "学生基础信息暂时不可用，请稍后重试", err))
 		return "", err
 	}
 	// Agent 执行前
@@ -580,7 +584,7 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 			if errors.Is(err, agenticsession.ErrTurnInProgress) {
 				code, message = "turn_in_progress", "该消息正在处理中，请勿重复提交"
 			}
-			emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: code, Message: message})
+			emitter.Emit(agentevent.RunFailed, runFailedData(code, message, err))
 			return "", err
 		}
 	}
@@ -598,11 +602,25 @@ func (s *Service) stream(ctx context.Context, runID, query string, history []age
 	}
 	response, err := s.runtime.StreamWithHistoryAndMessages(ctx, query, studentInfo, history, emitRuntimeEvent, record)
 	if err != nil {
-		emitter.Emit(agentevent.RunFailed, agentevent.RunFailedData{Code: "agent_execution_failed", Message: "Agent 执行失败"})
+		emitter.Emit(agentevent.RunFailed, runFailedData("agent_execution_failed", "Agent 执行失败", err))
 		return "", err
 	}
 	emitter.Emit(agentevent.RunCompleted, agentevent.RunCompletedData{DurationMS: time.Since(startedAt).Milliseconds()})
 	return response, nil
+}
+
+// runFailedData 保留对客户端稳定的失败码和文案，同时附带上游失败原因及可识别的 HTTP 状态码。
+func runFailedData(code, message string, err error) agentevent.RunFailedData {
+	data := agentevent.RunFailedData{Code: code, Message: message}
+	if err == nil {
+		return data
+	}
+
+	data.Reason = err.Error()
+	if matched := httpStatusCodePattern.FindStringSubmatch(data.Reason); len(matched) == 2 {
+		data.StatusCode, _ = strconv.Atoi(matched[1])
+	}
+	return data
 }
 
 // loadFormattedStudentInfo 仅在请求上下文携带 access token 时读取学生基础信息。

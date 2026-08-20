@@ -86,8 +86,10 @@ type RunCompletedData struct {
 
 // RunFailedData 表示 Run 失败时的稳定错误信息。
 type RunFailedData struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	Reason     string `json:"reason,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
 }
 
 // Event 是单个 Agent 运行事件。
