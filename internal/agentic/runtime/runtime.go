@@ -16,24 +16,31 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	knowledgeModel "github.com/volcengine/vikingdb-go-sdk/knowledge/model"
 )
+
+type knowledgeDocumentsProvider interface {
+	ListDocs(context.Context, knowledgeModel.ListDocsRequest) (*knowledgeModel.ListDocsResponse, error)
+}
 
 // Config 描述运行时所需的通用 Agent 依赖。
 type Config struct {
-	Name          string
-	Description   string
-	Instruction   string
-	SkillCatalog  string
-	ChatModel     model.BaseChatModel
-	Tools         []tool.BaseTool
-	MaxIterations int
-	Handlers      []adk.ChatModelAgentMiddleware
+	Name            string
+	Description     string
+	Instruction     string
+	SkillCatalog    string
+	KnowledgeClient knowledgeDocumentsProvider
+	ChatModel       model.BaseChatModel
+	Tools           []tool.BaseTool
+	MaxIterations   int
+	Handlers        []adk.ChatModelAgentMiddleware
 }
 
 // Runtime 持有已初始化的 DeepAgent。
 type Runtime struct {
-	agent        adk.Agent
-	skillCatalog string
+	agent           adk.Agent
+	skillCatalog    string
+	knowledgeClient knowledgeDocumentsProvider
 }
 
 // New 根据通用依赖创建当前单 Agent Runtime。
@@ -61,7 +68,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create deep agent: %w", err)
 	}
-	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog}, nil
+	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog, knowledgeClient: cfg.KnowledgeClient}, nil
 }
 
 // TODO：待拆解 tool call 处理
@@ -74,7 +81,7 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 		emit = func(agentevent.Event) {}
 	}
 
-	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, time.Now(), history)
+	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, r.knowledgeClient, time.Now(), history)
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}

@@ -25,7 +25,8 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 │   ├── integration/       # Ark、知识库、Cozeloop（开源版 Fornax）、MCP、本地 Sandbox 与同济开放平台适配
 │   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
-├── .env                   # 本地配置（已被 Git 忽略）
+├── .env.example           # 本地配置模板
+├── .env                   # 本地实际配置（自行创建，已被 Git 忽略）
 ├── main.go                # Hertz 服务入口
 ├── router.go              # 自定义路由
 └── router_gen.go          # Hertz 路由注册
@@ -40,59 +41,27 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 ## 配置本地环境
 
-在项目根目录创建或编辑 `.env`。该文件不会提交到 Git。
+请基于项目根目录的 [`.env.example`](./.env.example) 创建 `.env`，再按实际环境填写；`.env` 不会提交到 Git。
 
-```env
-# Ark/模型服务配置：ARK_BASE_URL 优先于 ARK_BASE_URL_CN
-ARK_BASE_URL_CN=https://your-model-endpoint
-ENDPOINT_ID=your-endpoint-id
-ENDPOINT_API_KEY=your-api-key
+`.env.example` 已同步当前项目实际使用的配置项，包括：
 
-# 可选 Cozeloop 集成（开源版 Fornax）：用于 Trace 观测与系统 Prompt 管理
-COZELOOP_ENABLED=false
-# COZELOOP_WORKSPACE_ID=your-workspace-id
-# COZELOOP_JWT_OAUTH_CLIENT_ID=your-jwt-oauth-client-id
-# COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID=your-public-key-id
-# COZELOOP_JWT_OAUTH_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+- Ark/模型服务
+- Ark 知识库检索
+- 远程 TongjiStudent MCP Server
+- PostgreSQL / Redis 会话存储
+- 本地 Sandbox 开关
+- Cozeloop
+- 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-# Ark 知识库检索：启用后，Agent 可按需调用 system.search_knowledge 获取参考资料
-ARK_KNOWLEDGE_ENABLED=false
-# ARK_AK=your-knowledge-ak
-# ARK_SK=your-knowledge-sk
-# ARK_KNOWLEDGE_COLLECTION=your-collection-name
-# ARK_KNOWLEDGE_PROJECT=default
-# ARK_KNOWLEDGE_RESOURCE_ID=your-resource-id # 可替代 COLLECTION
-# ARK_KNOWLEDGE_LIMIT=5
-# ARK_KNOWLEDGE_DOMAIN=api-knowledgebase.mlp.cn-beijing.volces.com
+启动至少需要补齐以下变量：`ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验并连接模型、会话存储和远程 MCP。
 
-# 远程 TongjiStudent MCP Server；启动时会连接、初始化并校验 allowlist
-MCP_SERVER_URL=http://127.0.0.1:3000/mcp
-MCP_TIMEOUT=12s
+如需启用 Cozeloop，请在 `.env` 中设置 `COZELOOP_ENABLED=true` 并补齐对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 
-# 会话存储：认证会话使用 PostgreSQL，匿名会话使用 Redis；两项均为启动必填
-POSTGRES_DSN=postgres://postgres:postgres@127.0.0.1:5432/tongji_student?sslmode=disable
-REDIS_URL=redis://127.0.0.1:6379/0
-# SESSION_ANONYMOUS_TTL=24h
-# SESSION_ANONYMOUS_MAX_MESSAGES=20
-# SESSION_HISTORY_MAX_MESSAGES=20
-
-# 同济开放平台 OAuth 2.0 授权码模式
-TONGJI_OPEN_PLATFORM_CLIENT_ID=your-client-id
-TONGJI_OPEN_PLATFORM_CLIENT_SECRET=your-client-secret
-TONGJI_OPEN_PLATFORM_REDIRECT_URI=https://app.tongji.edu.cn/wallbreakerAuth/callback.html
-TONGJI_OPEN_PLATFORM_STATE_SECRET=replace-with-a-random-secret
-```
-
-`ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`POSTGRES_DSN` 和 `REDIS_URL` 均为必填项。服务启动时会校验并连接模型、会话存储和远程 MCP。
-
-如需启用 Cozeloop，请显式设置 `COZELOOP_ENABLED=true` 以及对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
-
-启用知识库时，必须配置 `ARK_AK`、`ARK_SK`，以及
-`ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。服务会注册只读的 `system.search_knowledge` 系统工具，Agent 仅在校园公开信息需要官方依据、时效性或适用范围核验时按需调用。由于上游接口限制，同一轮中如需多次检索，必须串行调用；只有收到上一次 tool call result 后，才能发起下一次调用；并行调用可能只有一次成功。工具结果以非可信参考资料返回；默认不展示来源，只有用户明确要求来源、依据或通知原文时，才可提供返回的来源标题。个人实时数据仍必须使用对应 Tongji MCP 工具。
+启用知识库时，必须配置 `VOLC_API_KEY`，以及 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。服务会注册只读的 `system.search_knowledge` 系统工具，Agent 仅在校园公开信息需要官方依据、时效性或适用范围核验时按需调用。由于上游接口限制，同一轮中如需多次检索，必须串行调用；只有收到上一次 tool call result 后，才能发起下一次调用；并行调用可能只有一次成功。工具结果以非可信参考资料返回；默认不展示来源，只有用户明确要求来源、依据或通知原文时，才可提供返回的来源标题。个人实时数据仍必须使用对应 Tongji MCP 工具。
 
 ## 同济开放平台浏览器授权
 
-服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考本 README 中的配置示例。
+服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考项目根目录的 [`.env.example`](./.env.example)。
 
 | 方法   | 路径                         | 用途                                                                                       |
 | ------ | ---------------------------- | ------------------------------------------------------------------------------------------ |
@@ -182,7 +151,7 @@ go test ./...
 
 当前 Agent 是**会话优先**的接口：先创建一个 `session_id`，每一轮再提交给这个会话。不要再调用旧的 `/v1/agent/chat` 或 `/v1/agent/chat/stream`，它们已不在路由中。
 
-开始前，请确认以下服务和配置均已就绪：模型 Endpoint、远程 MCP Server、PostgreSQL、Redis，以及本 README 的 `.env` 必填项。然后启动本服务：
+开始前，请确认以下服务和配置均已就绪：模型 Endpoint、远程 MCP Server、PostgreSQL、Redis，以及 `.env.example` 中列出的启动必填项。然后启动本服务：
 
 ```bash
 go run .
