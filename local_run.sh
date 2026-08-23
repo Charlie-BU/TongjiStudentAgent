@@ -35,12 +35,12 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   cat >&2 <<'EOF'
 error: .env not found in repository root.
 
-Create .env with at least:
-  ARK_BASE_URL_CN=https://your-model-endpoint
-  ENDPOINT_ID=your-endpoint-id
+Copy .env.example to .env and fill in at least:
+  ARK_BASE_URL_CN=https://ark.cn-beijing.volces.com/api/v3
+  ENDPOINT_ID=deepseek-v4-flash-ga-260731
   ENDPOINT_API_KEY=your-api-key
 
-See README.md for the full local configuration example.
+See .env.example and README.md for the full local configuration.
 EOF
   exit 1
 fi
@@ -75,8 +75,8 @@ fi
 
 KNOWLEDGE_ENABLED_VALUE="$(printf '%s' "${ARK_KNOWLEDGE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${KNOWLEDGE_ENABLED_VALUE}" == "1" || "${KNOWLEDGE_ENABLED_VALUE}" == "true" || "${KNOWLEDGE_ENABLED_VALUE}" == "yes" || "${KNOWLEDGE_ENABLED_VALUE}" == "on" ]]; then
-  if [[ -z "${ARK_AK:-}" || -z "${ARK_SK:-}" ]]; then
-    echo "error: ARK_AK and ARK_SK are required when ARK_KNOWLEDGE_ENABLED=true" >&2
+  if [[ -z "${VOLC_API_KEY:-}" ]]; then
+    echo "error: VOLC_API_KEY is required when ARK_KNOWLEDGE_ENABLED=true" >&2
     exit 1
   fi
   if [[ -z "${ARK_KNOWLEDGE_COLLECTION:-}" && -z "${ARK_KNOWLEDGE_RESOURCE_ID:-}" ]]; then

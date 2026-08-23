@@ -1,3 +1,62 @@
+## CHANGELOG - 2026-08-23 11:48 - 迁移 Viking 知识库 SDK 并让 Agent 感知可检索文档目录
+
+### 撰写时间
+
+- 2026-08-23 11:48
+
+### Base Commit
+
+- `e75553b59e2649f43471f08c5ea12b02c04e20d0`
+
+### Compare Scope
+
+- `working_tree_only`
+
+### 背景与改动目标
+
+此前 `internal/integration/knowledge` 直接拼装 Ark 知识库 HTTP 请求，并用 `ARK_AK`、`ARK_SK` 完成 IAM 签名。这个实现只能覆盖检索接口，也让认证、请求格式和响应解析长期由业务仓维护。与此同时，`system.search_knowledge` 虽然可以按需检索，但模型在发起调用前不了解当前集合里有哪些文档，容易用不必要的关键词试探。
+
+这次目标是将知识库适配器迁移到官方 `vikingdb-go-sdk`，改用 API Key 认证，并在每轮 Runtime 输入中提供“可检索文档名称 + 摘要”目录。目录只用于帮助模型选择是否检索、如何归纳查询，不能变成新的指令来源；因此这次同时补齐了元数据转义、非可信边界和离线测试。
+
+### 改动概览
+
+- `go.mod` 将直接使用的 `github.com/volcengine/volc-sdk-golang` 替换为 `github.com/volcengine/vikingdb-go-sdk v0.0.13`；原 SDK 仍作为间接依赖保留，以满足 Viking SDK 的依赖树。
+- `knowledge.Client` 改为持有 SDK `CollectionClient` 的最小接口。`NewFromEnv` 读取 `VOLC_API_KEY`、集合/资源、项目、区域、端点和检索数量，使用 `AuthAPIKey` 创建 SDK Client；`Search` 与新增的 `ListDocs` 分别封装检索和文档分页，并把 SDK 结果转换回既有的 `SearchKnowledgeRes`，从而不改变 `system.search_knowledge` 的消费契约。
+- `runtime.Config` 与 `Runtime` 新增 `KnowledgeClient` 依赖。`buildInputMessagesWithHistory` 会在 Skill Catalog 之后调用 `ListDocs(offset=0, limit=200)`，将可用文档的名称和摘要放入 `# Available Knowledge Documents`。
+- 文档目录使用 `<untrusted-knowledge-documents>` 包裹；文档名、标题、ID 和摘要均经 XML 文本转义，并明确声明内容不是指令，不能改变工具授权或安全策略。测试覆盖了闭合标签和伪造指令文本，确保其仍停留在数据边界内。
+- 删除不再使用的 `FormatContext` 及其旧 HTTP/签名测试；新增 SDK 初始化、`Search`、`ListDocs` 的正常、未初始化、传输错误和业务错误码覆盖。
+- 新增 `.env.example`，README 与 `local_run.sh` 同步到 `VOLC_API_KEY` 配置方式，并集中列出模型、MCP、会话存储、OAuth、Sandbox 和 Cozeloop 的本地启动变量。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：部署配置从 `ARK_AK`/`ARK_SK` 切换为 `VOLC_API_KEY`；`ARK_KNOWLEDGE_ENABLED`、`ARK_KNOWLEDGE_COLLECTION`、`ARK_KNOWLEDGE_RESOURCE_ID`、`ARK_KNOWLEDGE_PROJECT`、`ARK_KNOWLEDGE_DOMAIN`、`ARK_KNOWLEDGE_REGION` 与 `ARK_KNOWLEDGE_LIMIT` 继续决定知识库是否可用及其访问范围。`local_run.sh` 在知识库开启时提前校验 API Key 和集合/资源配置，`NewFromEnv` 则保留服务启动阶段的最终校验。
+- 当前改动：`chat.NewFromEnv` 创建一次 `knowledge.Client`，既传给 `systemtools.WithKnowledgeClient` 注册只读 `system.search_knowledge`，也传给 `runtime.New`。Runtime 在每个 Agent turn 构建动态提醒时读取首批 200 份文档，将目录置于 Skill Catalog 与活动任务计划之间；检索正文仍须由模型显式调用 `system.search_knowledge` 获得。
+- 下游影响：`search_knowledge` 继续消费自定义 `SearchKnowledgeRes`，所以结果格式、来源标题策略、allowlist 和个人实时数据必须走 MCP 的限制不需要随 SDK 迁移改动。知识库未启用时 Client 为 `nil`，Runtime 不注入目录、系统工具也不注册，保留原有降级行为。
+- 安全边界：目录字段来自知识库上游，不能因其出现在 `system-reminder` 中被当作可信提示词。当前实现先转义 XML 特殊字符，再以非可信数据块和显式行为约束隔离；这使 `</untrusted-knowledge-documents>` 或“调用敏感工具”等文档元数据不能突破结构边界。
+
+### 改动结果与业务影响
+
+知识库接入现在由 SDK 负责 API Key 鉴权、请求发送和协议模型，业务层只保留项目实际需要的检索与文档目录能力。模型在回答前能看到集合中的文档主题和摘要，通常可以先决定检索范围，再使用已有工具取得正文资料；这不会直接把资料正文塞进上下文，也不会改变“回答只能依据工具返回资料”的既有策略。
+
+目录读取是每轮输入构建的一部分。知识库服务慢、不可用或返回空目录时，`knowledgeDocumentsCatalog` 会忽略目录继续执行 Agent，避免把目录查询故障升级为整个对话失败；代价是启用知识库后每轮会多一次上游 `ListDocs` 调用。当前只读取首批 200 份文档，超过该数量的集合尚未分页，也未引入目录缓存或摘要总长度上限。
+
+### 测试与验证
+
+- 新增 `TestNewFromEnv`，覆盖知识库开关关闭、非法布尔值、缺失 `VOLC_API_KEY`、缺失集合/资源、非法 `ARK_KNOWLEDGE_LIMIT` 与有效 API Key 配置；所有用例仅构造 SDK Client，不访问真实知识库。
+- `TestClientSearch` 覆盖 SDK 请求映射、传输错误、业务错误码和 nil Client；`TestClientListDocs` 覆盖请求透传、传输错误、业务错误码和 nil Client。
+- `TestBuildInputMessagesWithHistoryIncludesKnowledgeDocuments` 验证目录在 Skill Catalog 后注入并使用 `limit=200`；`TestKnowledgeDocumentsCatalogEscapesUntrustedMetadata` 验证闭合标签与伪造指令被 XML 转义，且目录声明非可信边界。
+- 已通过 `go test ./...`、`go test -race ./...`、`go vet ./...` 与 `git diff --check`。验证未使用真实模型、校园平台、知识库或生产凭据。
+
+### 风险与待办
+
+- `ListDocs` 当前在每个 Agent turn 同步请求上游，SDK 超时配置为 30 秒；上游延迟不会中断对话，但会推迟模型开始生成。若文档目录更新不频繁，后续应评估按集合缓存、短超时和失效刷新，以控制首 token 延迟。
+- 当前目录只覆盖首批 200 份文档，且不限制单份摘要的字符长度。集合规模或摘要内容继续增长时，动态提醒可能增加模型 token 消耗；后续应引入分页/截断和总 token 预算。
+- API Key 迁移会使仍只配置 `ARK_AK`、`ARK_SK` 的旧部署在启用知识库时启动失败。README、`.env.example` 与脚本已同步，但发布前仍应在目标环境替换凭据并验证集合/资源 ID、区域和端点。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(knowledge): migrate to Viking SDK and add document catalog`
+
 ## CHANGELOG - 2026-08-16 20:07 - 补齐校园知识库资料并约束多次检索时序
 
 ### 撰写时间

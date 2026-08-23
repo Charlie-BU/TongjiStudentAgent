@@ -159,14 +159,15 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		systemtools.WithKnowledgeClient(knowledgeClient),
 	), MCPTools...)
 	rt, err := runtime.New(ctx, runtime.Config{
-		Name:          "Tongji Student Agent",
-		Description:   "Campus assistant that answers questions using approved Tongji services.",
-		Instruction:   instruction,
-		SkillCatalog:  skillCatalog,
-		ChatModel:     chatModel,
-		Tools:         tools,
-		MaxIterations: 12,
-		Handlers:      handlers,
+		Name:            "Tongji Student Agent",
+		Description:     "Campus assistant that answers questions using approved Tongji services.",
+		Instruction:     instruction,
+		SkillCatalog:    skillCatalog,
+		KnowledgeClient: knowledgeClient,
+		ChatModel:       chatModel,
+		Tools:           tools,
+		MaxIterations:   12,
+		Handlers:        handlers,
 	})
 	if err != nil {
 		_ = redisStore.Close()

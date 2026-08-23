@@ -1,36 +1,29 @@
 package knowledge
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/volcengine/volc-sdk-golang/base"
+	vikingknowledge "github.com/volcengine/vikingdb-go-sdk/knowledge"
+	"github.com/volcengine/vikingdb-go-sdk/knowledge/model"
 )
 
-const (
-	defaultDomain = "api-knowledgebase.mlp.cn-beijing.volces.com"
-	searchPath    = "/api/knowledge/collection/search_knowledge"
-)
+const defaultEndpoint = "https://api-knowledgebase.mlp.cn-beijing.volces.com"
 
-// Client 用于为主 Agent 检索 Ark 知识库。
+type collectionClient interface {
+	SearchKnowledge(context.Context, model.SearchKnowledgeRequest, ...vikingknowledge.RequestOption) (*model.SearchKnowledgeResponse, error)
+	ListDocs(context.Context, model.ListDocsRequest, ...vikingknowledge.RequestOption) (*model.ListDocsResponse, error)
+}
+
+// Client 用于访问 Ark 知识库。
 type Client struct {
-	ak         string
-	sk         string
-	domain     string
-	collection string
-	project    string
-	resourceID string
+	collection collectionClient
 	limit      int
-	httpClient *http.Client
 }
 
 // NewFromEnv 根据环境变量创建知识库客户端。
@@ -43,96 +36,53 @@ func NewFromEnv() (*Client, error) {
 		return nil, nil
 	}
 
-	client := &Client{
-		ak:         strings.TrimSpace(os.Getenv("ARK_AK")),
-		sk:         strings.TrimSpace(os.Getenv("ARK_SK")),
-		domain:     envOrDefault("ARK_KNOWLEDGE_DOMAIN", defaultDomain),
-		collection: strings.TrimSpace(os.Getenv("ARK_KNOWLEDGE_COLLECTION")),
-		project:    envOrDefault("ARK_KNOWLEDGE_PROJECT", "default"),
-		resourceID: strings.TrimSpace(os.Getenv("ARK_KNOWLEDGE_RESOURCE_ID")),
-		limit:      5,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+	apiKey := strings.TrimSpace(os.Getenv("VOLC_API_KEY"))
+	if apiKey == "" {
+		return nil, fmt.Errorf("VOLC_API_KEY must be set when knowledge is enabled")
 	}
-	if client.ak == "" || client.sk == "" {
-		return nil, fmt.Errorf("ARK_AK and ARK_SK must be set when knowledge is enabled")
-	}
-	if client.collection == "" && client.resourceID == "" {
+	collectionName := strings.TrimSpace(os.Getenv("ARK_KNOWLEDGE_COLLECTION"))
+	resourceID := strings.TrimSpace(os.Getenv("ARK_KNOWLEDGE_RESOURCE_ID"))
+	if collectionName == "" && resourceID == "" {
 		return nil, fmt.Errorf("ARK_KNOWLEDGE_COLLECTION or ARK_KNOWLEDGE_RESOURCE_ID must be set when knowledge is enabled")
 	}
+
+	limit := 5
 	if value := strings.TrimSpace(os.Getenv("ARK_KNOWLEDGE_LIMIT")); value != "" {
-		client.limit, err = strconv.Atoi(value)
-		if err != nil || client.limit <= 0 {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit <= 0 {
 			return nil, fmt.Errorf("ARK_KNOWLEDGE_LIMIT must be a positive integer")
 		}
 	}
-	return client, nil
-}
-
-// Search 检索与 query 最相关的知识库切片。
-func (c *Client) Search(ctx context.Context, query string) (*SearchKnowledgeRes, error) {
-	requestBody, err := json.Marshal(SearchKnowledgeReq{
-		Name:        c.collection,
-		Project:     c.project,
-		ResourceID:  c.resourceID,
-		Query:       query,
-		Limit:       c.limit,
-		DenseWeight: 0.5,
-		PreProcessing: &PreProcessing{
-			NeedInstruction: true,
-		},
-		PostProcessing: &PostProcessing{
-			RetrieveCount: c.limit,
-			ChunkGroup:    true,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal knowledge search request: %w", err)
-	}
-
-	req, err := c.newRequest(ctx, requestBody)
+	endpoint, err := normalizeEndpoint(envOrDefault("ARK_KNOWLEDGE_DOMAIN", defaultEndpoint))
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.httpClient.Do(req)
+	client, err := vikingknowledge.New(
+		vikingknowledge.AuthAPIKey(apiKey),
+		vikingknowledge.WithEndpoint(endpoint),
+		vikingknowledge.WithRegion(envOrDefault("ARK_KNOWLEDGE_REGION", "cn-beijing")),
+		vikingknowledge.WithTimeout(30*time.Second),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("send knowledge search request: %w", err)
+		return nil, fmt.Errorf("create VikingDB knowledge client: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read knowledge search response: %w", err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("knowledge search returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result SearchKnowledgeRes
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal knowledge search response: %w", err)
-	}
-	if result.Code != 0 {
-		return &result, fmt.Errorf("knowledge search returned code %d: %s", result.Code, result.Message)
-	}
-	return &result, nil
+	return &Client{collection: client.Collection(model.CollectionMeta{
+		CollectionName: collectionName,
+		ProjectName:    envOrDefault("ARK_KNOWLEDGE_PROJECT", "default"),
+		ResourceID:     resourceID,
+	}), limit: limit}, nil
 }
 
-// newRequest 创建知识库检索请求
-func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	u := url.URL{Scheme: "https", Host: c.domain, Path: searchPath}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create knowledge search request: %w", err)
+func normalizeEndpoint(endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Host", c.domain)
-	return base.Credentials{
-		AccessKeyID:     c.ak,
-		SecretAccessKey: c.sk,
-		Service:         "air",
-		Region:          "cn-north-1",
-	}.Sign(req), nil
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("invalid ARK_KNOWLEDGE_DOMAIN: %q", endpoint)
+	}
+	return strings.TrimSuffix(endpoint, "/"), nil
 }
 
 func envOrDefault(key, defaultValue string) string {

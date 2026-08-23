@@ -20,7 +20,7 @@ require (
 	github.com/pashagolub/pgxmock/v4 v4.8.0
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/smartystreets/goconvey v1.8.1
-	github.com/volcengine/volc-sdk-golang v1.0.172
+	github.com/volcengine/vikingdb-go-sdk v0.0.13
 	github.com/volcengine/volcengine-go-sdk v1.1.49
 )
 
@@ -77,6 +77,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/vincent-petithory/dataurl v1.0.0 // indirect
+	github.com/volcengine/volc-sdk-golang v1.0.243 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
