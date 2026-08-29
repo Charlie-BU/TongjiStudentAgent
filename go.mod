@@ -14,6 +14,7 @@ require (
 	github.com/cloudwego/eino-ext/components/tool/mcp v0.0.8
 	github.com/cloudwego/hertz v0.10.3
 	github.com/coze-dev/cozeloop-go v0.1.20
+	github.com/hertz-contrib/cors v0.1.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.43.0

@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	hertzserver "github.com/cloudwego/hertz/pkg/app/server"
 	hertzconfig "github.com/cloudwego/hertz/pkg/common/config"
+	"github.com/hertz-contrib/cors"
 )
 
 func main() {
@@ -33,6 +34,13 @@ func main() {
 
 	hz.Use(requestLoggingMiddleware)
 	hz.Use(streamHeaderMiddleware)
+	corsMiddleware, err := CORSMiddleware()
+	if err != nil {
+		panic(fmt.Sprintf("invalid CORS configuration: %v", err))
+	}
+	if corsMiddleware != nil {
+		hz.Use(corsMiddleware)
+	}
 
 	register(hz)
 
@@ -41,6 +49,23 @@ func main() {
 	}
 
 	hz.Spin()
+}
+
+// CORSMiddleware 根据全局 CORS_ALLOW_ORIGINS 配置创建服务范围的跨域中间件。
+// 未配置时返回 nil，服务不返回 CORS 响应头。
+func CORSMiddleware() (app.HandlerFunc, error) {
+	allowedOrigins, err := platformconfig.CORSAllowOrigins()
+	if err != nil {
+		return nil, err
+	}
+	if len(allowedOrigins) == 0 {
+		return nil, nil
+	}
+
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = allowedOrigins
+	corsConfig.AddAllowHeaders("Authorization")
+	return cors.New(corsConfig), nil
 }
 
 // requestLoggingMiddleware 记录不包含请求内容的 HTTP 元数据。

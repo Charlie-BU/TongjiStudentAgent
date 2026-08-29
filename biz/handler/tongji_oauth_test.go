@@ -69,13 +69,12 @@ func TestTongjiExchangeToken(t *testing.T) {
 			for _, test := range tests {
 				test := test
 				Convey(test.name, func() {
-					requestContext := newTongjiJSONRequest(test.body, tongjiCallbackOrigin)
+					requestContext := newTongjiJSONRequest(test.body)
 
 					TongjiExchangeToken(context.Background(), requestContext)
 
 					So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 					So(responseError(requestContext), ShouldEqual, test.wantError)
-					So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Origin")), ShouldEqual, tongjiCallbackOrigin)
 				})
 			}
 		})
@@ -87,7 +86,7 @@ func TestTongjiExchangeToken(t *testing.T) {
 			defer server.Close()
 			setTongjiOAuthEnv(t, "https://open-platform.test/authorize", server.URL)
 			state := newTongjiState(t, server.URL)
-			requestContext := newTongjiJSONRequest(`{"code":"valid-code","state":"`+state+`"}`, tongjiCallbackOrigin)
+			requestContext := newTongjiJSONRequest(`{"code":"valid-code","state":"` + state + `"}`)
 
 			TongjiExchangeToken(context.Background(), requestContext)
 
@@ -110,12 +109,11 @@ func TestTongjiExchangeToken(t *testing.T) {
 			defer server.Close()
 			setTongjiOAuthEnv(t, "https://open-platform.test/authorize", server.URL)
 			state := newTongjiState(t, server.URL)
-			requestContext := newTongjiJSONRequest(`{"code":" valid-code ","state":" `+state+` "}`, tongjiCallbackOrigin)
+			requestContext := newTongjiJSONRequest(`{"code":" valid-code ","state":" ` + state + ` "}`)
 
 			TongjiExchangeToken(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
-			So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Origin")), ShouldEqual, tongjiCallbackOrigin)
 			request := <-requests
 			So(request.method, ShouldEqual, http.MethodPost)
 			So(request.contentType, ShouldEqual, "application/x-www-form-urlencoded")
@@ -135,37 +133,9 @@ func TestTongjiExchangeToken(t *testing.T) {
 	})
 }
 
-func TestTongjiExchangeTokenOptions(t *testing.T) {
-	Convey("同济 OAuth 令牌交换预检", t, func() {
-		Convey("登记的 callback 来源应获得最小 CORS 权限", func() {
-			requestContext := app.NewContext(0)
-			requestContext.Request.Header.Set("Origin", tongjiCallbackOrigin)
-
-			TongjiExchangeTokenOptions(context.Background(), requestContext)
-
-			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNoContent)
-			So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Origin")), ShouldEqual, tongjiCallbackOrigin)
-			So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Methods")), ShouldEqual, "POST, OPTIONS")
-			So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Headers")), ShouldEqual, "Content-Type")
-			So(string(requestContext.Response.Header.Peek("Vary")), ShouldEqual, "Origin")
-		})
-
-		Convey("未登记来源不应获得读取令牌响应的 CORS 权限", func() {
-			requestContext := app.NewContext(0)
-			requestContext.Request.Header.Set("Origin", "https://attacker.example")
-
-			TongjiExchangeTokenOptions(context.Background(), requestContext)
-
-			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNoContent)
-			So(string(requestContext.Response.Header.Peek("Access-Control-Allow-Origin")), ShouldBeBlank)
-		})
-	})
-}
-
-func newTongjiJSONRequest(body, origin string) *app.RequestContext {
+func newTongjiJSONRequest(body string) *app.RequestContext {
 	requestContext := app.NewContext(0)
 	requestContext.Request.Header.Set("Content-Type", "application/json")
-	requestContext.Request.Header.Set("Origin", origin)
 	requestContext.Request.SetBodyString(body)
 	return requestContext
 }
