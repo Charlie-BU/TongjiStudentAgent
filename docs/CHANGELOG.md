@@ -1,3 +1,55 @@
+## CHANGELOG - 2026-08-29 18:49 - 为会话历史引入固定快照分页
+
+### 撰写时间
+
+- 2026-08-29 18:49
+
+### Base Commit
+
+- a8e71218db66ba02f9a81b0ee38fa9d92f293e11
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 原有 `GET /v1/sessions/:session_id/messages` 只能读取最近 `limit` 条消息。前端若需要继续向更早历史翻页，只能重新读取一个不断变化的“最新窗口”。
+- 会话在浏览过程中仍可能持续写入新消息；单纯使用 offset 会让新消息推移数据位置，导致跨页重复或漏读。
+- 因此这次把读取语义改为“固定快照 + 从最新向更早偏移”：首页记录消息最大 `sequence`，后续页携带同一 `snapshot_sequence`，只读取该上界内的数据。
+
+### 改动概览
+
+- 新增 `agenticsession.MessagePage`，统一承载 `messages`、`has_more` 与 `snapshot_sequence`。
+- 为认证持久会话与匿名 Redis 会话分别定义 `MessagePaginator`、`EphemeralMessagePaginator` 扩展接口，保留既有 `ListMessages` 供运行时上下文组装使用。
+- Handler 支持 `offset` 和 `snapshot_sequence` 查询参数，并将分页元数据写入响应。
+- PostgreSQL 按 `sequence DESC`、`OFFSET`、`LIMIT + 1` 读取快照范围，再翻转为历史顺序返回。
+- Redis 按最新消息到最早消息扫描，过滤超过快照的记录、跳过 offset 后取 `limit + 1` 条，再恢复为历史顺序。
+- README 补充分页请求参数、快照语义与响应字段说明。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：消息追加链路为每条 canonical message 分配单调递增的 `sequence`。PostgreSQL 通过 `(session_id, sequence)` 唯一约束保存顺序；Redis 通过 `next_sequence` 与 `LPUSH` 保存最新消息。
+- 当前改动：`SessionMessages` 解析 `limit`、`offset`、`snapshot_sequence` 后调用 `chat.ListSessionMessagePage`。`Service` 根据请求 context 中是否存在 `user_id`，分派到 PostgreSQL 或 Redis 分页实现。
+- 下游影响：前端首页不传 `snapshot_sequence`，使用响应中的值继续翻页；请求后续页时需要原样携带该值。已有会话执行链仍调用 `ListMessages`，不会因分页 API 改动改变上下文装配行为。
+
+### 改动结果与业务影响
+
+- 会话历史可以从最新消息稳定地向更早记录翻页，返回数组仍按旧到新排列，便于前端直接渲染。
+- 新消息在首页读取后追加时，其更高的 `sequence` 会被旧快照排除，不会混入后续页。
+- `has_more` 使用 `limit + 1` 探测，调用方无需额外请求判断是否存在下一页。
+- 匿名会话仍受 Redis 的 `maxItems` 与 TTL 约束；分页只能覆盖当前保留的消息窗口，不能恢复已被裁剪或过期的历史。
+
+### 风险与待办
+
+- `snapshot_sequence` 是分页一致性的客户端状态；前端必须在同一分页链路中复用首页返回值，不能在后续页重置为 `0`。
+- 深 offset 在 PostgreSQL 上仍会随着偏移增大而增加扫描成本。当前接口限制单页 `limit` 至 `100`，但尚未引入 cursor 分页。
+- 已补充 Redis 的“首页后追加新消息”测试，以及 PostgreSQL 的原快照上界复用测试；`go test ./...`、受影响包的 `-race` 检测和 `go vet ./...` 已通过。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(session): add snapshot-based message pagination`
+
 ## CHANGELOG - 2026-08-29 17:08 - 统一服务级 CORS 配置并覆盖 OAuth 回调链路
 
 ### 撰写时间

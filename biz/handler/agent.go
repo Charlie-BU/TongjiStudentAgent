@@ -61,8 +61,8 @@ var deleteSession = chat.DeleteSession
 // streamSession 用于测试时替换会话流式执行实现。
 var streamSession = chat.StreamSession
 
-// listSessionMessages 用于测试时替换会话历史读取实现。
-var listSessionMessages = chat.ListSessionMessages
+// listSessionMessagePage 用于测试时替换会话历史分页读取实现。
+var listSessionMessagePage = chat.ListSessionMessagePage
 
 // getSessionTaskPlan 用于测试时替换会话任务计划读取实现。
 var getSessionTaskPlan = chat.GetSessionTaskPlan
@@ -205,7 +205,24 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 		}
 		limit = parsed
 	}
-	messages, err := listSessionMessages(requestContext, sessionID, limit)
+	offset, snapshotSequence := 0, int64(0)
+	if rawOffset := strings.TrimSpace(c.Query("offset")); rawOffset != "" {
+		parsed, err := strconv.Atoi(rawOffset)
+		if err != nil || parsed < 0 {
+			c.JSON(consts.StatusBadRequest, utils.H{"error": "offset must be a non-negative integer"})
+			return
+		}
+		offset = parsed
+	}
+	if rawSnapshot := strings.TrimSpace(c.Query("snapshot_sequence")); rawSnapshot != "" {
+		parsed, err := strconv.ParseInt(rawSnapshot, 10, 64)
+		if err != nil || parsed < 0 {
+			c.JSON(consts.StatusBadRequest, utils.H{"error": "snapshot_sequence must be a non-negative integer"})
+			return
+		}
+		snapshotSequence = parsed
+	}
+	page, err := listSessionMessagePage(requestContext, sessionID, limit, offset, snapshotSequence)
 	if err != nil {
 		status := consts.StatusInternalServerError
 		if errors.Is(err, agenticsession.ErrNotFound) {
@@ -214,7 +231,7 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 		c.JSON(status, utils.H{"error": "session not found"})
 		return
 	}
-	c.JSON(consts.StatusOK, utils.H{"messages": messages})
+	c.JSON(consts.StatusOK, utils.H{"messages": page.Messages, "has_more": page.HasMore, "snapshot_sequence": page.SnapshotSequence})
 }
 
 // SessionTaskPlan 返回当前请求有权访问的活动任务计划。

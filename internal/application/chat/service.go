@@ -257,12 +257,12 @@ func StreamSession(ctx context.Context, sessionID, query string, send func(agent
 	return defaultService.StreamSession(ctx, sessionID, query, send)
 }
 
-// ListSessionMessages 读取当前请求有权访问的会话历史。
-func ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]agenticsession.Message, error) {
+// ListSessionMessagePage 读取当前请求可访问会话的固定快照分页。
+func ListSessionMessagePage(ctx context.Context, sessionID string, limit int, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
 	if defaultService == nil {
-		return nil, fmt.Errorf("chat service is not initialized")
+		return agenticsession.MessagePage{}, fmt.Errorf("chat service is not initialized")
 	}
-	return defaultService.ListSessionMessages(ctx, sessionID, limit)
+	return defaultService.ListSessionMessagePage(ctx, sessionID, limit, offset, snapshotSequence)
 }
 
 // GetSessionTaskPlan 读取当前请求有权访问的会话任务计划。
@@ -480,21 +480,23 @@ func (s *Service) emitSessionFailure(runID string, send func(agentevent.Event), 
 	emitter.Emit(agentevent.RunFailed, runFailedData(code, message, err))
 }
 
-// ListSessionMessages 读取当前请求可访问的会话消息。
-func (s *Service) ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]agenticsession.Message, error) {
+// ListSessionMessagePage 读取当前请求可访问会话的固定快照分页。
+func (s *Service) ListSessionMessagePage(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
 	if s == nil {
-		return nil, fmt.Errorf("chat service is not initialized")
+		return agenticsession.MessagePage{}, fmt.Errorf("chat service is not initialized")
 	}
 	if ownerUserID, ok := platformauth.UserIDFromContext(ctx); ok {
-		if s.durableSessionStore == nil {
-			return nil, fmt.Errorf("durable session store is not initialized")
+		paginator, supported := s.durableSessionStore.(agenticsession.MessagePaginator)
+		if !supported {
+			return agenticsession.MessagePage{}, fmt.Errorf("durable session store does not support message pagination")
 		}
-		return s.durableSessionStore.ListMessages(ctx, sessionID, ownerUserID, limit)
+		return paginator.ListMessagePage(ctx, sessionID, ownerUserID, limit, offset, snapshotSequence)
 	}
-	if s.ephemeralSessionStore == nil {
-		return nil, fmt.Errorf("ephemeral session store is not initialized")
+	paginator, supported := s.ephemeralSessionStore.(agenticsession.EphemeralMessagePaginator)
+	if !supported {
+		return agenticsession.MessagePage{}, fmt.Errorf("ephemeral session store does not support message pagination")
 	}
-	return s.ephemeralSessionStore.ListMessages(ctx, sessionID, limit)
+	return paginator.ListMessagePage(ctx, sessionID, limit, offset, snapshotSequence)
 }
 
 // sessionTurnOperations 为本轮选择存储、读取历史并构造用户消息追加操作。

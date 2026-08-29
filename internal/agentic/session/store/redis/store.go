@@ -250,6 +250,50 @@ func (s *RedisEphemeralStore) ListMessages(ctx context.Context, sessionID string
 	return messages, nil
 }
 
+// ListMessagePage 按固定 sequence 快照从最新消息向更早消息分页读取，并按历史顺序返回。
+func (s *RedisEphemeralStore) ListMessagePage(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
+	if _, err := s.Get(ctx, sessionID); err != nil {
+		return agenticsession.MessagePage{}, err
+	}
+	if limit <= 0 || offset < 0 || snapshotSequence < 0 {
+		return agenticsession.MessagePage{}, fmt.Errorf("invalid message page arguments")
+	}
+	encoded, err := s.client.LRange(ctx, redisMessagesKey(sessionID), 0, -1).Result()
+	if err != nil {
+		return agenticsession.MessagePage{}, fmt.Errorf("list ephemeral message page: %w", err)
+	}
+	messages := make([]Message, 0, limit+1)
+	matched := 0
+	for _, item := range encoded {
+		var message Message
+		if err := json.Unmarshal([]byte(item), &message); err != nil {
+			return agenticsession.MessagePage{}, fmt.Errorf("decode ephemeral page message: %w", err)
+		}
+		if snapshotSequence == 0 {
+			snapshotSequence = message.Sequence
+		}
+		if message.Sequence > snapshotSequence {
+			continue
+		}
+		if matched < offset {
+			matched++
+			continue
+		}
+		messages = append(messages, message)
+		if len(messages) == limit+1 {
+			break
+		}
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return agenticsession.MessagePage{Messages: messages, HasMore: hasMore, SnapshotSequence: snapshotSequence}, nil
+}
+
 // GetTaskPlan 读取匿名会话的活动任务计划。没有计划时返回 nil。
 func (s *RedisEphemeralStore) GetTaskPlan(ctx context.Context, sessionID string) (*TaskPlan, error) {
 	if _, err := s.Get(ctx, sessionID); err != nil {
