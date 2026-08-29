@@ -99,12 +99,25 @@ type AppendResult struct {
 	Created bool
 }
 
+// MessagePage 是固定快照中的一页 canonical 消息。
+// SnapshotSequence 为该快照允许读取的最大 sequence；后续分页请求必须沿用它。
+type MessagePage struct {
+	Messages         []Message
+	HasMore          bool
+	SnapshotSequence int64
+}
+
 // Store 定义已认证持久会话的最小存储契约。
 type Store interface {
 	Create(ctx context.Context, ownerUserID string) (Session, error)
 	Get(ctx context.Context, sessionID, ownerUserID string) (Session, error)
 	Append(ctx context.Context, sessionID, ownerUserID string, message NewMessage) (AppendResult, error)
 	ListMessages(ctx context.Context, sessionID, ownerUserID string, limit int) ([]Message, error)
+}
+
+// MessagePaginator 支持认证会话的稳定历史分页。
+type MessagePaginator interface {
+	ListMessagePage(ctx context.Context, sessionID, ownerUserID string, limit, offset int, snapshotSequence int64) (MessagePage, error)
 }
 
 // NamedSessionCreator 支持在创建持久会话时保存名称。
@@ -133,6 +146,11 @@ type EphemeralStore interface {
 	Get(ctx context.Context, sessionID string) (Session, error)
 	Append(ctx context.Context, sessionID string, message NewMessage) (AppendResult, error)
 	ListMessages(ctx context.Context, sessionID string, limit int) ([]Message, error)
+}
+
+// EphemeralMessagePaginator 支持匿名会话的稳定历史分页。
+type EphemeralMessagePaginator interface {
+	ListMessagePage(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (MessagePage, error)
 }
 
 // TurnRelease 在本轮会话执行完成后释放互斥锁。

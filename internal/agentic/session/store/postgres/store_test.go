@@ -42,6 +42,53 @@ func TestPostgresStoreValidation(t *testing.T) {
 	})
 }
 
+func TestPostgresStoreListMessagePage(t *testing.T) {
+	Convey("认证 PostgreSQL 会话消息分页", t, func() {
+		pool, err := pgxmock.NewPool()
+		So(err, ShouldBeNil)
+		defer pool.Close()
+		store := &PostgresStore{pool: pool}
+		createdAt := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+			WithArgs("ses-001", "user-001").
+			WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "name", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", "会话", createdAt, createdAt))
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(sequence), 0) FROM agent_session_messages WHERE session_id = $1`)).
+			WithArgs("ses-001").
+			WillReturnRows(pgxmock.NewRows([]string{"sequence"}).AddRow(int64(4)))
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 AND sequence <= $2 ORDER BY sequence DESC OFFSET $3 LIMIT $4`)).
+			WithArgs("ses-001", int64(4), 0, 3).
+			WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "response_id", "response_cache_expires_at", "created_at"}).
+				AddRow("msg-004", "ses-001", "run-001", int64(4), MessageRoleUser, "第四条", []byte(`[]`), "", "", "", "", int64(0), createdAt).
+				AddRow("msg-003", "ses-001", "run-001", int64(3), MessageRoleAssistant, "第三条", []byte(`[]`), "", "", "", "", int64(0), createdAt).
+				AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleUser, "第二条", []byte(`[]`), "", "", "", "", int64(0), createdAt))
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE id = $1 AND owner_user_id = $2`)).
+			WithArgs("ses-001", "user-001").
+			WillReturnRows(pgxmock.NewRows([]string{"id", "owner_user_id", "name", "created_at", "last_active_at"}).AddRow("ses-001", "user-001", "会话", createdAt, createdAt))
+		pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 AND sequence <= $2 ORDER BY sequence DESC OFFSET $3 LIMIT $4`)).
+			WithArgs("ses-001", int64(4), 2, 3).
+			WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "response_id", "response_cache_expires_at", "created_at"}).
+				AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleUser, "第二条", []byte(`[]`), "", "", "", "", int64(0), createdAt).
+				AddRow("msg-001", "ses-001", "run-001", int64(1), MessageRoleAssistant, "第一条", []byte(`[]`), "", "", "", "", int64(0), createdAt))
+
+		page, pageErr := store.ListMessagePage(context.Background(), "ses-001", "user-001", 2, 0, 0)
+		So(pageErr, ShouldBeNil)
+		So(page.SnapshotSequence, ShouldEqual, int64(4))
+		So(page.HasMore, ShouldBeTrue)
+		So(page.Messages, ShouldHaveLength, 2)
+		So(page.Messages[0].Sequence, ShouldEqual, int64(3))
+		So(page.Messages[1].Sequence, ShouldEqual, int64(4))
+
+		nextPage, nextPageErr := store.ListMessagePage(context.Background(), "ses-001", "user-001", 2, 2, page.SnapshotSequence)
+		So(nextPageErr, ShouldBeNil)
+		So(nextPage.SnapshotSequence, ShouldEqual, int64(4))
+		So(nextPage.HasMore, ShouldBeFalse)
+		So(nextPage.Messages[0].Sequence, ShouldEqual, int64(1))
+		So(nextPage.Messages[1].Sequence, ShouldEqual, int64(2))
+		So(pool.ExpectationsWereMet(), ShouldBeNil)
+	})
+}
+
 func TestPostgresStoreNamedSessionPersistence(t *testing.T) {
 	Convey("PostgreSQL 会话名称、列表与重命名", t, func() {
 		pool, err := pgxmock.NewPool()

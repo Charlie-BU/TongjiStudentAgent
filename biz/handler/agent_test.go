@@ -258,27 +258,31 @@ func TestDeleteSession(t *testing.T) {
 
 func TestSessionMessages(t *testing.T) {
 	Convey("读取会话历史接口", t, func() {
-		originalListSessionMessages := listSessionMessages
-		t.Cleanup(func() { listSessionMessages = originalListSessionMessages })
+		originalListSessionMessagePage := listSessionMessagePage
+		t.Cleanup(func() { listSessionMessagePage = originalListSessionMessagePage })
 
-		Convey("会转发会话标识和分页上限，并返回历史", func() {
-			listSessionMessages = func(_ context.Context, sessionID string, limit int) ([]agenticsession.Message, error) {
+		Convey("会转发分页快照参数，并返回分页元数据", func() {
+			listSessionMessagePage = func(_ context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
 				So(sessionID, ShouldEqual, "ses-001")
 				So(limit, ShouldEqual, 2)
-				return []agenticsession.Message{{ID: "msg-001", SessionID: sessionID, Role: agenticsession.MessageRoleUser, Content: "你好"}}, nil
+				So(offset, ShouldEqual, 4)
+				So(snapshotSequence, ShouldEqual, int64(10))
+				return agenticsession.MessagePage{Messages: []agenticsession.Message{{ID: "msg-001", SessionID: sessionID, Role: agenticsession.MessageRoleUser, Content: "你好"}}, HasMore: true, SnapshotSequence: 10}, nil
 			}
 			requestContext := newSessionRequest("ses-001")
-			requestContext.Request.SetRequestURI("/v1/sessions/ses-001/messages?limit=2")
+			requestContext.Request.SetRequestURI("/v1/sessions/ses-001/messages?limit=2&offset=4&snapshot_sequence=10")
 
 			SessionMessages(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"content":"你好"`)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"has_more":true`)
+			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"snapshot_sequence":10`)
 		})
 
 		Convey("会话不存在时返回 404", func() {
-			listSessionMessages = func(context.Context, string, int) ([]agenticsession.Message, error) {
-				return nil, agenticsession.ErrNotFound
+			listSessionMessagePage = func(context.Context, string, int, int, int64) (agenticsession.MessagePage, error) {
+				return agenticsession.MessagePage{}, agenticsession.ErrNotFound
 			}
 			requestContext := newSessionRequest("ses-001")
 

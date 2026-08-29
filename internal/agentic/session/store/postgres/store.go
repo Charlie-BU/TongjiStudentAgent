@@ -268,6 +268,52 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	return messages, nil
 }
 
+// ListMessagePage 按固定 sequence 快照从最新消息向更早消息分页读取，并按历史顺序返回。
+func (s *PostgresStore) ListMessagePage(ctx context.Context, sessionID, ownerUserID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
+	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
+		return agenticsession.MessagePage{}, err
+	}
+	if _, err := s.Get(ctx, sessionID, ownerUserID); err != nil {
+		return agenticsession.MessagePage{}, err
+	}
+	if limit <= 0 || offset < 0 || snapshotSequence < 0 {
+		return agenticsession.MessagePage{}, fmt.Errorf("invalid message page arguments")
+	}
+	if snapshotSequence == 0 {
+		if err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(sequence), 0) FROM agent_session_messages WHERE session_id = $1`, strings.TrimSpace(sessionID)).Scan(&snapshotSequence); err != nil {
+			return agenticsession.MessagePage{}, fmt.Errorf("get durable message snapshot: %w", err)
+		}
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 AND sequence <= $2 ORDER BY sequence DESC OFFSET $3 LIMIT $4`, strings.TrimSpace(sessionID), snapshotSequence, offset, limit+1)
+	if err != nil {
+		return agenticsession.MessagePage{}, fmt.Errorf("list durable message page: %w", err)
+	}
+	defer rows.Close()
+	messages := make([]Message, 0, limit+1)
+	for rows.Next() {
+		var message Message
+		var toolCalls []byte
+		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.ResponseID, &message.ResponseCacheExpiresAt, &message.CreatedAt); err != nil {
+			return agenticsession.MessagePage{}, fmt.Errorf("scan durable message page: %w", err)
+		}
+		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
+			return agenticsession.MessagePage{}, fmt.Errorf("unmarshal durable page tool calls: %w", err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return agenticsession.MessagePage{}, fmt.Errorf("iterate durable message page: %w", err)
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return agenticsession.MessagePage{Messages: messages, HasMore: hasMore, SnapshotSequence: snapshotSequence}, nil
+}
+
 // GetTaskPlan 读取属于 ownerUserID 的活动任务计划。没有计划时返回 nil。
 func (s *PostgresStore) GetTaskPlan(ctx context.Context, sessionID, ownerUserID string) (*TaskPlan, error) {
 	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {

@@ -58,6 +58,43 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(messages[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
 			So(messages[1].RunID, ShouldEqual, "run-002")
+
+			page, pageErr := store.ListMessagePage(context.Background(), session.ID, 1, 0, 0)
+			So(pageErr, ShouldBeNil)
+			So(page.HasMore, ShouldBeTrue)
+			So(page.SnapshotSequence, ShouldEqual, int64(3))
+			So(page.Messages, ShouldHaveLength, 1)
+			So(page.Messages[0].Sequence, ShouldEqual, int64(3))
+
+			page, pageErr = store.ListMessagePage(context.Background(), session.ID, 1, 1, page.SnapshotSequence)
+			So(pageErr, ShouldBeNil)
+			So(page.HasMore, ShouldBeFalse)
+			So(page.Messages[0].Sequence, ShouldEqual, int64(2))
+		})
+
+		Convey("分页快照不会混入首页之后新增的消息", func() {
+			pageClient := redis.NewClient(&redis.Options{Addr: miniRedis.Addr()})
+			pagedStore, newStoreErr := NewRedisEphemeralStore(context.Background(), pageClient, time.Hour, 10)
+			So(newStoreErr, ShouldBeNil)
+			defer pagedStore.Close()
+			pagedSession, createErr := pagedStore.Create(context.Background())
+			So(createErr, ShouldBeNil)
+			for _, content := range []string{"第一条", "第二条", "第三条"} {
+				_, appendErr := pagedStore.Append(context.Background(), pagedSession.ID, NewMessage{RunID: "run-001", Role: MessageRoleUser, Content: content})
+				So(appendErr, ShouldBeNil)
+			}
+
+			firstPage, pageErr := pagedStore.ListMessagePage(context.Background(), pagedSession.ID, 1, 0, 0)
+			So(pageErr, ShouldBeNil)
+			So(firstPage.SnapshotSequence, ShouldEqual, int64(3))
+			So(firstPage.Messages[0].Sequence, ShouldEqual, int64(3))
+
+			_, appendErr := pagedStore.Append(context.Background(), pagedSession.ID, NewMessage{RunID: "run-002", Role: MessageRoleUser, Content: "第四条"})
+			So(appendErr, ShouldBeNil)
+			nextPage, nextPageErr := pagedStore.ListMessagePage(context.Background(), pagedSession.ID, 1, 1, firstPage.SnapshotSequence)
+			So(nextPageErr, ShouldBeNil)
+			So(nextPage.SnapshotSequence, ShouldEqual, firstPage.SnapshotSequence)
+			So(nextPage.Messages[0].Sequence, ShouldEqual, int64(2))
 		})
 
 		Convey("工具调用历史可按 JSON tag 完整恢复", func() {
