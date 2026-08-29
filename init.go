@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/joho/godotenv"
@@ -41,8 +43,11 @@ func initializeClient(ctx context.Context) {
 	defer logs.Flush()
 
 	err := godotenv.Load()
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		panic(fmt.Errorf("error loading .env file, err: %v", err))
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		logs.Infof(".env file not found; using process environment variables")
 	}
 
 	// 初始化 Cozeloop
