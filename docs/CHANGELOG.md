@@ -1,3 +1,56 @@
+## CHANGELOG - 2026-08-29 17:08 - 统一服务级 CORS 配置并覆盖 OAuth 回调链路
+
+### 撰写时间
+
+- 2026-08-29 17:08
+
+### Base Commit
+
+- 56e98152093fecee09cf22ec43a0d7269d4d686d
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- 此前 OAuth token 交换接口维护独立的 callback Origin 和 OPTIONS 处理，而普通 API 尚未提供统一的跨域配置入口。
+- 这种拆分会让部署配置和接口行为分叉：前端需要分别理解 OAuth 与普通 API 的 CORS 约束，也不利于本地调试和后续新增接口。
+- 本次将策略收敛为服务级白名单：浏览器可访问的 Origin 统一由 `CORS_ALLOW_ORIGINS` 配置，OAuth token 接口与其他 API 采用相同边界。
+
+### 改动概览
+
+- 新增 `CORS_ALLOW_ORIGINS` 配置解析，使用 JSON 字符串数组声明允许的 Origin，并规范化末尾 `/`。
+- 引入 `github.com/hertz-contrib/cors`，在服务启动阶段创建并注册全局 CORS 中间件。
+- 未配置白名单时不注册中间件，服务不返回 CORS 响应头。
+- CORS 默认允许的方法集合由中间件处理，并额外允许浏览器携带 `Authorization` 请求头。
+- 删除 OAuth token 接口原有的专用 Origin 常量、专用响应头写入逻辑和显式 OPTIONS 路由。
+- 更新 `.env.example` 与 README，明确 `https://app.tongji.edu.cn` 必须出现在白名单中，才能让其浏览器 callback 正常读取 token 交换响应。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：`CORSAllowOrigins()` 从环境变量读取白名单；`main()` 在 Hertz 启动、路由注册前调用 `CORSMiddleware()`。
+- 当前改动：`CORSMiddleware()` 将解析结果转换为 Hertz CORS 中间件，并通过全局 `hz.Use(...)` 应用于 API 路由。
+- 下游影响：`/v1/ping`、会话接口、同济用户信息接口及 `/v1/tongji/oauth/token` 都共享同一套 Origin 白名单和预检行为；前端部署时需要将实际页面 Origin 写入 `.env`。
+- OAuth token Handler 不再直接写 CORS 响应头，其令牌交换、state 校验、上游请求和 refresh token 脱敏逻辑保持不变。
+
+### 改动结果与业务影响
+
+- 前端跨域策略集中到一个环境变量，生产和本地开发可通过 JSON 数组同时配置多个来源。
+- OAuth callback 与其他 API 的跨域行为一致，避免同一服务内存在两套 Origin 规则。
+- 新增路由级测试验证：允许来源可访问普通 API 与 OAuth token 接口；未允许来源会被拒绝；允许来源的 OPTIONS 预检会返回方法及 `Authorization` 请求头许可。
+- 配置层测试覆盖正常数组、空配置和非法 JSON 三种路径。
+
+### 风险与待办
+
+- `CORS_ALLOW_ORIGINS` 是浏览器读取 API 响应的安全边界，应只配置受信任且实际使用的 Origin，避免使用宽泛通配配置。
+- OAuth callback 当前固定在 `https://app.tongji.edu.cn`；若该页面 Origin 变更，需要同步更新部署环境中的白名单。
+- 建议后续将新增的配置测试迁移到 GoConvey 风格，以符合仓内单测规范。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(cors): unify API cross-origin configuration`
+
 ## CHANGELOG - 2026-08-23 11:48 - 迁移 Viking 知识库 SDK 并让 Agent 感知可检索文档目录
 
 ### 撰写时间

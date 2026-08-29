@@ -87,7 +87,7 @@ const response = await fetch(
 const bearerToken = await response.json();
 ```
 
-该接口仅允许 `https://app.tongji.edu.cn` 跨域读取响应，响应包含 `access_token`、`token_type`、`expires_in` 和 `scope`，**不会**把 refresh token 返回给浏览器或写入日志。前端应把 access token 保存在内存中并在过期后重新授权；不得放入 URL、日志或长期 `localStorage`。
+该接口的跨域访问与其他 API 一样，受 `CORS_ALLOW_ORIGINS` 全局白名单控制。响应包含 `access_token`、`token_type`、`expires_in` 和 `scope`，**不会**把 refresh token 返回给浏览器或写入日志。前端应把 access token 保存在内存中并在过期后重新授权；不得放入 URL、日志或长期 `localStorage`。
 
 返回的 token 仅用于当前浏览器会话，服务不持久化它。会话接口可由浏览器以 HTTP `Authorization: Bearer <access_token>` 传入该短期 token；服务会在本次请求内尽力调用同济开放平台解析 `user_id`。解析成功时，该请求创建和访问 PostgreSQL 持久会话；缺失、格式错误或解析失败时，仍允许调用，但会退回 Redis 匿名会话。token 不会写入模型消息、响应或普通日志。
 
@@ -116,6 +116,12 @@ go run .
 PORT0=8081 go run .
 # 或
 go run . -port=8081
+```
+
+如需由浏览器跨域调用服务 API（包括 OAuth token 交换接口），在 `.env` 配置允许的前端 Origin（JSON 数组，必须包含协议和端口）；未配置时服务不返回 CORS 响应头：
+
+```bash
+CORS_ALLOW_ORIGINS='["https://app.tongji.edu.cn", "http://localhost:5173"]'
 ```
 
 需要构建二进制时：

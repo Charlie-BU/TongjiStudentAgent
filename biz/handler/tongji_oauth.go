@@ -11,8 +11,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
 
-const tongjiCallbackOrigin = "https://app.tongji.edu.cn"
-
 // 同济开放平台授权范围
 var tongjiAuthorizationScopes = []string{
 	"openid",
@@ -73,7 +71,6 @@ func TongjiAuthorize(ctx context.Context, c *app.RequestContext) {
 
 // TongjiExchangeToken 使用 callback.html 提交的 code 换取 Bearer access token。
 func TongjiExchangeToken(ctx context.Context, c *app.RequestContext) {
-	setTongjiCallbackCORS(c)
 	var request tongjiTokenRequest
 	if err := c.BindJSON(&request); err != nil {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "request body must be valid JSON"})
@@ -107,21 +104,4 @@ func TongjiExchangeToken(ctx context.Context, c *app.RequestContext) {
 		ExpiresIn:   token.ExpiresIn,
 		Scope:       token.Scope,
 	})
-}
-
-// TongjiExchangeTokenOptions 响应 callback.html 的跨域预检请求。
-func TongjiExchangeTokenOptions(_ context.Context, c *app.RequestContext) {
-	setTongjiCallbackCORS(c)
-	c.Status(consts.StatusNoContent)
-}
-
-// setTongjiCallbackCORS 仅允许登记的 callback 页面读取换取的 access token。
-func setTongjiCallbackCORS(c *app.RequestContext) {
-	if string(c.Request.Header.Get("Origin")) != tongjiCallbackOrigin {
-		return
-	}
-	c.Response.Header.Set("Access-Control-Allow-Origin", tongjiCallbackOrigin)
-	c.Response.Header.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	c.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type")
-	c.Response.Header.Set("Vary", "Origin")
 }
