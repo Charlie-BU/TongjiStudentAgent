@@ -42,12 +42,8 @@ func initializeClient(ctx context.Context) {
 	logs.Infof("start to run initializeClient")
 	defer logs.Flush()
 
-	err := godotenv.Load()
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		panic(fmt.Errorf("error loading .env file, err: %v", err))
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		logs.Infof(".env file not found; using process environment variables")
+	if err := loadOptionalEnvFile(); err != nil {
+		panic(err)
 	}
 
 	// 初始化 Cozeloop
@@ -68,4 +64,14 @@ func initializeClient(ctx context.Context) {
 	})
 
 	logs.Infof("end of initializeClient run")
+}
+
+// loadOptionalEnvFile 在可用时加载本地开发环境配置。
+// 在所有环境中，进程环境变量始终作为最终生效的配置来源。
+func loadOptionalEnvFile() error {
+	err := godotenv.Load()
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("load .env file: %w", err)
 }
