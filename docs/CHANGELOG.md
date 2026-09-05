@@ -1,3 +1,88 @@
+## CHANGELOG - 2026-09-06 00:04 - 接入受控的 Tavily 公开网页检索与正文提取能力
+
+### 撰写时间
+
+- 2026-09-06 00:04
+
+### Base Commit
+
+- 40e2edeb4d256d4306680315672085f2773e615b
+
+### Compare Scope
+
+- working_tree_only
+
+### 背景与改动目标
+
+- Agent 原有能力主要依赖校园 MCP、知识库和本地系统工具。当知识库资料不足、用户需要最新公开公告或公开网页核验时，缺少受控的外网检索链路。
+- 这次接入 Tavily，但目标不是提供无限制浏览器能力，而是增加两个有边界的系统工具：公开网页搜索与单页正文提取。
+- 设计重点放在能力开关、凭据隔离、URL 安全校验、响应体上限、稳定错误码、来源可追溯，以及将网页文本作为非可信数据隔离后再交给模型。
+
+### 改动概览
+
+- 新增 `internal/integration/tavily`：
+  - 通过 `TAVILY_ENABLED` 和 `TAVILY_API_KEY` 控制启用；
+  - 提供 `/search` 与 `/extract` HTTP 适配；
+  - 固定 30 秒请求超时、不自动跟随重定向；
+  - 限制响应体最大 2 MiB；
+  - 将供应商 HTTP、网络、超时和配额错误归一化为稳定状态码；
+  - 日志仅记录操作、HTTP 状态、归一化状态和耗时，不记录 Tavily Key 或响应正文。
+- 新增 `system.web_search`：
+  - 支持公开网页搜索、日期范围、域名包含/排除和结果数量控制；
+  - 默认返回 5 条、最多 10 条有界来源；
+  - 对来源 URL 去重、过滤非公开地址，并将摘要限制在 1500 字符。
+- 新增 `system.url_fetch`：
+  - 仅支持用户提供或搜索得到的公开 HTTP/HTTPS 页面；
+  - 支持按 query 提取相关片段；
+  - 默认正文上限 8000 字符，最大 16000 字符；
+  - 不支持登录链接、OAuth code、Token、Cookie、私有地址或自定义端口请求。
+- 新增 `webtool` 公共安全层：
+  - 严格 JSON 参数解析与未知字段拒绝；
+  - 公开域名、全局单播 IP、端口、敏感 query 参数校验；
+  - Unicode 截断与稳定失败响应；
+  - 外部标题、摘要和正文 XML 转义，并放入 `<untrusted_web_data>` 非可信数据块。
+- 更新系统工具注册和 allowlist：
+  - Tavily client 成功初始化时才注册 `system.web_search`、`system.url_fetch`；
+  - 工具仍需通过应用 allowlist 才能进入 Runtime。
+- 更新 Chat Service：
+  - 启动阶段创建 Tavily client；
+  - 将 client 传入 `systemtools.Tools()`；
+  - Tavily 关闭时不注册网页工具，启用但缺少 Key 时启动失败。
+- 更新 `.env.example`、README 和 `docs/TAVILY.md`：
+  - 说明启用方式、工具参数、安全边界、错误状态、PromptHub 文案和人工验收步骤。
+- 新增 Runtime、Registry、Tavily Client、URL 策略、搜索和提取工具的离线测试。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：部署环境通过 `TAVILY_ENABLED` 与 `TAVILY_API_KEY` 决定能力是否启用；Chat Service 在初始化系统工具前创建 Tavily client。
+- 当前改动：`systemtools.Registry` 接收可选 Tavily client，只有 client 非空且 allowlist 明确允许时，才注册网页搜索和正文提取工具。
+- 工具边界：模型输入先经过严格参数、日期、域名和 URL 校验；Tavily 返回的结果再经过公开地址复验、长度裁剪、来源去重和非可信内容隔离。
+- 下游影响：Runtime 可在校园知识库资料不足时调用公开网页工具；工具结果保留来源链接，模型可引用资料，但不能把网页内容当作可执行指令。
+
+### 改动结果与业务影响
+
+- Agent 获得可配置的公开网页搜索与单页正文核验能力，不依赖校园 Access Token、MCP 或本地 Sandbox。
+- 网页工具关闭时不改变既有系统工具注册结果；部署方无需配置 Tavily 凭据。
+- Tavily 凭据仅发送给 Tavily API，不会进入 Tool Result、模型上下文、业务日志或校园接口请求。
+- 搜索摘要和网页正文均作为明确的非可信参考资料返回；外部网页中的伪造 XML、工具调用或提示词会被转义。
+- 网页结果采用稳定 JSON 状态，遇到配额、限流、超时、URL 拒绝或提取失败时，Agent 可继续选择其他来源或降级回答。
+
+### 风险与待办
+
+- `TAVILY_ENABLED=true` 时必须配置有效 `TAVILY_API_KEY`；当前示例环境文件默认启用，复制到生产环境前需确认该配置是否符合部署策略。
+- 网页工具只校验 URL 的公开形式，实际网络访问由 Tavily 服务执行；仍应持续关注供应商侧的重定向、DNS 解析与网页抓取安全策略。
+- 公开网页内容可能过时、片段化或不完整。回答涉及制度、时效信息或重要决策时，仍应保留来源链接并说明核验边界。
+- 已执行并通过：
+  - `go test ./internal/agentic/systemtools/web_search ./internal/agentic/systemtools/url_fetch`
+- 建议合并前继续执行：
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+
+### 建议 Commit Message（git-cz）
+
+- `feat(web-tools): add guarded Tavily search and fetch`
+
 ## CHANGELOG - 2026-08-29 18:49 - 为会话历史引入固定快照分页
 
 ### 撰写时间

@@ -34,7 +34,9 @@ func TestSearchKnowledgeTool(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(info.Name, ShouldEqual, SearchKnowledgeToolName)
 			So(info.Desc, ShouldContainSubstring, "官方依据")
-			So(info.Desc, ShouldContainSubstring, "收到上一次 tool call result 后")
+			So(info.Desc, ShouldContainSubstring, "收到上一次结果后才能发起下一次")
+			So(info.Desc, ShouldContainSubstring, "即使知识库命中也不能省略网页收集")
+			So(info.Desc, ShouldContainSubstring, "第一可信来源")
 			So(info.Desc, ShouldContainSubstring, "个人实时数据")
 		})
 

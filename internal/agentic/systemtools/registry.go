@@ -8,8 +8,11 @@ import (
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	managetaskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/manage_task_plan"
 	searchknowledge "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/search_knowledge"
+	urlfetch "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/url_fetch"
+	websearch "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/web_search"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"github.com/cloudwego/eino/components/tool"
 )
 
@@ -19,6 +22,12 @@ type Option func(*options)
 type options struct {
 	taskPlans       taskplan.TaskPlanRepository
 	knowledgeClient *knowledge.Client
+	tavilyClient    *tavily.Client
+}
+
+// WithTavilyClient 注入已启用的公开网页客户端。
+func WithTavilyClient(client *tavily.Client) Option {
+	return func(options *options) { options.tavilyClient = client }
 }
 
 // WithTaskPlanRepository 注入管理当前会话任务计划所需的 scope-bound repository。
@@ -40,18 +49,21 @@ func Tools(opts ...Option) []tool.BaseTool {
 			opt(&options)
 		}
 	}
-	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans, options.knowledgeClient)
+	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans, options.knowledgeClient, options.tavilyClient)
 }
 
 // buildTools 构建已通过应用 allowlist 审核的静态系统工具。
-func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanRepository, knowledgeClient *knowledge.Client) []tool.BaseTool {
-	registeredTools := make([]tool.BaseTool, 0, 3)
+func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanRepository, knowledgeClient *knowledge.Client, tavilyClient *tavily.Client) []tool.BaseTool {
+	registeredTools := make([]tool.BaseTool, 0, 5)
 	candidates := []tool.InvokableTool{loadskill.NewTool(isAllowed)}
 	if repository != nil {
 		candidates = append(candidates, managetaskplan.NewTool(isAllowed, repository))
 	}
 	if knowledgeClient != nil {
 		candidates = append(candidates, searchknowledge.NewTool(isAllowed, knowledgeClient))
+	}
+	if tavilyClient != nil {
+		candidates = append(candidates, websearch.NewTool(isAllowed, tavilyClient), urlfetch.NewTool(isAllowed, tavilyClient))
 	}
 	for _, candidate := range candidates {
 		info, err := candidate.Info(context.TODO())

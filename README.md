@@ -59,6 +59,12 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 启用知识库时，必须配置 `VOLC_API_KEY`，以及 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。服务会注册只读的 `system.search_knowledge` 系统工具，Agent 仅在校园公开信息需要官方依据、时效性或适用范围核验时按需调用。由于上游接口限制，同一轮中如需多次检索，必须串行调用；只有收到上一次 tool call result 后，才能发起下一次调用；并行调用可能只有一次成功。工具结果以非可信参考资料返回；默认不展示来源，只有用户明确要求来源、依据或通知原文时，才可提供返回的来源标题。个人实时数据仍必须使用对应 Tongji MCP 工具。
 
+## 公开网页工具（Tavily）
+
+设置 `TAVILY_ENABLED=true` 和 `TAVILY_API_KEY` 后，Agent 注册 `system.web_search` 和 `system.url_fetch`。关闭开关时不注册；启用但缺少 Key 时启动报错。客户端内部固定 30 秒超时，无需超时环境变量；不依赖校园授权或 `SANDBOX_ENABLED`。
+
+搜索返回有界摘要及来源链接，正文按需通过 Extract 提取。网页业务错误以稳定 `status` 返回，Agent 可继续回答；本轮取消仍会终止调用。详细参数、安全边界、PromptHub 待发布文案和人工验收步骤见 [Tavily 接入说明](docs/TAVILY.md)。
+
 ## 同济开放平台浏览器授权
 
 服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考项目根目录的 [`.env.example`](./.env.example)。

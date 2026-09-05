@@ -25,6 +25,7 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	mcpintegration "github.com/Charlie-BU/TongjiStudent/internal/integration/mcp"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino-ext/components/model/ark"
@@ -91,6 +92,11 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
 
+	// 公开网页相关
+	tavilyClient, err := tavily.NewFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("initialize Tavily client: %w", err)
+	}
 	// 系统提示词相关
 	// 工具相关
 	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
@@ -157,6 +163,7 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 	tools := append(systemtools.Tools(
 		systemtools.WithTaskPlanRepository(taskPlanRepository),
 		systemtools.WithKnowledgeClient(knowledgeClient),
+		systemtools.WithTavilyClient(tavilyClient),
 	), MCPTools...)
 	rt, err := runtime.New(ctx, runtime.Config{
 		Name:            "Tongji Student Agent",

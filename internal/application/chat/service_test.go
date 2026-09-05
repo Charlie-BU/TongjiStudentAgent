@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
@@ -164,6 +165,16 @@ func TestMCPToolAllowlist(t *testing.T) {
 func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
 	Convey("聊天服务的静态系统 Tool 注册", t, func() {
 		tools := systemtools.Tools()
+		Convey("启用网页客户端后注册两个公开工具且不影响 MCP 名单", func() {
+			registered := systemtools.Tools(systemtools.WithTavilyClient(&tavily.Client{}))
+			So(registered, ShouldHaveLength, 3)
+			for index, name := range []string{toolallowlist.WebSearchTool, toolallowlist.URLFetchTool} {
+				info, err := registered[index+1].Info(context.Background())
+				So(err, ShouldBeNil)
+				So(info.Name, ShouldEqual, name)
+				So(toolallowlist.MCPTools(), ShouldNotContain, name)
+			}
+		})
 
 		Convey("应注入已加白的静态系统工具", func() {
 			So(tools, ShouldHaveLength, 1)
