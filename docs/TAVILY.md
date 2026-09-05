@@ -17,7 +17,7 @@ Agent 主仓在 `internal/agentic/systemtools` 注册 `system.web_search` / `sys
 
 Search 固定 general/basic，关闭 auto_parameters、include_answer、include_raw_content、include_images。时间过滤沿用 Tavily 的发布或更新日期语义，不承诺 UTC+8 精确时间边界。结果为 `status/query/sources/message`；来源包含 title、url、snippet、truncated。标题最多 300 字符，摘要最多 1500 字符；去重并过滤不可用 URL、空正文。
 
-`system.url_fetch` 接受 `url`（最多 2048 字节）、`reason`（1～120 字符）、可选 `query`（最多 500 字符）、`max_chars`（默认 8000，范围 1000～16000；零值使用默认值）。单次仅提取一个 URL，使用 basic/markdown 并关闭图片。有 query 时请求最多 5 个相关片段。
+`system.url_fetch` 接受 `url`（最多 2048 字节）、`reason`（1～120 字符）、可选 `query`（最多 500 字符）、`max_chars`（默认 8000，范围 1000～16000；零值使用默认值）。单次仅提取一个 URL，使用 advanced/markdown 并关闭图片，以提高表格和嵌入内容页面的提取成功率；每 5 个成功 URL 的用量为 2 credits。有 query 时请求最多 5 个相关片段。
 
 提取结果为 `status/url/content/content_mode/truncated/message`。`content_mode=full` 表示未按主题筛选，不保证抓到全部页面；`relevant_chunks` 表示按 query 获取片段。本地按 Unicode 字符截断。没有 fetch_id、缓存和分页；截断后应指定 query 获取相关片段。HTTP 200 中的 failed_results、空正文和无有效结果仍视为失败。
 

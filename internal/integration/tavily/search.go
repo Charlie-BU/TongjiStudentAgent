@@ -12,7 +12,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (*SearchResponse
 		Answer bool   `json:"include_answer"`
 		Raw    bool   `json:"include_raw_content"`
 		Images bool   `json:"include_images"`
-	}{SearchInput: input, Topic: "general", Depth: "basic"}
+	}{SearchInput: input, Topic: "general", Depth: "advanced"}
 	var response *SearchResponse
 	if err := c.post(ctx, "/search", request, &response); err != nil {
 		return nil, err

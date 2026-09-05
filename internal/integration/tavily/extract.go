@@ -14,7 +14,7 @@ func (c *Client) Extract(ctx context.Context, input ExtractInput) (*ExtractRespo
 		Depth  string   `json:"extract_depth"`
 		Format string   `json:"format"`
 		Images bool     `json:"include_images"`
-	}{URLs: []string{input.URL}, Query: input.Query, Depth: "basic", Format: "markdown"}
+	}{URLs: []string{input.URL}, Query: input.Query, Depth: "advanced", Format: "markdown"}
 	if input.Query != "" {
 		request.Chunks = 5
 	}

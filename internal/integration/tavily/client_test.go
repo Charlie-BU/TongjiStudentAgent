@@ -54,7 +54,7 @@ func TestClientSearch(t *testing.T) {
 		So(json.NewDecoder(request.Body).Decode(&data), ShouldBeNil)
 		So(data["query"], ShouldEqual, "公开公告")
 		So(data["start_date"], ShouldEqual, "2026-01-01")
-		So(data["search_depth"], ShouldEqual, "basic")
+		So(data["search_depth"], ShouldEqual, "advanced")
 		So(data["max_results"], ShouldEqual, 5)
 		for _, key := range []string{"auto_parameters", "include_answer", "include_raw_content", "include_images"} {
 			So(data[key], ShouldEqual, false)
@@ -120,6 +120,7 @@ func TestClientExtract(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(result.Results[0].Content, ShouldEqual, "通知正文")
 			So(data["urls"], ShouldResemble, []any{"https://example.org"})
+			So(data["extract_depth"], ShouldEqual, "advanced")
 			So(data["format"], ShouldEqual, "markdown")
 			if query == "" {
 				So(data["query"], ShouldBeNil)
