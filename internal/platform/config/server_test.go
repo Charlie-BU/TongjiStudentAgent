@@ -35,3 +35,16 @@ func TestCORSAllowOrigins(t *testing.T) {
 		})
 	})
 }
+
+func TestServerPort(t *testing.T) {
+	t.Setenv("PORT0", "")
+	t.Setenv("PORT", "4567")
+	if actual := ServerPort(); actual != "4567" {
+		t.Fatalf("ServerPort() = %q, want Railway PORT", actual)
+	}
+
+	t.Setenv("PORT0", "1234")
+	if actual := ServerPort(); actual != "1234" {
+		t.Fatalf("ServerPort() = %q, want legacy PORT0 to win", actual)
+	}
+}

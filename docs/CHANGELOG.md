@@ -1,3 +1,64 @@
+## CHANGELOG - 2026-09-09 16:21 - 将网页正文提取迁移到本地自适应抓取并补齐浏览器部署链路
+
+### 撰写时间
+
+- 2026-09-09 16:21
+
+### Base Commit
+
+- `853a9ecdb49867da68b878ac49943128e73a55ab`（按记录规范取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`。
+- 分析范围为当前暂存及未暂存改动，相对 `HEAD`（`1d31bac87c5a744eec39def5bcdebdcfffbc3b24`）比较；不包含 `HEAD~1..HEAD` 的已提交改动。
+
+### 背景与改动目标
+
+原先 `system.web_search` 和 `system.url_fetch` 共用 Tavily，关闭 Tavily 后也无法读取用户提供的公开链接。正文提取还依赖供应商返回的片段，难以组合静态 HTML、页面内嵌数据和 JavaScript 渲染内容。
+
+这次将搜索与正文提取拆开：Tavily 继续负责寻找候选来源，本地 `webfetch` 负责读取与核验页面。目标是保留更多可用正文，并输出经过校验的结构化链接，供 Agent 继续读取目标页。抓取迁移到本机后，公网连接限制、浏览器安装和资源释放也需要由应用承担。
+
+### 改动概览
+
+- 新增 `internal/integration/webfetch`，通过 HTTP、语义 HTML、hydration JSON、`noscript` 和 Chromium 可见文本汇总正文。每个成功读取的 HTML 都尝试浏览器补充；浏览器失败时保留已有静态正文。跨表示合并处理包含与首尾重叠，同一正文内部的重复事实和表格值保持原序。
+- HTTP 接受 HTML、XHTML 和纯文本，根据 BOM、HTTP charset 与 HTML 声明解码为 UTF-8；原始响应与解码结果分别受 4 MiB 上限约束。不支持的 PDF、图片或压缩包返回失败。
+- `system.url_fetch` 改用独立抓取客户端，新增 `fetch_mode`、`links` 和 `links_truncated`。链接解析相对地址和 `base`，解开 DuckDuckGo 的 `uddg` 跳转，再执行 URL、DNS 校验及去重；候选处理上限为 200，输出最多 50 条，标题最多 300 字符，DNS 校验预算为 2 秒。
+- 提取公共 `internal/platform/publicurl` 策略，供工具入口与抓取器复用。HTTP 在重定向和拨号阶段校验公网地址；Chromium 主文档与子资源先经过请求检查，HTTP/HTTPS 流量再经本地代理连接到已验证的公网 IP。代理及 CONNECT 两端随上下文回收。
+- 浏览器通过 `chromedp.RunResponse` 取得主文档响应，非 2xx 或缺失响应时不进入正文提取。链接校验期间发生父请求取消时，`Extract` 返回取消错误；结果校验完成后才记录最终状态与耗时。
+- `chat.NewFromEnv` 在建立 MCP、PostgreSQL、Redis 连接之前预检 Chromium；后续初始化失败统一释放已获得的资源，成功后由 `Service.Close` 接管。新增可注入的初始化依赖与离线测试，覆盖 17 个失败阶段、成功资源归属及关闭错误后的继续清理。
+- 浏览器路径按 `CHROME_BIN`、PATH、系统常见路径的顺序查找。macOS 支持 `/Applications`、`~/Applications` 下的 Chrome/Chromium，Linux 补充常见固定路径；显式配置无效时直接报错。
+- 移除 Tavily Extract 适配与相关类型，将 Tavily 环境配置收拢到 `client.go`；Registry 分别按两个客户端是否存在注册搜索和抓取工具，继续执行工具 allowlist。
+- 新增并登记内置 `web-tools` Skill，说明知识库、搜索和正文核验的调用关系、DuckDuckGo 候选链接读取、证据融合及失败处置。用 `docs/WEB_TOOLS.md` 替换 `docs/TAVILY.md`，同步 README 与系统说明。
+- 新增 Docker 多阶段构建及 Railway 配置。运行镜像安装 Chromium、CA 证书和中文字体，以非 root 用户运行；端口按 `PORT0`、`PORT`、`8080` 顺序选择。`/v1/ping` 响应改为 `{"status":"ok"}`，用作 Railway 健康检查。
+
+### 关键链路解析（含上下游）
+
+1. **配置与启动 → 工具注册 → Runtime**：`TAVILY_ENABLED` 和 `TAVILY_API_KEY` 只控制网页搜索。Chat 默认创建 `webfetch` 客户端并执行浏览器预检，再初始化 MCP 与会话存储，将两种客户端分别传入 `systemtools.Tools`。工具名称保持不变，关闭 Tavily 后仍可注册 `system.url_fetch`；浏览器不可启动则整个服务初始化失败。
+2. **工具输入 → 本地抓取 → 模型结果**：入口继续执行 allowlist、参数和 URL 校验；抓取层控制连接目标、响应类型、解码与正文合并；输出层按 `max_chars` 截断正文，并转义包装正文和链接标题。`links` 表示候选地址已校验，不代表目标正文已读取，模型需要再次 fetch 才能把目标页面作为证据。
+3. **浏览器请求 → 公网代理 → 生命周期**：浏览器禁止隐式 loopback 代理绕过，限制直接 DNS、QUIC 和非代理 WebRTC UDP；代理拨号时重新解析并绑定公网 IP，减少检查与连接之间的 DNS rebinding 风险。HTTPS 使用 CONNECT 隧道，不解密 TLS，页面完整 URL 的检查仍由浏览器请求拦截承担。
+4. **部署镜像 → 启动预检 → 健康检查**：Docker 提供浏览器可执行文件，Chat 在 HTTP listener 启动前打开 `about:blank` 验证实际可启动性。Railway 使用 Dockerfile 与 `/v1/ping`；缺少浏览器、动态库或可用 sandbox 时，服务不会进入监听状态。健康检查反映启动前置条件已通过，不持续探测每个下游服务。
+
+### 改动结果与业务影响
+
+- 用户提供的公开 URL 不再依赖 Tavily Key，搜索仍保持可选。模型可从真实返回的结构化链接继续核验来源，减少从文本标题猜测地址的需要。
+- `query` 保留为兼容输入，但不再筛选相关片段；`content_mode` 固定为 `full`，正文仍受默认 8000、最大 16000 字符限制。依赖旧 `relevant_chunks` 行为的消费方需要调整，完整模式不代表页面所有内容均已加载。
+- 网页渲染迁移到 Agent 所在环境，每个 HTML 请求会增加浏览器启动、渲染与代理成本。HTTP 超时为 15 秒，浏览器阶段为 30 秒，链接校验另有 2 秒预算，不能把这些阶段视作单一的 30 秒总超时。
+- 现有工具名和授权入口保留；健康检查 JSON 从 `message` 改为 `status`，读取旧字段的外部脚本需要同步。新增 `chromedp`、CDP 及相关依赖由 `go.mod`、`go.sum` 固定版本。
+
+### 风险与待办
+
+- 已验证：本轮修复过程中 `go test -count=1 ./...`、`go vet ./...`，以及 `go test -race -count=1 ./internal/integration/webfetch ./internal/application/chat` 均通过。随后增加路径自动检测后，已再次通过 `go test -count=1 ./internal/integration/webfetch`；测试使用固定响应、模拟 DNS 和本地测试连接，不访问真实模型或生产服务。
+- 已确认当前 macOS 的标准 Chrome 路径存在且可执行；这不等于已完成真实浏览器启动或页面抓取验收。本次 changelog 生成仅修改文档，没有重新运行测试。
+- 未验证：Docker 镜像构建、Railway 实际部署、目标环境 sandbox 兼容性，以及真实网页的完整性和并发内存开销。部署前应验证浏览器预检、健康检查和代表性静态/动态页面，并在预期并发下测量资源占用。
+- 页面提取不自动滚动、不点击加载更多、不登录或处理验证码。浏览器状态检查可拒绝 HTTP 错误响应，但 HTTP 200 的验证码或反爬提示仍可能被当作可见文本，使用结果时需要检查内容是否符合目标。
+- 4 MiB 限制约束 HTTP 原始响应及解码文本，不是 Chromium 进程或全部子资源的总内存上限。正文截断与链接截断分别报告；候选链接通过 DNS 校验也不保证后续请求一定可达。
+- 浏览器已成为启动依赖；关闭 Tavily 不会跳过 Chromium 预检。自定义安装位置仍应配置有效的 `CHROME_BIN`，生产继续使用镜像内的显式路径。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(web-tools): add adaptive fetch, validated links and browser deployment`
+
 ## CHANGELOG - 2026-09-06 00:04 - 接入受控的 Tavily 公开网页检索与正文提取能力
 
 ### 撰写时间

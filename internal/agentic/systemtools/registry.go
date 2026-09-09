@@ -13,6 +13,7 @@ import (
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	"github.com/cloudwego/eino/components/tool"
 )
 
@@ -23,11 +24,17 @@ type options struct {
 	taskPlans       taskplan.TaskPlanRepository
 	knowledgeClient *knowledge.Client
 	tavilyClient    *tavily.Client
+	webFetchClient  *webfetch.Client
 }
 
 // WithTavilyClient 注入已启用的公开网页客户端。
 func WithTavilyClient(client *tavily.Client) Option {
 	return func(options *options) { options.tavilyClient = client }
+}
+
+// WithWebFetchClient 注入已启用的自适应 web-fetch 客户端。
+func WithWebFetchClient(client *webfetch.Client) Option {
+	return func(options *options) { options.webFetchClient = client }
 }
 
 // WithTaskPlanRepository 注入管理当前会话任务计划所需的 scope-bound repository。
@@ -49,12 +56,17 @@ func Tools(opts ...Option) []tool.BaseTool {
 			opt(&options)
 		}
 	}
-	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans, options.knowledgeClient, options.tavilyClient)
+	return buildTools(toolallowlist.IsAllowedTool, options.taskPlans, options.knowledgeClient, options.tavilyClient, options.webFetchClient)
 }
 
 // buildTools 构建已通过应用 allowlist 审核的静态系统工具。
-func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanRepository, knowledgeClient *knowledge.Client, tavilyClient *tavily.Client) []tool.BaseTool {
-	registeredTools := make([]tool.BaseTool, 0, 5)
+func buildTools(
+	isAllowed func(string) bool,
+	repository taskplan.TaskPlanRepository,
+	knowledgeClient *knowledge.Client,
+	tavilyClient *tavily.Client,
+	webFetchClient *webfetch.Client,
+) []tool.BaseTool {
 	candidates := []tool.InvokableTool{loadskill.NewTool(isAllowed)}
 	if repository != nil {
 		candidates = append(candidates, managetaskplan.NewTool(isAllowed, repository))
@@ -63,11 +75,17 @@ func buildTools(isAllowed func(string) bool, repository taskplan.TaskPlanReposit
 		candidates = append(candidates, searchknowledge.NewTool(isAllowed, knowledgeClient))
 	}
 	if tavilyClient != nil {
-		candidates = append(candidates, websearch.NewTool(isAllowed, tavilyClient), urlfetch.NewTool(isAllowed, tavilyClient))
+		candidates = append(candidates, websearch.NewTool(isAllowed, tavilyClient))
 	}
+	if webFetchClient != nil {
+		candidates = append(candidates, urlfetch.NewTool(isAllowed, webFetchClient))
+	}
+
+	registeredTools := make([]tool.BaseTool, 0, 5)
 	for _, candidate := range candidates {
-		info, err := candidate.Info(context.TODO())
+		info, err := candidate.Info(context.TODO()) // context.TODO() 表示当前暂无可透传的调用上下文，仅用于读取工具元信息。
 		if err != nil || info == nil || !isAllowed(info.Name) {
+			// 跳过不在 allowlist 中的工具。
 			continue
 		}
 		registeredTools = append(registeredTools, candidate)

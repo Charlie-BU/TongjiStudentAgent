@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"errors"
-	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"testing"
 
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
@@ -13,7 +12,9 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	loadskill "github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools/load_skill"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
@@ -166,7 +167,7 @@ func TestAgentToolsIncludesAllowedStaticTools(t *testing.T) {
 	Convey("聊天服务的静态系统 Tool 注册", t, func() {
 		tools := systemtools.Tools()
 		Convey("启用网页客户端后注册两个公开工具且不影响 MCP 名单", func() {
-			registered := systemtools.Tools(systemtools.WithTavilyClient(&tavily.Client{}))
+			registered := systemtools.Tools(systemtools.WithTavilyClient(&tavily.Client{}), systemtools.WithWebFetchClient(&webfetch.Client{}))
 			So(registered, ShouldHaveLength, 3)
 			for index, name := range []string{toolallowlist.WebSearchTool, toolallowlist.URLFetchTool} {
 				info, err := registered[index+1].Info(context.Background())

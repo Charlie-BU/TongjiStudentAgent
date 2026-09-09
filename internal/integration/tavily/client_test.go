@@ -99,40 +99,6 @@ func TestClientErrors(t *testing.T) {
 	})
 }
 
-func TestClientExtract(t *testing.T) {
-	Convey("提取正文和业务失败", t, func() {
-		for _, body := range []string{`{"results":[],"failed_results":[{"url":"https://example.org","error":"secret"}]}`, `{"results":[{"raw_content":" "}]}`, `{"results":[]}`, `null`} {
-			_, err := newTestClient(body, 200).Extract(context.Background(), ExtractInput{URL: "https://example.org"})
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldNotContainSubstring, "secret")
-		}
-		for _, query := range []string{"", "时间"} {
-			c := newTestClient("", 200)
-			var data map[string]any
-			c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				err := json.NewDecoder(r.Body).Decode(&data)
-				if err != nil {
-					return nil, err
-				}
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"results":[{"url":"https://example.org","raw_content":"通知正文"}],"failed_results":[]}`))}, nil
-			})
-			result, err := c.Extract(context.Background(), ExtractInput{URL: "https://example.org", Query: query})
-			So(err, ShouldBeNil)
-			So(result.Results[0].Content, ShouldEqual, "通知正文")
-			So(data["urls"], ShouldResemble, []any{"https://example.org"})
-			So(data["extract_depth"], ShouldEqual, "advanced")
-			So(data["format"], ShouldEqual, "markdown")
-			if query == "" {
-				So(data["query"], ShouldBeNil)
-				So(data["chunks_per_source"], ShouldBeNil)
-			} else {
-				So(data["query"], ShouldEqual, query)
-				So(data["chunks_per_source"], ShouldEqual, 5)
-			}
-		}
-	})
-}
-
 func TestClientCancellationAndRedirect(t *testing.T) {
 	Convey("请求取消、读取失败和重定向边界", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -165,5 +131,33 @@ func TestClientCancellationAndRedirect(t *testing.T) {
 		_, err = c.Search(context.Background(), SearchInput{})
 		So(Status(err), ShouldEqual, "web_unavailable")
 		So(calls, ShouldEqual, 1)
+	})
+}
+
+func TestNewFromEnv(t *testing.T) {
+	Convey("网页能力配置", t, func() {
+		t.Setenv("TAVILY_ENABLED", "")
+		t.Setenv("TAVILY_API_KEY", "")
+		client, err := NewFromEnv()
+		So(err, ShouldBeNil)
+		So(client, ShouldBeNil)
+		t.Setenv("TAVILY_ENABLED", "invalid")
+		_, err = NewFromEnv()
+		So(err, ShouldNotBeNil)
+		t.Setenv("TAVILY_ENABLED", "true")
+		_, err = NewFromEnv()
+		So(err, ShouldNotBeNil)
+		t.Setenv("TAVILY_API_KEY", "test-key")
+		client, err = NewFromEnv()
+		So(err, ShouldBeNil)
+		So(client.http.Timeout, ShouldEqual, 30*time.Second)
+		for _, value := range []time.Duration{0, -time.Second, 121 * time.Second} {
+			_, err = NewClient("test-key", value, nil)
+			So(err, ShouldNotBeNil)
+		}
+		t.Setenv("TAVILY_ENABLED", "false")
+		client, err = NewFromEnv()
+		So(err, ShouldBeNil)
+		So(client, ShouldBeNil)
 	})
 }

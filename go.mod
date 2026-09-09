@@ -6,6 +6,8 @@ toolchain go1.23.8
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/chromedp/cdproto v0.0.0-20250319231242-a755498943c8
+	github.com/chromedp/chromedp v0.13.2
 	github.com/cloudwego/eino v0.9.1
 	github.com/cloudwego/eino-ext/adk/backend/local v0.2.3
 	github.com/cloudwego/eino-ext/callbacks/cozeloop v0.3.1
@@ -23,6 +25,7 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/volcengine/vikingdb-go-sdk v0.0.13
 	github.com/volcengine/volcengine-go-sdk v1.1.49
+	golang.org/x/net v0.40.0
 )
 
 require (
@@ -35,6 +38,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/gopkg v0.1.5 // indirect
 	github.com/cloudwego/netpoll v0.7.1 // indirect
@@ -43,6 +47,10 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
+	github.com/gobwas/httphead v0.1.0 // indirect
+	github.com/gobwas/pool v0.2.1 // indirect
+	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
@@ -86,7 +94,6 @@ require (
 	golang.org/x/arch v0.14.0 // indirect
 	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect

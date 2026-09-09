@@ -13,6 +13,7 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/systemtools"
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
@@ -70,22 +71,26 @@ func (m *webModel) Stream(ctx context.Context, messages []*schema.Message, optio
 func TestRuntimeWebTools(t *testing.T) {
 	Convey("公开网页工具闭环", t, func() {
 		for _, failed := range []bool{false, true} {
-			calls := 0
+			searchCalls := 0
 			client, err := tavily.NewClient("fixture-key", time.Second, webTransport(func(r *http.Request) (*http.Response, error) {
-				calls++
+				searchCalls++
 				code := 200
 				body := `{"results":[{"title":"公告","url":"https://example.org/notice","content":"摘要"}]}`
 				if failed {
 					code = 429
 					body = "upstream secret"
-				} else if r.URL.Path == "/extract" {
-					body = `{"results":[{"url":"https://example.org/notice","raw_content":"公开正文"}],"failed_results":[]}`
 				}
 				return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}))
 			So(err, ShouldBeNil)
+			fetchCalls := 0
+			fetchClient := webfetch.NewClient(&http.Client{Transport: webTransport(func(r *http.Request) (*http.Response, error) {
+				fetchCalls++
+				body := `<html><body><main>` + strings.Repeat("公开正文。", 30) + `</main></body></html>`
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})}, nil)
 			m := &webModel{failed: failed}
-			rt, err := New(context.Background(), Config{Name: "web-test", ChatModel: m, Tools: systemtools.Tools(systemtools.WithTavilyClient(client)), MaxIterations: 4})
+			rt, err := New(context.Background(), Config{Name: "web-test", ChatModel: m, Tools: systemtools.Tools(systemtools.WithTavilyClient(client), systemtools.WithWebFetchClient(fetchClient)), MaxIterations: 4})
 			So(err, ShouldBeNil)
 			var events []agentevent.Event
 			var recorded []*schema.Message
@@ -98,7 +103,8 @@ func TestRuntimeWebTools(t *testing.T) {
 			} else {
 				So(response, ShouldContainSubstring, "https://example.org/notice")
 			}
-			So(calls, ShouldEqual, want)
+			So(searchCalls, ShouldEqual, 1)
+			So(fetchCalls, ShouldEqual, want-1)
 			started, completed, toolMessages := 0, 0, 0
 			for _, e := range events {
 				if e.Type == agentevent.ToolCallStarted {

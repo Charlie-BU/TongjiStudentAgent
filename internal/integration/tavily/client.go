@@ -1,3 +1,4 @@
+// Package tavily provides the public web search HTTP adapter.
 package tavily
 
 import (
@@ -7,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +17,23 @@ import (
 )
 
 const maxResponseBytes = 2 << 20
+
+// NewFromEnv 创建 Tavily 客户端。
+// Tavily 禁用时返回 nil。
+func NewFromEnv() (*Client, error) {
+	enabled := false
+	if value := strings.TrimSpace(os.Getenv("TAVILY_ENABLED")); value != "" {
+		var err error
+		enabled, err = strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("TAVILY_ENABLED must be a boolean")
+		}
+	}
+	if !enabled {
+		return nil, nil
+	}
+	return NewClient(os.Getenv("TAVILY_API_KEY"), 30*time.Second, nil)
+}
 
 // Client 复用 HTTP 连接并仅向 Tavily 发送专用凭据。
 type Client struct {
@@ -35,7 +55,7 @@ func NewClient(key string, timeout time.Duration, transport http.RoundTripper) (
 	}}, nil
 }
 
-// post 执行有界请求且不自动重试。
+// post 发起有界 POST 请求，且不自动重试。
 func (c *Client) post(ctx context.Context, path string, input, output any) (err error) {
 	started := time.Now()
 	code := 0

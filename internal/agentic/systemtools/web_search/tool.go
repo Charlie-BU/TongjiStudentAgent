@@ -85,10 +85,12 @@ func (t *Tool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (
 		return webtool.Failure("invalid_arguments")
 	}
 	var err error
+	// 校验包含域名
 	input.IncludeDomains, err = webtool.Domains(input.IncludeDomains)
 	if err != nil {
 		return webtool.Failure("invalid_arguments")
 	}
+	// 校验排除域名
 	input.ExcludeDomains, err = webtool.Domains(input.ExcludeDomains)
 	if err != nil {
 		return webtool.Failure("invalid_arguments")

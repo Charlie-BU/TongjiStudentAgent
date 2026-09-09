@@ -22,24 +22,3 @@ type SearchResponse struct {
 	Results   []SearchSource `json:"results"`
 	RequestID string         `json:"request_id"`
 }
-
-// ExtractInput 描述单页提取条件。
-type ExtractInput struct {
-	URL   string
-	Query string
-}
-
-// ExtractSource 保存页面正文。
-type ExtractSource struct {
-	URL     string `json:"url"`
-	Content string `json:"raw_content"`
-}
-
-// ExtractResponse 保存提取结果和失败页面。
-type ExtractResponse struct {
-	Results       []ExtractSource `json:"results"`
-	FailedResults []struct {
-		URL string `json:"url"`
-	} `json:"failed_results"`
-	RequestID string `json:"request_id"`
-}

@@ -59,11 +59,21 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 启用知识库时，必须配置 `VOLC_API_KEY`，以及 `ARK_KNOWLEDGE_COLLECTION` 或 `ARK_KNOWLEDGE_RESOURCE_ID`。服务会注册只读的 `system.search_knowledge` 系统工具，Agent 仅在校园公开信息需要官方依据、时效性或适用范围核验时按需调用。由于上游接口限制，同一轮中如需多次检索，必须串行调用；只有收到上一次 tool call result 后，才能发起下一次调用；并行调用可能只有一次成功。工具结果以非可信参考资料返回；默认不展示来源，只有用户明确要求来源、依据或通知原文时，才可提供返回的来源标题。个人实时数据仍必须使用对应 Tongji MCP 工具。
 
-## 公开网页工具（Tavily）
+## 公开网页工具
 
-设置 `TAVILY_ENABLED=true` 和 `TAVILY_API_KEY` 后，Agent 注册 `system.web_search` 和 `system.url_fetch`。关闭开关时不注册；启用但缺少 Key 时启动报错。客户端内部固定 30 秒超时，无需超时环境变量；不依赖校园授权或 `SANDBOX_ENABLED`。
+`system.web_search` 使用 Tavily，由 `TAVILY_ENABLED` 和 `TAVILY_API_KEY` 控制。`system.url_fetch` 改用默认启用的自适应抓取器，不依赖 Tavily 开关或凭据。
 
-搜索返回有界摘要及来源链接，正文按需通过 Extract 提取。网页业务错误以稳定 `status` 返回，Agent 可继续回答；本轮取消仍会终止调用。详细参数、安全边界、PromptHub 待发布文案和人工验收步骤见 [Tavily 接入说明](docs/TAVILY.md)。
+抓取器保留正文内部的重复事实，并通过 `links` 返回经过 URL/DNS 校验的候选来源，`links_truncated` 标识链接是否因数量或校验预算被截断。Chromium 经独立 HTTP/CONNECT 代理连接到已校验的公网 IP，并关闭本地地址代理绕过。
+
+正文提取汇总普通 HTML、hydration JSON、`<noscript>` 与 Chrome/Chromium 执行 JavaScript 后的可见文本，以内容完整性优先。生产镜像由仓库内的 `Dockerfile` 固定安装 Debian `chromium`，服务启动前会实际启动一次浏览器预检；预检失败时进程不会开始监听，`/v1/ping` 因而可作为 Railway 就绪检查。详细参数、安全边界和验收步骤见 [公开网页工具说明](docs/WEB_TOOLS.md)。
+
+### Railway 部署
+
+Railway 服务的 **Root Directory** 必须设为 `TongjiStudentAgent`，使其读取此目录的 `Dockerfile` 和 `railway.json`。后者强制使用 Dockerfile 构建，并把部署健康检查设为 `GET /v1/ping`。
+
+镜像在构建时安装并验证 Chromium，运行时通过 `CHROME_BIN=/usr/bin/chromium` 显式传给 `chromedp`；应用初始化又会打开 `about:blank` 验证实际可启动性。这样浏览器缺失、动态库缺失或 sandbox 不兼容都会让部署失败，而不是在首次 `system.url_fetch` 的 JS 回退时才失败。
+
+Railway 会注入 `PORT`，服务也保留 `PORT0` 的旧部署兼容；若同时存在，以 `PORT0` 为准。建议在 Railway Variables 设置 `RAILWAY_SHM_SIZE_BYTES=268435456`；代码同时配置了 Chromium 的 `--disable-dev-shm-usage` 作为小共享内存环境的兜底。不要默认启用 `--no-sandbox`：若 Railway 日志明确显示 sandbox 无法启动，再以受限、非 root 的独立渲染服务为边界评估该降级。
 
 ## 同济开放平台浏览器授权
 
@@ -175,7 +185,7 @@ go run .
 
 #### `GET /v1/ping`
 
-描述：健康检查接口，用于服务存活探测。
+描述：健康检查与部署就绪探针。服务会在启动 Chromium 预检、模型、会话存储和远程 MCP 初始化完成后才开始监听，因此返回 `200` 表示这些启动前置条件已通过。
 
 请求参数：
 
@@ -187,7 +197,7 @@ go run .
 
 | 参数名    | 类型     | 必返 | 描述         | 默认值      |
 | --------- | -------- | ---- | ------------ | ----------- |
-| `message` | `string` | 是   | 固定响应文案 | `"hey yo!"` |
+| `status` | `string` | 是   | 固定健康状态 | `"ok"` |
 
 #### `GET /v1/tongji/oauth/authorize`
 

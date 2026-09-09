@@ -11,6 +11,6 @@ import (
 
 func Ping(ctx context.Context, c *app.RequestContext) {
 	c.JSON(200, utils.H{
-		"message": "hey yo!",
+		"status": "ok",
 	})
 }
