@@ -58,7 +58,7 @@ Tavily client 的总超时固定为 30 秒。启用但未配置 Key、或开关�
 
 `system.url_fetch` 默认启用，没有 Tavily 开关或 API Key，也没有额外的 URL Fetch 环境变量。HTTP 快路径超时固定为 15 秒，Chromium 渲染超时固定为 30 秒。生产镜像必须安装兼容的 Chrome/Chromium；应用优先使用 `CHROME_BIN`，否则先在 PATH 中查找 `chromium`、`chromium-browser`、`google-chrome`、`google-chrome-stable`，再探测常见安装路径。macOS 支持 `/Applications` 和 `~/Applications` 下的 Google Chrome、Chromium；Linux 支持 `/usr/bin`、`/opt/google/chrome/chrome` 和 `/snap/bin/chromium`。显式配置的 `CHROME_BIN` 无效时直接报错，不自动回退。
 
-部署时，`webfetch.VerifyChromium` 会在 HTTP listener 启动前启动浏览器并打开 `about:blank`。因此缺少浏览器、动态库或可用 sandbox 时启动直接失败，Railway 的 `GET /v1/ping` 健康检查不会成功；这比等到某次 URL 需要 JavaScript 回退时再报错更早、更可观测。仓库根目录的 `Dockerfile` 固定使用 Debian Bookworm 和 `chromium`，`railway.json` 强制使用该镜像并指向 `/v1/ping`。Railway 服务的 Root Directory 应设为 `TongjiStudentAgent`。
+部署时，`webfetch.VerifyChromium` 会在 HTTP listener 启动前启动浏览器并打开 `about:blank`。缺少浏览器、动态库或可用 sandbox 时只记录 warning，并在接收请求前禁用该客户端的浏览器方案；服务继续启动，后续 `url_fetch` 不再尝试 Chromium。`GET /v1/ping` 不代表浏览器一定可用。仓库根目录的 `Dockerfile` 固定使用 Debian Bookworm 和 `chromium`，`railway.json` 强制使用该镜像并指向 `/v1/ping`。Railway 服务的 Root Directory 应设为 `TongjiStudentAgent`。
 
 `reason` 仅用于工具调用说明，不会发送给 Tavily、目标网站或浏览器。两个工具都不会转发用户请求头、Access Token、Cookie、会话历史或学生信息。
 

@@ -24,6 +24,22 @@ func TestNewFromEnv(t *testing.T) {
 	})
 }
 
+// TestDisableBrowser 验证禁用后连续请求均只使用静态提取。
+func TestDisableBrowser(t *testing.T) {
+	browser := &fakeBrowser{err: errors.New("unavailable")}
+	client := NewClient(htmlClient("<main>静态正文</main>"), browser)
+	client.DisableBrowser()
+	for i := 0; i < 2; i++ {
+		result, err := client.Extract(context.Background(), ExtractInput{URL: "https://example.org"})
+		if err != nil || result.Content != "静态正文" || strings.Contains(result.Source, "browser") {
+			t.Fatalf("unexpected HTTP-only extraction: %#v, %v", result, err)
+		}
+	}
+	if browser.calls != 0 {
+		t.Fatalf("disabled browser called %d times", browser.calls)
+	}
+}
+
 // roundTripFunc 将函数适配为测试用 HTTP 传输层。
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

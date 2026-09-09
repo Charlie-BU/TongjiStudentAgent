@@ -30,6 +30,7 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
+	"github.com/Charlie-BU/TongjiStudent/internal/platform/observability/logging"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -108,7 +109,7 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		return nil, fmt.Errorf("build skill catalog: %w", err)
 	}
 
-	// 2. 初始化公开网页能力。Chromium 预检必须在开始监听前完成。
+	// 2. 初始化公开网页能力，浏览器不可用时仅启用 HTTP 提取。
 	tavilyClient, err := deps.tavily()
 	if err != nil {
 		return nil, fmt.Errorf("initialize Tavily client: %w", err)
@@ -118,7 +119,11 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		return nil, fmt.Errorf("initialize adaptive web fetch client: %w", err)
 	}
 	if err := deps.verifyChromium(ctx); err != nil {
-		return nil, fmt.Errorf("verify adaptive web fetch Chromium: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		webFetchClient.DisableBrowser()
+		logging.Warnf("Chromium unavailable; browser extraction disabled, url_fetch will use HTTP only: %v", err)
 	}
 
 	// 3. 建立远程 MCP 连接。此后的失败路径统一释放已获得的资源。

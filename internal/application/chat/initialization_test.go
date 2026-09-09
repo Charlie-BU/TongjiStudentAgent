@@ -29,7 +29,7 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 			closed []string
 		}{
 			{"instruction", nil}, {"model", nil}, {"knowledge", nil}, {"catalog", nil},
-			{"tavily", nil}, {"webfetch", nil}, {"verifyChromium", nil}, {"mcp", nil},
+			{"tavily", nil}, {"webfetch", nil}, {"mcp", nil},
 			{"mcpTools", []string{"mcp"}}, {"sandboxEnabled", []string{"mcp"}},
 			{"middleware", []string{"mcp"}}, {"sessionConfig", []string{"mcp"}},
 			{"postgres", []string{"mcp"}}, {"schema", []string{"postgres", "mcp"}},
@@ -61,6 +61,25 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 		err = service.Close()
 		So(fixture.closed, ShouldResemble, []string{"redis", "postgres", "mcp"})
 		So(errors.Is(err, fixture.closeFailure), ShouldBeTrue)
+	})
+}
+
+// TestOptionalChromium 验证浏览器不可用时继续初始化且保留调用方取消语义。
+func TestOptionalChromium(t *testing.T) {
+	Convey("浏览器为可选启动能力", t, func() {
+		fixture := newInitializationFixture("verifyChromium")
+		service, err := newFromEnv(context.Background(), fixture.deps)
+		if err != nil || service == nil {
+			t.Fatalf("optional browser blocked startup: %v", err)
+		}
+		_ = service.Close()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		fixture.deps.verifyChromium = func(context.Context) error { cancel(); return context.Canceled }
+		service, err = newFromEnv(ctx, fixture.deps)
+		if service != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected startup cancellation, got %v", err)
+		}
 	})
 }
 

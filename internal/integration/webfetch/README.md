@@ -45,7 +45,7 @@ system.url_fetch                         工具输入、授权、结果封装
 
 `NewFromEnv` 装配默认公网 HTTP 客户端和 Chromium 渲染器，本身不启动浏览器进程。`NewClient` 支持注入 HTTP 客户端与 `Browser`，便于离线测试；传入 `nil` 浏览器时，仅进行 HTTP 提取。注入的 HTTP 客户端由调用方负责连接安全，默认构造才会自动装配本包的公网传输层。
 
-应用启动阶段单独调用 `VerifyChromium`。它创建浏览器执行环境并打开 `about:blank`，检查可执行文件及运行环境能否正常启动。预检不证明任意网站都能提取成功。
+应用启动阶段单独调用 `VerifyChromium`。它创建浏览器执行环境并打开 `about:blank`，检查可执行文件及运行环境能否正常启动。预检失败时应用记录 warning 并调用 `DisableBrowser`，服务继续启动，后续请求只执行 HTTP 提取。预检不证明任意网站都能提取成功。
 
 浏览器路径优先读取 `CHROME_BIN`，否则在 PATH 中查找 `chromium`、`chromium-browser`、`google-chrome` 和 `google-chrome-stable`。PATH 未找到时，继续探测 macOS 的 `/Applications`、`~/Applications` 下的 Google Chrome/Chromium，以及 Linux 的 `/usr/bin`、`/opt/google/chrome/chrome`、`/snap/bin/chromium`。显式配置无效时直接报错。生产镜像需提供可执行的 Chromium。
 

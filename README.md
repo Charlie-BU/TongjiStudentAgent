@@ -65,13 +65,13 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 抓取器保留正文内部的重复事实，并通过 `links` 返回经过 URL/DNS 校验的候选来源，`links_truncated` 标识链接是否因数量或校验预算被截断。Chromium 经独立 HTTP/CONNECT 代理连接到已校验的公网 IP，并关闭本地地址代理绕过。
 
-正文提取汇总普通 HTML、hydration JSON、`<noscript>` 与 Chrome/Chromium 执行 JavaScript 后的可见文本，以内容完整性优先。生产镜像由仓库内的 `Dockerfile` 固定安装 Debian `chromium`，服务启动前会实际启动一次浏览器预检；预检失败时进程不会开始监听，`/v1/ping` 因而可作为 Railway 就绪检查。详细参数、安全边界和验收步骤见 [公开网页工具说明](docs/WEB_TOOLS.md)。
+正文提取汇总普通 HTML、hydration JSON、`<noscript>` 与 Chrome/Chromium 执行 JavaScript 后的可见文本，以内容完整性优先。生产镜像由仓库内的 `Dockerfile` 固定安装 Debian `chromium`，服务启动前会实际启动一次浏览器预检；预检失败时记录 warning 并禁用浏览器方案，服务继续启动，`url_fetch` 仅使用 HTTP 提取。详细参数、安全边界和验收步骤见 [公开网页工具说明](docs/WEB_TOOLS.md)。
 
 ### Railway 部署
 
 Railway 服务的 **Root Directory** 必须设为 `TongjiStudentAgent`，使其读取此目录的 `Dockerfile` 和 `railway.json`。后者强制使用 Dockerfile 构建，并把部署健康检查设为 `GET /v1/ping`。
 
-镜像在构建时安装并验证 Chromium，运行时通过 `CHROME_BIN=/usr/bin/chromium` 显式传给 `chromedp`；应用初始化又会打开 `about:blank` 验证实际可启动性。这样浏览器缺失、动态库缺失或 sandbox 不兼容都会让部署失败，而不是在首次 `system.url_fetch` 的 JS 回退时才失败。
+镜像在构建时安装并验证 Chromium，运行时通过 `CHROME_BIN=/usr/bin/chromium` 显式传给 `chromedp`；应用初始化又会打开 `about:blank` 验证实际可启动性。浏览器缺失、动态库缺失或 sandbox 不兼容时记录 warning 并禁用浏览器提取；部署继续，后续请求使用 HTTP、hydration JSON 与 noscript。
 
 Railway 会注入 `PORT`，服务也保留 `PORT0` 的旧部署兼容；若同时存在，以 `PORT0` 为准。建议在 Railway Variables 设置 `RAILWAY_SHM_SIZE_BYTES=268435456`；代码同时配置了 Chromium 的 `--disable-dev-shm-usage` 作为小共享内存环境的兜底。不要默认启用 `--no-sandbox`：若 Railway 日志明确显示 sandbox 无法启动，再以受限、非 root 的独立渲染服务为边界评估该降级。
 
@@ -185,7 +185,7 @@ go run .
 
 #### `GET /v1/ping`
 
-描述：健康检查与部署就绪探针。服务会在启动 Chromium 预检、模型、会话存储和远程 MCP 初始化完成后才开始监听，因此返回 `200` 表示这些启动前置条件已通过。
+描述：健康检查与部署就绪探针。服务会在启动 Chromium 预检、模型、会话存储和远程 MCP 初始化完成后才开始监听，Chromium 预检失败会记录 warning 并降级为 HTTP-only，不影响就绪；返回 `200` 表示服务已完成其余必要依赖的初始化。
 
 请求参数：
 

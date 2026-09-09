@@ -28,6 +28,13 @@ type Client struct {
 	network *publicNetwork
 }
 
+// DisableBrowser 在开始处理请求前禁用客户端的浏览器提取能力。
+func (c *Client) DisableBrowser() {
+	if c != nil {
+		c.browser = nil
+	}
+}
+
 // NewFromEnv 装配默认公网 HTTP 客户端和 Chromium 渲染器。
 func NewFromEnv() (*Client, error) {
 	browser := NewChromiumBrowser(ChromiumConfig{Timeout: defaultBrowserTimeout})

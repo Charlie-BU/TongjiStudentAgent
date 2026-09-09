@@ -14,6 +14,11 @@ func Infof(format string, args ...any) {
 	logger.Printf("INFO "+format, args...)
 }
 
+// Warnf 记录警告级别日志。
+func Warnf(format string, args ...any) {
+	logger.Printf("WARN "+format, args...)
+}
+
 // Errorf writes an error log message.
 func Errorf(format string, args ...any) {
 	logger.Printf("ERROR "+format, args...)
