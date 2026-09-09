@@ -24,11 +24,13 @@ func ServerPort() string {
 	if port := os.Getenv("PORT0"); port != "" {
 		return port
 	}
+	if port := os.Getenv("PORT"); port != "" {
+		return port
+	}
 	return "8080"
 }
 
 // CORSAllowOrigins 返回允许跨域访问服务的 Origin 白名单。
-//
 // 环境变量 CORS_ALLOW_ORIGINS 使用 JSON 字符串数组，例如：
 // '["https://app.tongji.edu.cn", "http://localhost:5173"]'。未配置时不启用 CORS。
 func CORSAllowOrigins() ([]string, error) {

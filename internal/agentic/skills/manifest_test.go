@@ -17,6 +17,7 @@ func TestCatalog(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(catalog, ShouldStartWith, "# Available Skills\n")
 			So(catalog, ShouldContainSubstring, "`doc-generator`")
+			So(catalog, ShouldContainSubstring, "`web-tools`")
 			So(catalog, ShouldNotContainSubstring, "`doc-optimizer`")
 			So(catalog, ShouldNotContainSubstring, "SKILL.md")
 			So(catalog, ShouldNotContainSubstring, "internal/agentic/skills")

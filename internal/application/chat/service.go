@@ -1,4 +1,5 @@
 // Package chat 提供当前聊天应用服务。
+// TODO: 职责拆分
 package chat
 
 import (
@@ -25,10 +26,14 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	mcpintegration "github.com/Charlie-BU/TongjiStudent/internal/integration/mcp"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/sandbox"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 )
@@ -49,6 +54,8 @@ type sessionRuntime interface {
 
 // Service 组装聊天、会话 Runtime 与外部适配器。
 type Service struct {
+	closeResources func() error // 初始化成功后接管同一组资源的释放
+
 	runtime               sessionRuntime                    // Agent Runtime
 	mcpClient             *mcpclient.Client                 // MCP Client
 	knowledgeClient       *knowledge.Client                 // 知识库 Client
@@ -62,7 +69,7 @@ type Service struct {
 	historyMessageLimit   int                               // 上下文历史消息上限
 }
 
-// Init 从环境变量初始化默认聊天服务。
+// Init 从环境变量初始化默认 Chat 服务。
 func Init(ctx context.Context) error {
 	service, err := NewFromEnv(ctx)
 	if err != nil {
@@ -72,93 +79,121 @@ func Init(ctx context.Context) error {
 	return nil
 }
 
-// NewFromEnv 从环境变量构造聊天服务。
+// NewFromEnv 从环境变量构造 Chat 服务。
 func NewFromEnv(ctx context.Context) (*Service, error) {
-	instruction, err := loadSystemInstruction(ctx)
+	return newFromEnv(ctx, defaultInitializationDeps())
+}
+
+// newFromEnv 通过可替换工厂组装服务，便于离线验证失败清理。
+func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) {
+	// 1. 准备 Agent 的静态输入。它们不持有需要在本函数中释放的连接。
+	// 系统提示词
+	instruction, err := deps.instruction(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	// 模型相关
-	chatModel, err := arkmodel.NewFromEnv(ctx)
+	// 模型
+	chatModel, err := deps.model(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize chat model: %w", err)
 	}
-
-	// 知识库相关
-	knowledgeClient, err := knowledge.NewFromEnv()
+	// 知识库
+	knowledgeClient, err := deps.knowledge()
 	if err != nil {
 		return nil, fmt.Errorf("initialize knowledge client: %w", err)
 	}
-
-	// 系统提示词相关
-	// 工具相关
-	mcpClient, err := mcpintegration.NewRemoteClientFromEnv(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
-	}
-	MCPTools, err := mcpintegration.EinoTools(ctx, mcpClient, toolallowlist.MCPTools()...)
-	if err != nil {
-		_ = mcpClient.Close()
-		return nil, fmt.Errorf("convert mcp tools: %w", err)
-	}
-	// skill 相关
-	skillCatalog, err := agenticskills.Catalog()
+	// skills 目录
+	skillCatalog, err := deps.catalog()
 	if err != nil {
 		return nil, fmt.Errorf("build skill catalog: %w", err)
 	}
 
-	handlers := []adk.ChatModelAgentMiddleware{}
-	// 沙箱相关
-	sandboxEnabled, err := sandbox.EnabledFromEnv()
+	// 2. 初始化公开网页能力。Chromium 预检必须在开始监听前完成。
+	tavilyClient, err := deps.tavily()
 	if err != nil {
-		_ = mcpClient.Close()
+		return nil, fmt.Errorf("initialize Tavily client: %w", err)
+	}
+	webFetchClient, err := deps.webfetch()
+	if err != nil {
+		return nil, fmt.Errorf("initialize adaptive web fetch client: %w", err)
+	}
+	if err := deps.verifyChromium(ctx); err != nil {
+		return nil, fmt.Errorf("verify adaptive web fetch Chromium: %w", err)
+	}
+
+	// 3. 建立远程 MCP 连接。此后的失败路径统一释放已获得的资源。
+	mcpClient, err := deps.mcp(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("initialize remote mcp client: %w", err)
+	}
+	var postgresStore *sessionpostgres.PostgresStore
+	var redisStore *sessionredis.RedisEphemeralStore
+	initialized := false
+	closeResources := func() error {
+		var closeErr error
+		if redisStore != nil {
+			closeErr = errors.Join(closeErr, deps.closeRedis(redisStore))
+		}
+		if postgresStore != nil {
+			deps.closePostgres(postgresStore)
+		}
+		closeErr = errors.Join(closeErr, deps.closeMCP(mcpClient))
+		return closeErr
+	}
+	defer func() {
+		if !initialized {
+			_ = closeResources()
+		}
+	}()
+
+	mcpTools, err := deps.mcpTools(ctx, mcpClient, toolallowlist.MCPTools()...)
+	if err != nil {
+		return nil, fmt.Errorf("convert mcp tools: %w", err)
+	}
+
+	// 4. 仅在启用时添加沙箱中间件，避免无配置时引入额外依赖。
+	handlers := make([]adk.ChatModelAgentMiddleware, 0, 1)
+	sandboxEnabled, err := deps.sandboxEnabled()
+	if err != nil {
 		return nil, fmt.Errorf("read sandbox configuration: %w", err)
 	}
 	if sandboxEnabled {
-		filesystemMiddleware, err := sandbox.NewFileSystemMiddleware(ctx)
+		filesystemMiddleware, err := deps.middleware(ctx)
 		if err != nil {
-			_ = mcpClient.Close()
 			return nil, fmt.Errorf("create filesystem middleware: %w", err)
 		}
 		handlers = append(handlers, filesystemMiddleware)
 	}
 
-	// session 持久化相关
-	sessionConfig, err := sessionconfig.ConfigFromEnv()
+	// 5. 初始化会话持久化与任务计划。任务计划依赖 PostgreSQL 和 Redis。
+	sessionConfig, err := deps.sessionConfig()
 	if err != nil {
-		_ = mcpClient.Close()
 		return nil, fmt.Errorf("read session configuration: %w", err)
 	}
-	postgresStore, err := sessionpostgres.NewPostgresStoreFromEnv(ctx)
+	postgresStore, err = deps.postgres(ctx)
 	if err != nil {
-		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize PostgreSQL session store: %w", err)
 	}
-	if err := sessionpostgres.EnsurePostgresSchema(ctx, postgresStore); err != nil {
-		postgresStore.Close()
-		_ = mcpClient.Close()
+	if err := deps.schema(ctx, postgresStore); err != nil {
 		return nil, fmt.Errorf("initialize PostgreSQL session schema: %w", err)
 	}
-	redisStore, err := sessionredis.NewRedisEphemeralStoreFromEnv(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
+	redisStore, err = deps.redis(ctx, sessionConfig.AnonymousTTL, sessionConfig.AnonymousMessageLimit)
 	if err != nil {
-		postgresStore.Close()
-		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize Redis session store: %w", err)
 	}
-	// task plan 相关
-	taskPlanRepository, err := taskplan.NewTaskPlanRepository(postgresStore, redisStore)
+	taskPlanRepository, err := deps.taskplan(postgresStore, redisStore)
 	if err != nil {
-		_ = redisStore.Close()
-		postgresStore.Close()
-		_ = mcpClient.Close()
 		return nil, fmt.Errorf("initialize task plan repository: %w", err)
 	}
+
+	// 6. 将所有已验证的能力组装为工具集合和 Agent Runtime。
 	tools := append(systemtools.Tools(
 		systemtools.WithTaskPlanRepository(taskPlanRepository),
 		systemtools.WithKnowledgeClient(knowledgeClient),
-	), MCPTools...)
-	rt, err := runtime.New(ctx, runtime.Config{
+		systemtools.WithTavilyClient(tavilyClient),
+		systemtools.WithWebFetchClient(webFetchClient),
+	), mcpTools...)
+	agentRuntime, err := deps.runtime(ctx, runtime.Config{
 		Name:            "Tongji Student Agent",
 		Description:     "Campus assistant that answers questions using approved Tongji services.",
 		Instruction:     instruction,
@@ -170,14 +205,12 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		Handlers:        handlers,
 	})
 	if err != nil {
-		_ = redisStore.Close()
-		postgresStore.Close()
-		_ = mcpClient.Close()
-		return nil, err
+		return nil, fmt.Errorf("create agent runtime: %w", err)
 	}
 
-	return &Service{
-		runtime:               rt,
+	service := &Service{
+		closeResources:        closeResources,
+		runtime:               agentRuntime,
 		mcpClient:             mcpClient,
 		knowledgeClient:       knowledgeClient,
 		studentInfoLoader:     loadStudentInfo,
@@ -188,7 +221,9 @@ func NewFromEnv(ctx context.Context) (*Service, error) {
 		redisSessionStore:     redisStore,
 		taskPlanRepository:    taskPlanRepository,
 		historyMessageLimit:   sessionConfig.HistoryMessageLimit,
-	}, nil
+	}
+	initialized = true
+	return service, nil
 }
 
 // loadSystemInstruction 从 Cozeloop PromptHub 加载 system prompt。
@@ -657,6 +692,9 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
+	if s.closeResources != nil {
+		return s.closeResources()
+	}
 	var closeErr error
 	if s.redisSessionStore != nil {
 		closeErr = errors.Join(closeErr, s.redisSessionStore.Close())
@@ -668,4 +706,55 @@ func (s *Service) Close() error {
 		closeErr = errors.Join(closeErr, s.mcpClient.Close())
 	}
 	return closeErr
+}
+
+// initializationDeps 隔离启动阶段的外部依赖，不使用可变的全局测试钩子。
+type initializationDeps struct {
+	instruction    func(context.Context) (string, error)
+	model          func(context.Context) (model.BaseChatModel, error)
+	knowledge      func() (*knowledge.Client, error)
+	catalog        func() (string, error)
+	tavily         func() (*tavily.Client, error)
+	webfetch       func() (*webfetch.Client, error)
+	verifyChromium func(context.Context) error
+	mcp            func(context.Context) (*mcpclient.Client, error)
+	mcpTools       func(context.Context, *mcpclient.Client, ...string) ([]tool.BaseTool, error)
+	sandboxEnabled func() (bool, error)
+	middleware     func(context.Context) (adk.ChatModelAgentMiddleware, error)
+	sessionConfig  func() (sessionconfig.Config, error)
+	postgres       func(context.Context) (*sessionpostgres.PostgresStore, error)
+	schema         func(context.Context, *sessionpostgres.PostgresStore) error
+	redis          func(context.Context, time.Duration, int) (*sessionredis.RedisEphemeralStore, error)
+	taskplan       func(*sessionpostgres.PostgresStore, *sessionredis.RedisEphemeralStore) (taskplan.TaskPlanRepository, error)
+	runtime        func(context.Context, runtime.Config) (sessionRuntime, error)
+	closeMCP       func(*mcpclient.Client) error
+	closePostgres  func(*sessionpostgres.PostgresStore)
+	closeRedis     func(*sessionredis.RedisEphemeralStore) error
+}
+
+func defaultInitializationDeps() initializationDeps {
+	return initializationDeps{
+		instruction:    loadSystemInstruction,
+		model:          arkmodel.NewFromEnv,
+		knowledge:      knowledge.NewFromEnv,
+		catalog:        agenticskills.Catalog,
+		tavily:         tavily.NewFromEnv,
+		webfetch:       webfetch.NewFromEnv,
+		verifyChromium: webfetch.VerifyChromium,
+		mcp:            mcpintegration.NewRemoteClientFromEnv,
+		mcpTools:       mcpintegration.EinoTools,
+		sandboxEnabled: sandbox.EnabledFromEnv,
+		middleware:     sandbox.NewFileSystemMiddleware,
+		sessionConfig:  sessionconfig.ConfigFromEnv,
+		postgres:       sessionpostgres.NewPostgresStoreFromEnv,
+		schema:         sessionpostgres.EnsurePostgresSchema,
+		redis:          sessionredis.NewRedisEphemeralStoreFromEnv,
+		taskplan: func(p *sessionpostgres.PostgresStore, r *sessionredis.RedisEphemeralStore) (taskplan.TaskPlanRepository, error) {
+			return taskplan.NewTaskPlanRepository(p, r)
+		},
+		runtime:       func(ctx context.Context, cfg runtime.Config) (sessionRuntime, error) { return runtime.New(ctx, cfg) },
+		closeMCP:      func(c *mcpclient.Client) error { return c.Close() },
+		closePostgres: func(p *sessionpostgres.PostgresStore) { p.Close() },
+		closeRedis:    func(r *sessionredis.RedisEphemeralStore) error { return r.Close() },
+	}
 }
