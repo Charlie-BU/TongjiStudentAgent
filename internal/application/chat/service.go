@@ -206,7 +206,7 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		KnowledgeClient: knowledgeClient,
 		ChatModel:       chatModel,
 		Tools:           tools,
-		MaxIterations:   12,
+		MaxIterations:   20,
 		Handlers:        handlers,
 	})
 	if err != nil {

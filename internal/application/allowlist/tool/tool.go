@@ -33,12 +33,12 @@ const (
 	TongjiSchoolAccessTool        = "tongji.student.school_access"
 	TongjiLibraryAccessTool       = "tongji.student.library_access"
 	TongjiUserBasicInfoTool       = "tongji.user.basic_info"
-	TongjiCourseDetailTool        = "tongji.student.course-detail"
-	TongjiCourseRelatedTool       = "tongji.student.course-related"
-	TongjiFindMajorByGradeTool    = "tongji.student.find-major-by-grade"
-	TongjiCourseCatalogTool       = "tongji.course.catalog"
+	TongjiCourseDetailTool        = "tongji.course.course-detail"
+	TongjiCourseRelatedTool       = "tongji.course.course-related"
+	TongjiCourseReviewsTool       = "tongji.course.reviews"
+	TongjiCourseSummaryTool       = "tongji.course.summary"
+	TongjiCourseCatalogTool       = "tongji.course.search"
 	TongjiCalendarListTool        = "tongji.course.calendar_list"
-	TongjiGradeListTool           = "tongji.course.grade_list"
 )
 
 var (
@@ -71,10 +71,10 @@ var (
 		TongjiUserBasicInfoTool,
 		TongjiCourseDetailTool,
 		TongjiCourseRelatedTool,
-		TongjiFindMajorByGradeTool,
+		TongjiCourseReviewsTool,
+		TongjiCourseSummaryTool,
 		TongjiCourseCatalogTool,
 		TongjiCalendarListTool,
-		TongjiGradeListTool,
 	}
 )
 

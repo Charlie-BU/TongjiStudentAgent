@@ -643,7 +643,6 @@ console.log(historyPayload.messages);
 - 系统 Tool：
   `system.load_skill`、`system.manage_task_plan`，以及在启用 Ark 知识库时额外注册的 `system.search_knowledge`。
 - 远程 MCP Tool：
-  `tongji.student.annual_bill`、`tongji.student.card_spending_flow`、`tongji.student.timetable`、`tongji.student.detailed_info`、`tongji.student.score`、`tongji.student.term-calendar`、`tongji.student.current-term-calendar`、`tongji.student.cet-score`、`tongji.student.book-lend-info`、`tongji.student.statistics-info`、`tongji.student.stipend-info`、`tongji.student.accommodation-info`、`tongji.student.competition_prize`、`tongji.student.honorary_title`、`tongji.student.scholarship_info`、`tongji.student.school_access`、`tongji.student.library_access`、`tongji.user.basic_info`、`tongji.student.course-detail`、`tongji.student.course-related`、`tongji.student.find-major-by-grade`、`tongji.course.catalog`、`tongji.course.calendar_list`、`tongji.course.grade_list`。
 
 每次远程 MCP Tool 调用都会从当前请求 context 读取 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时仍会继续发起 MCP 请求，但请求头值为空，由远程 MCP 与同济开放平台继续验证 token 的有效性、用户绑定和 scope。MCP 业务错误会在本地收敛为稳定结果，避免把上游原始错误正文暴露给模型、SSE 或普通日志；部署远程 MCP 时仍必须保护该请求头，不能写入普通日志。
 

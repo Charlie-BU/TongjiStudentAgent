@@ -1,3 +1,97 @@
+## CHANGELOG - 2026-09-10 15:51 - 同步课程工具命名与下线列表并补齐评价总结接入
+
+### 撰写时间
+
+- 2026-09-10 15:51
+
+### Base Commit
+
+- `c45230612bb5af4428e44a229851eea7584b737e`（按规范取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：全部当前未提交改动，相对 `HEAD`（`7b59077027f85c5f23753dde985b6b8fe4fef493`）比较，不混入已提交变更。
+
+### 背景与改动目标
+
+MCP 课程工具统一命名并下线专业、年级查询后，Agent 的固定白名单必须同步，否则远程工具发现的完整性检查会失败。当前工作区还包含此前的评价、总结工具开白及迭代上限调整，本记录按全部未提交改动汇总。
+
+### 改动概览
+
+- 将详情、关联和搜索白名单值分别改为 `tongji.course.course-detail`、`tongji.course.course-related`、`tongji.course.search`。
+- 移除 `TongjiFindMajorByGradeTool`、`TongjiGradeListTool` 常量及远程工具列表项。
+- 新增并允许 `tongji.course.reviews`、`tongji.course.summary`，使课程详情拆出的评价和已有总结能被 Agent 调用。
+- 同步聊天服务白名单契约测试和 README 的专业查询能力说明。
+- Chat 初始化传入 Runtime 的 `MaxIterations` 从 12 提高为 20。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：MCP 须发布采用新课程名称的工具目录，并提供评价、总结工具。
+- 当前改动：`MCPTools()` 返回调整后的目录，Chat 将其交给 `EinoTools` 按名称发现和转换，再传入 Runtime。白名单完整性检查和返回副本隔离行为保持不变。
+- 下游影响：模型可按新目录完成课程搜索、详情、关联、评价及总结查询；不再加载专业和年级工具。MCP 的历史评价更名不新增 Agent 授权，当前 Agent 白名单原本未包含该工具。
+
+### 改动结果与业务影响
+
+- 对齐 MCP 工具更名与删除，避免继续请求已不存在的工具，同时补齐评价和总结能力。
+- 最大迭代次数提高，为多步任务提供更多执行空间；该值不等同于工具调用次数，也不保证每次请求达到上限。
+
+### 风险与待办
+
+- 已验证：`go test ./internal/application/allowlist/tool ./internal/integration/mcp ./internal/application/chat` 通过；allowlist 包无独立测试文件，其契约由聊天服务测试覆盖。
+- MCP 配套改动的 187 项测试、类型检查与构建已通过。未做真实模型与远程 MCP 端到端验证，本次文档生成未重跑测试。
+- MCP 与 Agent 需协调发布或停机切换；任一端仍使用旧目录时，工具发现可能失败，不能仅更新其中一仓。
+- 迭代上限提高可能增加最坏情况下的耗时和模型成本，需要在真实多步查询中观察。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): sync course tools and increase iteration limit`
+
+## CHANGELOG - 2026-09-10 15:15 - 开白课程评价与总结工具并提高 Agent 迭代上限
+
+### 撰写时间
+
+- 2026-09-10 15:15
+
+### Base Commit
+
+- `c45230612bb5af4428e44a229851eea7584b737e`（按规范记录 `HEAD~1`，仅作元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：当前暂存及未暂存改动，相对 `HEAD`（`7b59077027f85c5f23753dde985b6b8fe4fef493`）比较，不包含已提交变更。
+
+### 背景与改动目标
+
+MCP 课程详情已不再返回评价正文，评价和已有 AI 总结改为独立工具。Agent 仅加载明确允许的远程工具，因此需要同步白名单，恢复从课程搜索、详情继续读取评价的链路。当前工作区同时将 Agent 迭代上限由 12 调整为 20，为多步调用提供更多执行空间。
+
+### 改动概览
+
+- 在 `internal/application/allowlist/tool/tool.go` 新增 `TongjiCourseReviewsTool`、`TongjiCourseSummaryTool`，分别对应 `tongji.course.reviews`、`tongji.course.summary`，加入远程 MCP 工具列表。
+- 同步 `TestMCPToolAllowlist` 的预期目录，保留工具目录及返回副本隔离验证。
+- `chat.newFromEnv` 向 Runtime 传递的 `MaxIterations` 从 12 提高到 20。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：MCP 服务须已注册两个新工具；评价通过 `courseId`、可选 `offeringId` 和游标查询，总结只读取已有结果。
+- 当前改动：`MCPTools()` 返回新目录，Chat 初始化将其交给 `EinoTools` 按名称发现和转换；Runtime 接收新增工具及更高迭代上限。
+- 下游影响：模型可在课程详情之后继续查询评价与总结。远程工具完整性检查保持启用，MCP 缺少任一已开白工具仍会导致初始化失败。
+
+### 改动结果与业务影响
+
+- 修复课程评价拆分后的 Agent 接入缺口；新工具仍受现有 allowlist 和请求上下文边界控制。
+- 增加单次 Agent 执行可用的迭代次数，但不保证每次都会执行到上限，也不等同于恰好 20 次工具调用。
+
+### 风险与待办
+
+- 已验证：`go test ./internal/application/allowlist/tool ./internal/integration/mcp ./internal/application/chat` 通过，其中 allowlist 包无独立测试文件，契约由聊天服务测试覆盖。未进行真实 MCP 与模型端到端联调；本次文档生成未重跑测试。
+- 部署时先发布带有评价、总结工具的 MCP，再更新 Agent，以免新增白名单工具无法发现。
+- 更高迭代上限可能增加最坏情况下的模型费用和响应时间，实际效果需结合多步课程查询观察。
+- MCP 开放数组的字段透传风险已由用户在 MCP 仓豁免；本次 Agent 开白没有额外改变结果裁剪行为。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): allow course reviews and summaries and raise turn limit`
+
 ## CHANGELOG - 2026-09-09 16:21 - 将网页正文提取迁移到本地自适应抓取并补齐浏览器部署链路
 
 ### 撰写时间

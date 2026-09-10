@@ -145,10 +145,10 @@ func TestMCPToolAllowlist(t *testing.T) {
 			toolallowlist.TongjiUserBasicInfoTool,
 			toolallowlist.TongjiCourseDetailTool,
 			toolallowlist.TongjiCourseRelatedTool,
-			toolallowlist.TongjiFindMajorByGradeTool,
+			toolallowlist.TongjiCourseReviewsTool,
+			toolallowlist.TongjiCourseSummaryTool,
 			toolallowlist.TongjiCourseCatalogTool,
 			toolallowlist.TongjiCalendarListTool,
-			toolallowlist.TongjiGradeListTool,
 		}
 
 		Convey("只注册维护在 allowlist 中的远程工具", func() {
