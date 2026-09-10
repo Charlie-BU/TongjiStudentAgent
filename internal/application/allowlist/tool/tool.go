@@ -15,30 +15,31 @@ const (
 	WebSearchTool       = "system.web_search"
 	URLFetchTool        = "system.url_fetch"
 	// 远程 MCP Tool
-	TongjiAnnualBillTool          = "tongji.student.annual_bill"
-	TongjiCardSpendingFlowTool    = "tongji.student.card_spending_flow"
-	TongjiStudentTimetableTool    = "tongji.student.timetable"
-	TongjiStudentDetailedInfoTool = "tongji.student.detailed_info"
-	TongjiStudentScoreTool        = "tongji.student.score"
-	TongjiTermCalendarTool        = "tongji.student.term-calendar"
-	TongjiCurrentTermCalendarTool = "tongji.student.current-term-calendar"
-	TongjiCETScoreTool            = "tongji.student.cet-score"
-	TongjiBookLendInfoTool        = "tongji.student.book-lend-info"
-	TongjiStatisticsInfoTool      = "tongji.student.statistics-info"
-	TongjiStipendInfoTool         = "tongji.student.stipend-info"
-	TongjiAccommodationInfoTool   = "tongji.student.accommodation-info"
-	TongjiCompetitionPrizeTool    = "tongji.student.competition_prize"
-	TongjiHonoraryTitleTool       = "tongji.student.honorary_title"
-	TongjiScholarshipInfoTool     = "tongji.student.scholarship_info"
-	TongjiSchoolAccessTool        = "tongji.student.school_access"
-	TongjiLibraryAccessTool       = "tongji.student.library_access"
-	TongjiUserBasicInfoTool       = "tongji.user.basic_info"
-	TongjiCourseDetailTool        = "tongji.course.course-detail"
-	TongjiCourseRelatedTool       = "tongji.course.course-related"
-	TongjiCourseReviewsTool       = "tongji.course.reviews"
-	TongjiCourseSummaryTool       = "tongji.course.summary"
-	TongjiCourseCatalogTool       = "tongji.course.search"
-	TongjiCalendarListTool        = "tongji.course.calendar_list"
+	TongjiAnnualBillTool           = "tongji.student.annual_bill"
+	TongjiCardSpendingFlowTool     = "tongji.student.card_spending_flow"
+	TongjiStudentTimetableTool     = "tongji.student.timetable"
+	TongjiStudentDetailedInfoTool  = "tongji.student.detailed_info"
+	TongjiStudentScoreTool         = "tongji.student.score"
+	TongjiTermCalendarTool         = "tongji.student.term-calendar"
+	TongjiCurrentTermCalendarTool  = "tongji.student.current-term-calendar"
+	TongjiCETScoreTool             = "tongji.student.cet-score"
+	TongjiBookLendInfoTool         = "tongji.student.book-lend-info"
+	TongjiStatisticsInfoTool       = "tongji.student.statistics-info"
+	TongjiStipendInfoTool          = "tongji.student.stipend-info"
+	TongjiAccommodationInfoTool    = "tongji.student.accommodation-info"
+	TongjiCompetitionPrizeTool     = "tongji.student.competition_prize"
+	TongjiHonoraryTitleTool        = "tongji.student.honorary_title"
+	TongjiScholarshipInfoTool      = "tongji.student.scholarship_info"
+	TongjiSchoolAccessTool         = "tongji.student.school_access"
+	TongjiLibraryAccessTool        = "tongji.student.library_access"
+	TongjiUserBasicInfoTool        = "tongji.user.basic_info"
+	TongjiLegacyTeacherReviewsTool = "tongji.course.legacy-teacher-reviews"
+	TongjiCourseDetailTool         = "tongji.course.course-detail"
+	TongjiCourseRelatedTool        = "tongji.course.course-related"
+	TongjiCourseReviewsTool        = "tongji.course.reviews"
+	TongjiCourseSummaryTool        = "tongji.course.summary"
+	TongjiCourseCatalogTool        = "tongji.course.search"
+	TongjiCalendarListTool         = "tongji.course.calendar_list"
 )
 
 var (
@@ -69,6 +70,7 @@ var (
 		TongjiSchoolAccessTool,
 		TongjiLibraryAccessTool,
 		TongjiUserBasicInfoTool,
+		TongjiLegacyTeacherReviewsTool,
 		TongjiCourseDetailTool,
 		TongjiCourseRelatedTool,
 		TongjiCourseReviewsTool,

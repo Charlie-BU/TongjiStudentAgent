@@ -24,6 +24,10 @@ var manifests = map[string]Manifest{
 		ID:          skillallowlist.WebToolsSkill,
 		Description: "用于公开信息研究、网页/URL 阅读与总结、官方来源查找、事实或时效核验、网页工具结果解读及失败诊断。指导 system.search_knowledge、system.web_search 和 system.url_fetch 的并行调度、DuckDuckGo 搜索页使用、正文核验、安全边界与来源化回答；个人实时数据、登录受保护资源和绕过反爬不适用。",
 	},
+	skillallowlist.CourseAndTeacherGuideSkill: {
+		ID:          skillallowlist.CourseAndTeacherGuideSkill,
+		Description: "查询同济课程信息、学分、开课学期、任课教师、课程评价，或查看、比较、推荐同济老师及选课时必须加载本 Skill，并按场景实际调用课程和教师评价 tools。编排课程搜索、详情、开课记录、课评、关联课程、历史教师评价与 AI 总结，聚合可追溯证据，并判断是否加载 web-tools 补充课程政策、最新信息及互联网评价。",
+	},
 }
 
 // Catalog 返回所有且仅有已批准 Skill 的元数据。它不暴露 Skill 路径或完整手册。

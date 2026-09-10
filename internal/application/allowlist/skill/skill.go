@@ -2,12 +2,13 @@
 package skill
 
 const (
-	DocGeneratorSkill = "doc-generator"
-	WebToolsSkill     = "web-tools"
+	DocGeneratorSkill          = "doc-generator"
+	WebToolsSkill              = "web-tools"
+	CourseAndTeacherGuideSkill = "course-and-teacher-guide"
 )
 
 var (
-	allowedSkills = []string{DocGeneratorSkill, WebToolsSkill}
+	allowedSkills = []string{DocGeneratorSkill, WebToolsSkill, CourseAndTeacherGuideSkill}
 )
 
 // Skills 返回已批准 Skill 标识的副本，调用方修改结果不会影响 allowlist。

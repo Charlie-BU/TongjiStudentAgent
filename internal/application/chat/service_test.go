@@ -143,6 +143,7 @@ func TestMCPToolAllowlist(t *testing.T) {
 			toolallowlist.TongjiSchoolAccessTool,
 			toolallowlist.TongjiLibraryAccessTool,
 			toolallowlist.TongjiUserBasicInfoTool,
+			toolallowlist.TongjiLegacyTeacherReviewsTool,
 			toolallowlist.TongjiCourseDetailTool,
 			toolallowlist.TongjiCourseRelatedTool,
 			toolallowlist.TongjiCourseReviewsTool,
