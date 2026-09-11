@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	toolallowlist "github.com/Charlie-BU/TongjiStudent/internal/application/allowlist/tool"
 	einoext "github.com/cloudwego/eino-ext/components/tool/mcp"
@@ -31,8 +32,25 @@ func EinoTools(ctx context.Context, cli *mcpclient.Client, toolNames ...string) 
 	if err != nil {
 		return nil, err
 	}
-	if len(tools) != len(toolNames) {
-		return nil, fmt.Errorf("MCP tool allowlist is not fully available")
+	available := make(map[string]struct{}, len(tools))
+	for _, discoveredTool := range tools {
+		info, err := discoveredTool.Info(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read discovered MCP tool info: %w", err)
+		}
+		if info == nil {
+			return nil, errors.New("discovered MCP tool info is nil")
+		}
+		available[info.Name] = struct{}{}
+	}
+	var missing []string
+	for _, name := range toolNames {
+		if _, ok := available[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 || len(tools) != len(toolNames) {
+		return nil, fmt.Errorf("MCP tool allowlist is not fully available: expected=%d, discovered=%d, missing=[%s]; check MCP_SERVER_URL and deploy matching MCP server and Agent versions", len(toolNames), len(tools), strings.Join(missing, ", "))
 	}
 	return wrapRequestScopedTools(tools)
 }

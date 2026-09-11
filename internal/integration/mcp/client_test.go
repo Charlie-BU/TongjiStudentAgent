@@ -122,6 +122,17 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			So(tools, ShouldBeNil)
 			So(toolsErr, ShouldNotBeNil)
 			So(toolsErr.Error(), ShouldContainSubstring, "allowlist")
+			So(toolsErr.Error(), ShouldContainSubstring, "missing=[not-registered]")
+		})
+
+		Convey("部分工具缺失时应准确列出缺项并拒绝启动", func() {
+			tools, toolsErr := EinoTools(context.Background(), client, testMCPToolName, "tongji.course.reviews", "tongji.course.summary")
+
+			So(tools, ShouldBeNil)
+			So(toolsErr, ShouldNotBeNil)
+			So(toolsErr.Error(), ShouldContainSubstring, "expected=3, discovered=1")
+			So(toolsErr.Error(), ShouldContainSubstring, "missing=[tongji.course.reviews, tongji.course.summary]")
+			So(toolsErr.Error(), ShouldContainSubstring, "MCP_SERVER_URL")
 		})
 
 		Convey("空白或重复 allowlist 不应发现全部远程工具", func() {
