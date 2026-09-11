@@ -55,7 +55,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 启动至少需要补齐以下变量：`LITE_MODEL`、`ARK_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验并连接模型、会话存储和远程 MCP。
 
-模型分为三个 tier：`LITE_MODEL=deepseek-v4-flash-ga-260731`，`PRO_MODEL` 和 `MAX_MODEL` 暂留空。当前模型调用统一使用 `LITE_MODEL`，通过 `ARK_API_KEY` 鉴权。
+模型分为三个 tier：`LITE_MODEL=deepseek-v4-flash-ga-260731`，`PRO_MODEL` 和 `MAX_MODEL` 暂留空。请求通过 `model_tier` 选择对应模型，统一通过 `ARK_API_KEY` 鉴权。启动时为已配置的 tier 创建独立 Runtime；修改模型配置后需重启。
 
 如需启用 Cozeloop，请在 `.env` 中设置 `COZELOOP_ENABLED=true` 并补齐对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 
@@ -319,6 +319,13 @@ go run .
 
 #### `POST /v1/sessions/:session_id/messages`
 
+请求示例：`{"message":"帮我查询课程安排","model_tier":"pro"}`。
+
+`model_tier` 可省略（默认 `lite`）；显式传入时只接受小写字符串 `lite`、`pro`、`max`。空字符串、null 和其他值返回 HTTP 400。合法但未配置的 tier 返回 HTTP 503，不自动降级；这些检查在开启 SSE 和写入用户消息前完成。当前 `PRO_MODEL`、`MAX_MODEL` 留空，因此这两档暂不可用。
+
+同一轮执行及其工具调用固定使用选定模型，同一会话下一轮可以切换 tier。消息持久化 `model_tier` 和实际 `model_id`；旧消息缺少这些字段时保持可读。实际模型发生变化时，基于现有历史窗口重建上下文，不复用切换前的响应缓存；同模型连续调用继续复用有效缓存。PostgreSQL 在启动时自动补齐这两个字段，Redis 旧记录无需迁移。
+
+
 描述：向指定会话提交一轮用户消息，并通过 SSE 持续返回本轮执行事件与回答增量。
 
 请求参数：
@@ -328,6 +335,7 @@ go run .
 | Path     | `session_id`    | `string` | 是   | 目标会话 ID                                                                | 无                 |
 | Header   | `Content-Type`  | `string` | 是   | 请求体编码类型                                                             | `application/json` |
 | Header   | `Authorization` | `string` | 否   | 认证会话必须继续传创建会话时的同一 `Bearer <access_token>`；匿名会话可不传 | 无                 |
+| Body | `model_tier` | `string` | 否 | `lite`、`pro`、`max` | `lite` |
 | Body     | `message`       | `string` | 是   | 本轮用户输入，不能为空字符串                                               | 无                 |
 
 响应参数：
@@ -530,7 +538,7 @@ const persistence = sessionPayload.persistence;
 
 ### 4. 提交一轮消息并消费 SSE
 
-`POST /v1/sessions/:session_id/messages` 是唯一的 Agent 执行入口，请求体只接受非空的 `message`。下面示例使用浏览器 `fetch` 读取 `text/event-stream`：
+`POST /v1/sessions/:session_id/messages` 是唯一的 Agent 执行入口，请求体必须包含非空的 `message`，可通过 `model_tier` 选择 `lite`、`pro` 或 `max`，省略时默认 `lite`。下面示例使用浏览器 `fetch` 读取 `text/event-stream`：
 
 ```js
 const API_BASE = "http://127.0.0.1:8080";

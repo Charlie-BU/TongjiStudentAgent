@@ -15,12 +15,11 @@ import (
 // responseChainCacheTTLSeconds 响应缓存 TTL，单位秒。
 const responseChainCacheTTLSeconds = 600
 
-// NewFromEnv 根据模型环境变量创建 Ark ChatModel。
-func NewFromEnv(ctx context.Context) (model.BaseChatModel, error) {
-	liteModel := os.Getenv("LITE_MODEL")
+// NewFromEnv 使用环境变量中的共享凭据和地址创建指定模型 ID 的 Ark ChatModel。
+func NewFromEnv(ctx context.Context, modelID string) (model.BaseChatModel, error) {
 	arkAPIKey := os.Getenv("ARK_API_KEY")
-	if liteModel == "" || arkAPIKey == "" {
-		return nil, fmt.Errorf("LITE_MODEL or ARK_API_KEY is not set")
+	if modelID == "" || arkAPIKey == "" {
+		return nil, fmt.Errorf("model ID or ARK_API_KEY is not set")
 	}
 
 	arkBaseURL := os.Getenv("ARK_BASE_URL")
@@ -32,9 +31,9 @@ func NewFromEnv(ctx context.Context) (model.BaseChatModel, error) {
 	}
 
 	reasoningEffort := arkruntimeModel.ReasoningEffortMedium
-	logs.Infof("about to initialize model with model: %s, base url: %s", liteModel, arkBaseURL)
+	logs.Infof("about to initialize model with model: %s, base url: %s", modelID, arkBaseURL)
 	chatModel, err := ark.NewResponsesAPIChatModel(ctx, &ark.ResponsesAPIConfig{
-		Model:           liteModel,
+		Model:           modelID,
 		APIKey:          arkAPIKey,
 		BaseURL:         arkBaseURL,
 		ReasoningEffort: &reasoningEffort,

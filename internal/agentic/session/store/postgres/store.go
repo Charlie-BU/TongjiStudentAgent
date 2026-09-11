@@ -217,8 +217,8 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID strin
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	message := Message{ID: newID("msg"), SessionID: sessionID, RunID: input.RunID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, ResponseID: input.ResponseID, ResponseCacheExpiresAt: input.ResponseCacheExpiresAt, CreatedAt: now}
-	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, message.ID, message.SessionID, message.RunID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.ResponseID, message.ResponseCacheExpiresAt, message.CreatedAt)
+	message := Message{ID: newID("msg"), SessionID: sessionID, RunID: input.RunID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, ModelTier: input.ModelTier, ModelID: input.ModelID, ResponseID: input.ResponseID, ResponseCacheExpiresAt: input.ResponseCacheExpiresAt, CreatedAt: now}
+	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, model_tier, model_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, message.ID, message.SessionID, message.RunID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.ResponseID, message.ResponseCacheExpiresAt, message.ModelTier, message.ModelID, message.CreatedAt)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("insert durable message: %w", err)
 	}
@@ -242,7 +242,7 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	if limit <= 0 {
 		return []Message{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
+	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, model_tier, model_id, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`, strings.TrimSpace(sessionID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list durable messages: %w", err)
 	}
@@ -251,7 +251,7 @@ func (s *PostgresStore) ListMessages(ctx context.Context, sessionID, ownerUserID
 	for rows.Next() {
 		var message Message
 		var toolCalls []byte
-		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.ResponseID, &message.ResponseCacheExpiresAt, &message.CreatedAt); err != nil {
+		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.ResponseID, &message.ResponseCacheExpiresAt, &message.ModelTier, &message.ModelID, &message.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan durable message: %w", err)
 		}
 		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
@@ -284,7 +284,7 @@ func (s *PostgresStore) ListMessagePage(ctx context.Context, sessionID, ownerUse
 			return agenticsession.MessagePage{}, fmt.Errorf("get durable message snapshot: %w", err)
 		}
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, created_at FROM agent_session_messages WHERE session_id = $1 AND sequence <= $2 ORDER BY sequence DESC OFFSET $3 LIMIT $4`, strings.TrimSpace(sessionID), snapshotSequence, offset, limit+1)
+	rows, err := s.pool.Query(ctx, `SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, model_tier, model_id, created_at FROM agent_session_messages WHERE session_id = $1 AND sequence <= $2 ORDER BY sequence DESC OFFSET $3 LIMIT $4`, strings.TrimSpace(sessionID), snapshotSequence, offset, limit+1)
 	if err != nil {
 		return agenticsession.MessagePage{}, fmt.Errorf("list durable message page: %w", err)
 	}
@@ -293,7 +293,7 @@ func (s *PostgresStore) ListMessagePage(ctx context.Context, sessionID, ownerUse
 	for rows.Next() {
 		var message Message
 		var toolCalls []byte
-		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.ResponseID, &message.ResponseCacheExpiresAt, &message.CreatedAt); err != nil {
+		if err := rows.Scan(&message.ID, &message.SessionID, &message.RunID, &message.Sequence, &message.Role, &message.Content, &toolCalls, &message.ToolCallID, &message.ToolName, &message.ReasoningContent, &message.ResponseID, &message.ResponseCacheExpiresAt, &message.ModelTier, &message.ModelID, &message.CreatedAt); err != nil {
 			return agenticsession.MessagePage{}, fmt.Errorf("scan durable message page: %w", err)
 		}
 		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
@@ -519,6 +519,8 @@ ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS response_id TEXT NOT
 	`
 ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS response_cache_expires_at BIGINT NOT NULL DEFAULT 0;
 `,
+	`ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS model_tier TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';`,
 	`
 ALTER TABLE agent_session_messages ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
 `,

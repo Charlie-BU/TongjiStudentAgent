@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -57,6 +58,7 @@ type sessionRuntime interface {
 type Service struct {
 	closeResources func() error // 初始化成功后接管同一组资源的释放
 
+	runtimes              map[string]modelRuntime           // 模型 tier 映射的运行时环境表
 	runtime               sessionRuntime                    // Agent Runtime
 	mcpClient             *mcpclient.Client                 // MCP Client
 	knowledgeClient       *knowledge.Client                 // 知识库 Client
@@ -94,7 +96,8 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		return nil, err
 	}
 	// 模型
-	chatModel, err := deps.model(ctx)
+	liteModelID := os.Getenv("LITE_MODEL")
+	chatModel, err := deps.model(ctx, liteModelID)
 	if err != nil {
 		return nil, fmt.Errorf("initialize chat model: %w", err)
 	}
@@ -198,7 +201,7 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		systemtools.WithTavilyClient(tavilyClient),
 		systemtools.WithWebFetchClient(webFetchClient),
 	), mcpTools...)
-	agentRuntime, err := deps.runtime(ctx, runtime.Config{
+	runtimeConfig := runtime.Config{
 		Name:            "Tongji Student Agent",
 		Description:     "Campus assistant that answers questions using approved Tongji services.",
 		Instruction:     instruction,
@@ -208,12 +211,31 @@ func newFromEnv(ctx context.Context, deps initializationDeps) (*Service, error) 
 		Tools:           tools,
 		MaxIterations:   20,
 		Handlers:        handlers,
-	})
+	}
+	agentRuntime, err := deps.runtime(ctx, runtimeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create agent runtime: %w", err)
 	}
 
+	runtimes := map[string]modelRuntime{"lite": {runtime: agentRuntime, modelID: liteModelID}}
+	for _, tier := range []string{"pro", "max"} {
+		modelID := os.Getenv(map[string]string{"pro": "PRO_MODEL", "max": "MAX_MODEL"}[tier])
+		if modelID == "" {
+			continue
+		}
+		m, err := deps.model(ctx, modelID)
+		if err != nil {
+			return nil, fmt.Errorf("initialize %s model: %w", tier, err)
+		}
+		runtimeConfig.ChatModel = m
+		rt, err := deps.runtime(ctx, runtimeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("create %s runtime: %w", tier, err)
+		}
+		runtimes[tier] = modelRuntime{runtime: rt, modelID: modelID}
+	}
 	service := &Service{
+		runtimes:              runtimes,
 		closeResources:        closeResources,
 		runtime:               agentRuntime,
 		mcpClient:             mcpClient,
@@ -290,11 +312,11 @@ func DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 // StreamSession 提交会话消息并以 SSE 事件返回本轮执行过程。
-func StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
+func StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event), tiers ...string) (string, error) {
 	if defaultService == nil {
 		return "", fmt.Errorf("chat service is not initialized")
 	}
-	return defaultService.StreamSession(ctx, sessionID, query, send)
+	return defaultService.StreamSession(ctx, sessionID, query, send, tiers...)
 }
 
 // ListSessionMessagePage 读取当前请求可访问会话的固定快照分页。
@@ -402,7 +424,21 @@ func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 // StreamSession 将当前用户消息、历史和最终回答写入同一会话。
-func (s *Service) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event)) (string, error) {
+func (s *Service) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event), tiers ...string) (string, error) {
+	tier := "lite"
+	if len(tiers) > 0 {
+		tier = tiers[0]
+	}
+	selected, err := s.resolveModelTier(tier)
+	if err != nil {
+		return "", err
+	}
+	// Copy only the service facade: selection stays local to this turn.
+	turnService := *s
+	turnService.runtime = selected.runtime
+	s = &turnService
+	ctx = context.WithValue(ctx, modelSelectionKey{}, modelSelection{tier: tier, modelID: selected.modelID})
+
 	runID := agentevent.NewRunID()
 	releaseTurn, err := s.acquireSessionTurn(ctx, sessionID)
 	if err != nil {
@@ -430,6 +466,7 @@ func (s *Service) StreamSession(ctx context.Context, sessionID, query string, se
 		s.emitSessionFailure(runID, send, err)
 		return "", err
 	}
+	history = historyForModel(history, selected.modelID)
 	return s.stream(runCtx, runID, query, history, func() error {
 		_, err := appendUser() // 在 Agent 执行前追加用户消息到 session
 		return err
@@ -556,7 +593,7 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, r
 		}
 		return history,
 			func() (agenticsession.AppendResult, error) {
-				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
+				return s.durableSessionStore.Append(ctx, sessionID, ownerUserID, withModelMetadata(ctx, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query}))
 			}, nil
 	}
 	// userId 不存在时，选择临时会话
@@ -569,7 +606,7 @@ func (s *Service) sessionTurnOperations(ctx context.Context, sessionID, query, r
 	}
 	return history,
 		func() (agenticsession.AppendResult, error) {
-			return s.ephemeralSessionStore.Append(ctx, sessionID, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query})
+			return s.ephemeralSessionStore.Append(ctx, sessionID, withModelMetadata(ctx, agenticsession.NewMessage{RunID: runID, Role: agenticsession.MessageRoleUser, Content: query}))
 		}, nil
 }
 
@@ -582,6 +619,7 @@ func (s *Service) appendAgentMessage(ctx context.Context, sessionID, runID strin
 		return err
 	}
 	input.RunID = runID
+	input = withModelMetadata(ctx, input)
 	input.ResponseID, _ = ark.GetResponseID(message)
 	input.ResponseCacheExpiresAt, _ = ark.GetCacheExpiration(message)
 	// userId 存在时，选择持久化会话
@@ -716,7 +754,7 @@ func (s *Service) Close() error {
 // initializationDeps 隔离启动阶段的外部依赖，不使用可变的全局测试钩子。
 type initializationDeps struct {
 	instruction    func(context.Context) (string, error)
-	model          func(context.Context) (model.BaseChatModel, error)
+	model          func(context.Context, string) (model.BaseChatModel, error)
 	knowledge      func() (*knowledge.Client, error)
 	catalog        func() (string, error)
 	tavily         func() (*tavily.Client, error)
