@@ -9,8 +9,8 @@ import (
 
 func TestNewFromEnvUsesResponsesAPIWithSessionCache(t *testing.T) {
 	Convey("Ark 模型初始化", t, func() {
-		t.Setenv("ENDPOINT_ID", "ep-test")
-		t.Setenv("ENDPOINT_API_KEY", "test-api-key")
+		t.Setenv("LITE_MODEL", "ep-test")
+		t.Setenv("ARK_API_KEY", "test-api-key")
 		t.Setenv("ARK_BASE_URL", "https://ark.example.test/api/v3")
 		t.Setenv("ARK_BASE_URL_CN", "")
 

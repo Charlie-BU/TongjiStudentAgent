@@ -53,7 +53,9 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Cozeloop
 - 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-启动至少需要补齐以下变量：`ENDPOINT_ID`、`ENDPOINT_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验并连接模型、会话存储和远程 MCP。
+启动至少需要补齐以下变量：`LITE_MODEL`、`ARK_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验并连接模型、会话存储和远程 MCP。
+
+模型分为三个 tier：`LITE_MODEL=deepseek-v4-flash-ga-260731`，`PRO_MODEL` 和 `MAX_MODEL` 暂留空。当前模型调用统一使用 `LITE_MODEL`，通过 `ARK_API_KEY` 鉴权。
 
 如需启用 Cozeloop，请在 `.env` 中设置 `COZELOOP_ENABLED=true` 并补齐对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 

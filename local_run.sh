@@ -37,8 +37,8 @@ error: .env not found in repository root.
 
 Copy .env.example to .env and fill in at least:
   ARK_BASE_URL_CN=https://ark.cn-beijing.volces.com/api/v3
-  ENDPOINT_ID=deepseek-v4-flash-ga-260731
-  ENDPOINT_API_KEY=your-api-key
+  LITE_MODEL=deepseek-v4-flash-ga-260731
+  ARK_API_KEY=your-api-key
 
 See .env.example and README.md for the full local configuration.
 EOF
@@ -50,13 +50,13 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-if [[ -z "${ENDPOINT_ID:-}" ]]; then
-  echo "error: ENDPOINT_ID is required" >&2
+if [[ -z "${LITE_MODEL:-}" ]]; then
+  echo "error: LITE_MODEL is required" >&2
   exit 1
 fi
 
-if [[ -z "${ENDPOINT_API_KEY:-}" ]]; then
-  echo "error: ENDPOINT_API_KEY is required" >&2
+if [[ -z "${ARK_API_KEY:-}" ]]; then
+  echo "error: ARK_API_KEY is required" >&2
   exit 1
 fi
 

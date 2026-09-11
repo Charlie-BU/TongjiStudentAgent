@@ -17,10 +17,10 @@ const responseChainCacheTTLSeconds = 600
 
 // NewFromEnv 根据模型环境变量创建 Ark ChatModel。
 func NewFromEnv(ctx context.Context) (model.BaseChatModel, error) {
-	endpointID := os.Getenv("ENDPOINT_ID")
-	endpointAPIKey := os.Getenv("ENDPOINT_API_KEY")
-	if endpointID == "" || endpointAPIKey == "" {
-		return nil, fmt.Errorf("ENDPOINT_ID or ENDPOINT_API_KEY is not set")
+	liteModel := os.Getenv("LITE_MODEL")
+	arkAPIKey := os.Getenv("ARK_API_KEY")
+	if liteModel == "" || arkAPIKey == "" {
+		return nil, fmt.Errorf("LITE_MODEL or ARK_API_KEY is not set")
 	}
 
 	arkBaseURL := os.Getenv("ARK_BASE_URL")
@@ -32,10 +32,10 @@ func NewFromEnv(ctx context.Context) (model.BaseChatModel, error) {
 	}
 
 	reasoningEffort := arkruntimeModel.ReasoningEffortMedium
-	logs.Infof("about to initialize model with endpoint id: %s, base url: %s", endpointID, arkBaseURL)
+	logs.Infof("about to initialize model with model: %s, base url: %s", liteModel, arkBaseURL)
 	chatModel, err := ark.NewResponsesAPIChatModel(ctx, &ark.ResponsesAPIConfig{
-		Model:           endpointID,
-		APIKey:          endpointAPIKey,
+		Model:           liteModel,
+		APIKey:          arkAPIKey,
 		BaseURL:         arkBaseURL,
 		ReasoningEffort: &reasoningEffort,
 		SessionCache: &ark.SessionCacheConfig{
