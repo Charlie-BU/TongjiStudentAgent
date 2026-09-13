@@ -46,4 +46,5 @@ log/
 # Environment variables
 .env
 .env.test
+.env.production
 tongjistudent
