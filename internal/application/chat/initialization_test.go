@@ -23,6 +23,8 @@ import (
 
 // TestNewFromEnvResourceOwnership 覆盖启动失败清理与成功后的资源所有权转移。
 func TestNewFromEnvResourceOwnership(t *testing.T) {
+	t.Setenv("PRO_MODEL", "")
+	t.Setenv("MAX_MODEL", "")
 	Convey("启动各阶段失败只关闭已经取得的资源", t, func() {
 		for _, tc := range []struct {
 			stage  string
@@ -66,6 +68,8 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 
 // TestOptionalChromium 验证浏览器不可用时继续初始化且保留调用方取消语义。
 func TestOptionalChromium(t *testing.T) {
+	t.Setenv("PRO_MODEL", "")
+	t.Setenv("MAX_MODEL", "")
 	Convey("浏览器为可选启动能力", t, func() {
 		fixture := newInitializationFixture("verifyChromium")
 		service, err := newFromEnv(context.Background(), fixture.deps)
@@ -105,7 +109,7 @@ func newInitializationFixture(failStage string) *initializationFixture {
 	}
 	f.deps = initializationDeps{
 		instruction:    func(context.Context) (string, error) { return "instruction", step("instruction") },
-		model:          func(context.Context) (model.BaseChatModel, error) { return nil, step("model") },
+		model:          func(context.Context, string) (model.BaseChatModel, error) { return nil, step("model") },
 		knowledge:      func() (*knowledge.Client, error) { return nil, step("knowledge") },
 		catalog:        func() (string, error) { return "catalog", step("catalog") },
 		tavily:         func() (*tavily.Client, error) { return nil, step("tavily") },
@@ -171,4 +175,49 @@ func newInitializationFixture(failStage string) *initializationFixture {
 		},
 	}
 	return f
+}
+
+func TestTierRuntimeInitialization(t *testing.T) {
+	t.Setenv("LITE_MODEL", "model-lite")
+	t.Setenv("PRO_MODEL", "model-pro")
+	t.Setenv("MAX_MODEL", "model-max")
+	Convey("为每档创建 Runtime 并共享工具，资源只释放一次", t, func() {
+		f := newInitializationFixture("")
+		var ids []string
+		f.deps.model = func(_ context.Context, id string) (model.BaseChatModel, error) {
+			ids = append(ids, id)
+			return nil, nil
+		}
+		original := f.deps.runtime
+		var configs []runtime.Config
+		f.deps.runtime = func(ctx context.Context, cfg runtime.Config) (sessionRuntime, error) {
+			configs = append(configs, cfg)
+			return original(ctx, cfg)
+		}
+		service, err := newFromEnv(context.Background(), f.deps)
+		So(err, ShouldBeNil)
+		So(ids, ShouldResemble, []string{"model-lite", "model-pro", "model-max"})
+		So(configs, ShouldHaveLength, 3)
+		So(service.runtimes, ShouldHaveLength, 3)
+		for _, tier := range []string{"lite", "pro", "max"} {
+			So(service.runtimes[tier].modelID, ShouldEqual, "model-"+tier)
+		}
+		So(&configs[0].Tools[0], ShouldEqual, &configs[1].Tools[0])
+		So(&configs[0].Tools[0], ShouldEqual, &configs[2].Tools[0])
+		_ = service.Close()
+		So(f.closed, ShouldResemble, []string{"redis", "postgres", "mcp"})
+	})
+	Convey("可选模型创建失败会清理已打开资源", t, func() {
+		f := newInitializationFixture("")
+		f.deps.model = func(_ context.Context, id string) (model.BaseChatModel, error) {
+			if id == "model-lite" {
+				return nil, nil
+			}
+			return nil, f.failure
+		}
+		service, err := newFromEnv(context.Background(), f.deps)
+		So(service, ShouldBeNil)
+		So(errors.Is(err, f.failure), ShouldBeTrue)
+		So(f.closed, ShouldResemble, []string{"redis", "postgres", "mcp"})
+	})
 }

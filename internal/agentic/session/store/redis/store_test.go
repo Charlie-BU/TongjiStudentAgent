@@ -41,7 +41,7 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(first.Created, ShouldBeTrue)
 			So(first.Message.Sequence, ShouldEqual, int64(1))
 
-			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{RunID: "run-001", Role: MessageRoleAssistant, Content: "你好，小济。", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000})
+			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{ModelTier: "lite", ModelID: "model-lite", RunID: "run-001", Role: MessageRoleAssistant, Content: "你好，小济。", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000})
 			So(appendErr, ShouldBeNil)
 			So(assistant.Message.Sequence, ShouldEqual, int64(2))
 			So(assistant.Message.ResponseID, ShouldEqual, "resp-001")
@@ -55,6 +55,8 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(messages[0].Role, ShouldEqual, MessageRoleAssistant)
 			So(messages[0].RunID, ShouldEqual, "run-001")
 			So(messages[0].ResponseID, ShouldEqual, "resp-001")
+			So(messages[0].ModelTier, ShouldEqual, "lite")
+			So(messages[0].ModelID, ShouldEqual, "model-lite")
 			So(messages[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
 			So(messages[1].RunID, ShouldEqual, "run-002")

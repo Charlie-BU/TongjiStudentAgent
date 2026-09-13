@@ -22,7 +22,8 @@ import (
 )
 
 type chatRequest struct {
-	Message string `json:"message"` // 本轮次用户消息
+	ModelTier json.RawMessage `json:"model_tier"`
+	Message   string          `json:"message"` // 本轮次用户消息
 }
 
 type createSessionRequest struct {
@@ -60,6 +61,7 @@ var deleteSession = chat.DeleteSession
 
 // streamSession 用于测试时替换会话流式执行实现。
 var streamSession = chat.StreamSession
+var validateModelTier = chat.ValidateModelTier
 
 // listSessionMessagePage 用于测试时替换会话历史分页读取实现。
 var listSessionMessagePage = chat.ListSessionMessagePage
@@ -156,6 +158,21 @@ func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
 		return
 	}
+	tier := "lite"
+	if len(request.ModelTier) > 0 {
+		if string(request.ModelTier) == "null" || json.Unmarshal(request.ModelTier, &tier) != nil {
+			c.JSON(consts.StatusBadRequest, utils.H{"error": chat.ErrInvalidModelTier.Error()})
+			return
+		}
+	}
+	if err := validateModelTier(tier); err != nil {
+		status := consts.StatusServiceUnavailable
+		if errors.Is(err, chat.ErrInvalidModelTier) {
+			status = consts.StatusBadRequest
+		}
+		c.JSON(status, utils.H{"error": err.Error()})
+		return
+	}
 	streamContext, cancel := context.WithCancel(requestContext)
 	defer cancel()
 	c.Response.Header.Set("X-Accel-Buffering", "no")
@@ -182,7 +199,7 @@ func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 			logs.CtxInfo(streamContext, "session SSE response write failed: %v", writeErr)
 			stopStream()
 		}
-	})
+	}, tier)
 	if err != nil && !streamStopped.Load() {
 		logs.CtxInfo(streamContext, "session message failed: %v", err)
 	}

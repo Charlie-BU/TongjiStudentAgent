@@ -12,6 +12,7 @@ import (
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	taskplan "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
+	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/route/param"
@@ -295,11 +296,14 @@ func TestSessionMessages(t *testing.T) {
 
 func TestSessionMessageStream(t *testing.T) {
 	Convey("提交会话消息接口", t, func() {
+		originalValidate := validateModelTier
+		validateModelTier = func(string) error { return nil }
+		t.Cleanup(func() { validateModelTier = originalValidate })
 		originalStreamSession := streamSession
 		t.Cleanup(func() { streamSession = originalStreamSession })
 
 		Convey("会将会话标识写入 SSE 事件", func() {
-			streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event)) (string, error) {
+			streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event), tiers ...string) (string, error) {
 				So(sessionID, ShouldEqual, "anon-001")
 				So(message, ShouldEqual, "现在几点？")
 				send(agentevent.Event{Type: agentevent.RunStarted, RunID: "run-test", Sequence: 1, OccurredAt: time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)})
@@ -320,7 +324,7 @@ func TestSessionMessageStream(t *testing.T) {
 
 		Convey("缺少会话标识时返回 400 且不调用服务", func() {
 			called := false
-			streamSession = func(context.Context, string, string, func(agentevent.Event)) (string, error) {
+			streamSession = func(context.Context, string, string, func(agentevent.Event), ...string) (string, error) {
 				called = true
 				return "", nil
 			}
@@ -353,3 +357,59 @@ type testSSEWriter struct {
 
 func (w *testSSEWriter) Flush() error    { return nil }
 func (w *testSSEWriter) Finalize() error { return nil }
+
+func TestMessageModelTierValidation(t *testing.T) {
+	oldValidate, oldStream := validateModelTier, streamSession
+	t.Cleanup(func() { validateModelTier, streamSession = oldValidate, oldStream })
+	for _, tc := range []struct {
+		body, tier string
+		status     int
+	}{
+		{`{"message":"hi"}`, "lite", 200},
+		{`{"message":"hi","model_tier":"lite"}`, "lite", 200},
+		{`{"message":"hi","model_tier":"pro"}`, "pro", 200},
+		{`{"message":"hi","model_tier":"max"}`, "max", 200},
+		{`{"message":"hi","model_tier":"PRO"}`, "", 400},
+		{`{"message":"hi","model_tier":""}`, "", 400},
+		{`{"message":"hi","model_tier":"other"}`, "", 400},
+		{`{"message":"hi","model_tier":null}`, "", 400},
+		{`{"message":"hi","model_tier":12}`, "", 400},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			validateModelTier = func(tier string) error {
+				switch tier {
+				case "lite", "pro", "max":
+					return nil
+				}
+				return chat.ErrInvalidModelTier
+			}
+			called := false
+			streamSession = func(_ context.Context, _, _ string, _ func(agentevent.Event), tiers ...string) (string, error) {
+				called = true
+				if len(tiers) != 1 || tiers[0] != tc.tier {
+					t.Fatalf("tier: %v", tiers)
+				}
+				return "", nil
+			}
+			c := newSessionRequest("anon-001")
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Request.SetBodyString(tc.body)
+			SessionMessageStream(context.Background(), c)
+			if c.Response.StatusCode() != tc.status || called != (tc.status == 200) {
+				t.Fatalf("status=%d called=%v", c.Response.StatusCode(), called)
+			}
+		})
+	}
+	validateModelTier = func(string) error { return chat.ErrModelTierUnavailable }
+	streamSession = func(context.Context, string, string, func(agentevent.Event), ...string) (string, error) {
+		t.Fatal("unavailable tier started stream")
+		return "", nil
+	}
+	c := newSessionRequest("anon-001")
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.SetBodyString(`{"message":"hi","model_tier":"pro"}`)
+	SessionMessageStream(context.Background(), c)
+	if c.Response.StatusCode() != 503 {
+		t.Fatal(c.Response.StatusCode())
+	}
+}

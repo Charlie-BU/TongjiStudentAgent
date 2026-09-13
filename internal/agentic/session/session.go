@@ -65,6 +65,8 @@ type Session struct {
 
 // Message 表示可作为后续模型输入的 canonical 对话消息。
 type Message struct {
+	ModelTier              string            `json:"model_tier,omitempty"`
+	ModelID                string            `json:"model_id,omitempty"`
 	ID                     string            `json:"id"`
 	SessionID              string            `json:"session_id"`
 	RunID                  string            `json:"run_id"`
@@ -82,6 +84,8 @@ type Message struct {
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
+	ModelTier              string
+	ModelID                string
 	RunID                  string
 	Role                   MessageRole
 	Content                string
