@@ -12,36 +12,9 @@ import (
 	agenticskills "github.com/Charlie-BU/TongjiStudent/internal/agentic/skills"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	knowledgeModel "github.com/volcengine/vikingdb-go-sdk/knowledge/model"
 )
-
-type knowledgeDocumentsProvider interface {
-	ListDocs(context.Context, knowledgeModel.ListDocsRequest) (*knowledgeModel.ListDocsResponse, error)
-}
-
-// Config 描述运行时所需的通用 Agent 依赖。
-type Config struct {
-	Name            string
-	Description     string
-	Instruction     string
-	SkillCatalog    string
-	KnowledgeClient knowledgeDocumentsProvider
-	ChatModel       model.BaseChatModel
-	Tools           []tool.BaseTool
-	MaxIterations   int
-	Handlers        []adk.ChatModelAgentMiddleware
-}
-
-// Runtime 持有已初始化的 DeepAgent。
-type Runtime struct {
-	agent           adk.Agent
-	skillCatalog    string
-	knowledgeClient knowledgeDocumentsProvider
-}
 
 // New 根据通用依赖创建当前单 Agent Runtime。
 func New(ctx context.Context, cfg Config) (*Runtime, error) {
@@ -68,7 +41,13 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create deep agent: %w", err)
 	}
-	return &Runtime{agent: agent, skillCatalog: cfg.SkillCatalog, knowledgeClient: cfg.KnowledgeClient}, nil
+	// 读取模型声明的历史装配策略，并传给 ContextAssembler；这是项目约定，非 Eino 标准接口。
+	// OpenRouter 声明完整历史重放；未声明时沿用原有装配逻辑，并在有有效 Ark 响应缓存时续接。
+	stateless := false
+	if capability, ok := cfg.ChatModel.(interface{ StatelessResponses() bool }); ok {
+		stateless = capability.StatelessResponses()
+	}
+	return &Runtime{stateless: stateless, agent: agent, skillCatalog: cfg.SkillCatalog, knowledgeClient: cfg.KnowledgeClient}, nil
 }
 
 // TODO：待拆解 tool call 处理
@@ -81,7 +60,7 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 		emit = func(agentevent.Event) {}
 	}
 
-	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, r.knowledgeClient, time.Now(), history)
+	messages, err := buildInputMessagesWithHistory(ctx, query, studentInfo, r.skillCatalog, r.knowledgeClient, time.Now(), history, r.stateless)
 	if err != nil {
 		return "", fmt.Errorf("build agent input: %w", err)
 	}
@@ -120,9 +99,6 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 		}
 		switch event.Output.MessageOutput.Role {
 		case schema.Assistant:
-			if output.ReasoningContent != "" {
-				emit(agentevent.Event{Type: agentevent.AssistantReasoning, Data: agentevent.AssistantReasoningData{Text: output.ReasoningContent}})
-			}
 			for _, toolCall := range output.ToolCalls {
 				if toolCall.ID == "" || toolCall.Function.Name == "" {
 					continue
@@ -174,6 +150,9 @@ func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*sche
 		if output.Message != nil && output.Role == schema.Assistant && output.Message.Content != "" {
 			emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: agentevent.AssistantDeltaData{Text: output.Message.Content}})
 		}
+		if output.Message != nil && output.Role == schema.Assistant && output.Message.ReasoningContent != "" {
+			emit(agentevent.Event{Type: agentevent.AssistantReasoning, Data: agentevent.AssistantReasoningData{Delta: output.Message.ReasoningContent}})
+		}
 		return output.Message, nil
 	}
 
@@ -188,6 +167,9 @@ func readMessage(output *adk.MessageVariant, emit func(agentevent.Event)) (*sche
 		}
 		if message != nil {
 			messages = append(messages, message)
+			if output.Role == schema.Assistant && message.ReasoningContent != "" {
+				emit(agentevent.Event{Type: agentevent.AssistantReasoning, Data: agentevent.AssistantReasoningData{Delta: message.ReasoningContent}})
+			}
 			if output.Role == schema.Assistant && message.Content != "" {
 				emit(agentevent.Event{Type: agentevent.AssistantDelta, Data: agentevent.AssistantDeltaData{Text: message.Content}})
 			}

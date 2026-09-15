@@ -87,11 +87,11 @@ func TestBindSessionMessage(t *testing.T) {
 
 func TestCreateSession(t *testing.T) {
 	Convey("创建会话接口", t, func() {
-		originalCreateSessionWithName := createSessionWithName
-		t.Cleanup(func() { createSessionWithName = originalCreateSessionWithName })
+		originalCreateSession := createSession
+		t.Cleanup(func() { createSession = originalCreateSession })
 
 		Convey("会返回创建的会话标识与持久化类型", func() {
-			createSessionWithName = func(ctx context.Context, name string) (agenticsession.Session, error) {
+			createSession = func(ctx context.Context, name string) (agenticsession.Session, error) {
 				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
 				So(ok, ShouldBeTrue)
 				So(accessToken, ShouldEqual, "test-access-token")
@@ -114,7 +114,7 @@ func TestCreateSession(t *testing.T) {
 		})
 
 		Convey("会保留请求体中的会话名称", func() {
-			createSessionWithName = func(_ context.Context, name string) (agenticsession.Session, error) {
+			createSession = func(_ context.Context, name string) (agenticsession.Session, error) {
 				So(name, ShouldEqual, "成绩查询")
 				return agenticsession.Session{ID: "ses-001", Name: name, Persistence: agenticsession.PersistenceDurable}, nil
 			}
@@ -135,7 +135,7 @@ func TestCreateSession(t *testing.T) {
 		})
 
 		Convey("服务不可用时返回 503", func() {
-			createSessionWithName = func(context.Context, string) (agenticsession.Session, error) {
+			createSession = func(context.Context, string) (agenticsession.Session, error) {
 				return agenticsession.Session{}, errors.New("store unavailable")
 			}
 			requestContext := app.NewContext(0)
@@ -259,11 +259,11 @@ func TestDeleteSession(t *testing.T) {
 
 func TestSessionMessages(t *testing.T) {
 	Convey("读取会话历史接口", t, func() {
-		originalListSessionMessagePage := listSessionMessagePage
-		t.Cleanup(func() { listSessionMessagePage = originalListSessionMessagePage })
+		originalListSessionMessages := listSessionMessages
+		t.Cleanup(func() { listSessionMessages = originalListSessionMessages })
 
 		Convey("会转发分页快照参数，并返回分页元数据", func() {
-			listSessionMessagePage = func(_ context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
+			listSessionMessages = func(_ context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
 				So(sessionID, ShouldEqual, "ses-001")
 				So(limit, ShouldEqual, 2)
 				So(offset, ShouldEqual, 4)
@@ -282,7 +282,7 @@ func TestSessionMessages(t *testing.T) {
 		})
 
 		Convey("会话不存在时返回 404", func() {
-			listSessionMessagePage = func(context.Context, string, int, int, int64) (agenticsession.MessagePage, error) {
+			listSessionMessages = func(context.Context, string, int, int, int64) (agenticsession.MessagePage, error) {
 				return agenticsession.MessagePage{}, agenticsession.ErrNotFound
 			}
 			requestContext := newSessionRequest("ses-001")
@@ -303,7 +303,7 @@ func TestSessionMessageStream(t *testing.T) {
 		t.Cleanup(func() { streamSession = originalStreamSession })
 
 		Convey("会将会话标识写入 SSE 事件", func() {
-			streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event), tiers ...string) (string, error) {
+			streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event), tier string) (string, error) {
 				So(sessionID, ShouldEqual, "anon-001")
 				So(message, ShouldEqual, "现在几点？")
 				send(agentevent.Event{Type: agentevent.RunStarted, RunID: "run-test", Sequence: 1, OccurredAt: time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)})
@@ -324,7 +324,7 @@ func TestSessionMessageStream(t *testing.T) {
 
 		Convey("缺少会话标识时返回 400 且不调用服务", func() {
 			called := false
-			streamSession = func(context.Context, string, string, func(agentevent.Event), ...string) (string, error) {
+			streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
 				called = true
 				return "", nil
 			}
@@ -359,57 +359,56 @@ func (w *testSSEWriter) Flush() error    { return nil }
 func (w *testSSEWriter) Finalize() error { return nil }
 
 func TestMessageModelTierValidation(t *testing.T) {
-	oldValidate, oldStream := validateModelTier, streamSession
-	t.Cleanup(func() { validateModelTier, streamSession = oldValidate, oldStream })
-	for _, tc := range []struct {
-		body, tier string
-		status     int
-	}{
-		{`{"message":"hi"}`, "lite", 200},
-		{`{"message":"hi","model_tier":"lite"}`, "lite", 200},
-		{`{"message":"hi","model_tier":"pro"}`, "pro", 200},
-		{`{"message":"hi","model_tier":"max"}`, "max", 200},
-		{`{"message":"hi","model_tier":"PRO"}`, "", 400},
-		{`{"message":"hi","model_tier":""}`, "", 400},
-		{`{"message":"hi","model_tier":"other"}`, "", 400},
-		{`{"message":"hi","model_tier":null}`, "", 400},
-		{`{"message":"hi","model_tier":12}`, "", 400},
-	} {
-		t.Run(tc.body, func(t *testing.T) {
-			validateModelTier = func(tier string) error {
-				switch tier {
-				case "lite", "pro", "max":
-					return nil
+	Convey("HTTP 层默认档位和显式档位校验", t, func() {
+		oldValidate, oldStream := validateModelTier, streamSession
+		t.Cleanup(func() { validateModelTier, streamSession = oldValidate, oldStream })
+		for _, tc := range []struct {
+			body, tier string
+			status     int
+		}{
+			{`{"message":"hi"}`, "lite", 200},
+			{`{"message":"hi","model_tier":"lite"}`, "lite", 200},
+			{`{"message":"hi","model_tier":"pro"}`, "pro", 200},
+			{`{"message":"hi","model_tier":"max"}`, "max", 200},
+			{`{"message":"hi","model_tier":"PRO"}`, "", 400},
+			{`{"message":"hi","model_tier":""}`, "", 400},
+			{`{"message":"hi","model_tier":"other"}`, "", 400},
+			{`{"message":"hi","model_tier":null}`, "", 400},
+			{`{"message":"hi","model_tier":12}`, "", 400},
+		} {
+			Convey(tc.body, func() {
+				validateModelTier = func(tier string) error {
+					switch tier {
+					case "lite", "pro", "max":
+						return nil
+					}
+					return chat.ErrInvalidModelTier
 				}
-				return chat.ErrInvalidModelTier
-			}
-			called := false
-			streamSession = func(_ context.Context, _, _ string, _ func(agentevent.Event), tiers ...string) (string, error) {
-				called = true
-				if len(tiers) != 1 || tiers[0] != tc.tier {
-					t.Fatalf("tier: %v", tiers)
+				called := false
+				streamSession = func(_ context.Context, _, _ string, _ func(agentevent.Event), tier string) (string, error) {
+					called = true
+					So(tier, ShouldEqual, tc.tier)
+					return "", nil
 				}
-				return "", nil
-			}
-			c := newSessionRequest("anon-001")
-			c.Request.Header.Set("Content-Type", "application/json")
-			c.Request.SetBodyString(tc.body)
-			SessionMessageStream(context.Background(), c)
-			if c.Response.StatusCode() != tc.status || called != (tc.status == 200) {
-				t.Fatalf("status=%d called=%v", c.Response.StatusCode(), called)
-			}
-		})
-	}
-	validateModelTier = func(string) error { return chat.ErrModelTierUnavailable }
-	streamSession = func(context.Context, string, string, func(agentevent.Event), ...string) (string, error) {
-		t.Fatal("unavailable tier started stream")
-		return "", nil
-	}
-	c := newSessionRequest("anon-001")
-	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.SetBodyString(`{"message":"hi","model_tier":"pro"}`)
-	SessionMessageStream(context.Background(), c)
-	if c.Response.StatusCode() != 503 {
-		t.Fatal(c.Response.StatusCode())
-	}
+				c := newSessionRequest("anon-001")
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Request.SetBodyString(tc.body)
+				SessionMessageStream(context.Background(), c)
+				So(c.Response.StatusCode(), ShouldEqual, tc.status)
+				So(called, ShouldEqual, tc.status == 200)
+			})
+		}
+		validateModelTier = func(string) error { return chat.ErrModelTierUnavailable }
+		called := false
+		streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
+			called = true
+			return "", nil
+		}
+		c := newSessionRequest("anon-001")
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Request.SetBodyString(`{"message":"hi","model_tier":"pro"}`)
+		SessionMessageStream(context.Background(), c)
+		So(c.Response.StatusCode(), ShouldEqual, 503)
+		So(called, ShouldBeFalse)
+	})
 }

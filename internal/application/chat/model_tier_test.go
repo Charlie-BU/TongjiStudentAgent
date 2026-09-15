@@ -3,13 +3,15 @@ package chat
 import (
 	"context"
 	"errors"
+	"sync"
+	"testing"
+	"time"
+
 	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	sessioncontext "github.com/Charlie-BU/TongjiStudent/internal/agentic/session/context"
 	"github.com/cloudwego/eino/schema"
-	"sync"
-	"testing"
-	"time"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 type tierTestRuntime string
@@ -44,97 +46,84 @@ func (s *tierTestStore) Append(_ context.Context, _ string, m agenticsession.New
 }
 
 func TestTierRoutingConcurrent(t *testing.T) {
-	store := &tierTestStore{}
-	s := &Service{runtimes: map[string]modelRuntime{}, ephemeralSessionStore: store, turnLocker: noOpTurnLocker{}, taskPlanRepository: &recordingTaskPlanRepository{}}
-	for _, tier := range []string{"lite", "pro", "max"} {
-		s.runtimes[tier] = modelRuntime{runtime: tierTestRuntime(tier), modelID: "model-" + tier}
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	Convey("显式档位并发路由及非法档位拒绝", t, func() {
+		store := &tierTestStore{}
+		s := &Service{runtimes: map[string]modelRuntime{}, ephemeralSessionStore: store, turnLocker: noOpTurnLocker{}, taskPlanRepository: &recordingTaskPlanRepository{}}
 		for _, tier := range []string{"lite", "pro", "max"} {
-			wg.Add(1)
-			go func(tier string) {
-				defer wg.Done()
-				out, err := s.StreamSession(context.Background(), "anon-"+tier, "hello", nil, tier)
-				if err != nil || out != tier {
-					t.Errorf("tier %s: %q %v", tier, out, err)
-				}
-			}(tier)
+			s.runtimes[tier] = modelRuntime{runtime: tierTestRuntime(tier), modelID: "model-" + tier}
 		}
-	}
-	wg.Wait()
-	if len(store.messages) != 60 {
-		t.Fatalf("messages: %d", len(store.messages))
-	}
-	for _, m := range store.messages {
-		if m.ModelID != "model-"+m.ModelTier {
-			t.Fatalf("metadata: %+v", m)
+		var wg sync.WaitGroup
+		results := make(chan bool, 30)
+		for i := 0; i < 10; i++ {
+			for _, tier := range []string{"lite", "pro", "max"} {
+				wg.Add(1)
+				go func(tier string) {
+					defer wg.Done()
+					out, err := s.StreamSession(context.Background(), "anon-"+tier, "hello", nil, tier)
+					results <- (err == nil && out == tier)
+				}(tier)
+			}
 		}
-	}
-	before := len(store.messages)
-	for _, tier := range []string{"", "PRO", "other"} {
-		if _, err := s.StreamSession(context.Background(), "anon", "hello", nil, tier); !errors.Is(err, ErrInvalidModelTier) {
-			t.Fatal(err)
+		wg.Wait()
+		close(results)
+		for correct := range results {
+			So(correct, ShouldBeTrue)
 		}
-	}
-	delete(s.runtimes, "pro")
-	if _, err := s.StreamSession(context.Background(), "anon", "hello", nil, "pro"); !errors.Is(err, ErrModelTierUnavailable) {
-		t.Fatal(err)
-	}
-	if len(store.messages) != before {
-		t.Fatal("rejected request wrote messages")
-	}
-	out, err := s.StreamSession(context.Background(), "anon", "hello", nil)
-	if err != nil || out != "lite" {
-		t.Fatalf("default tier: %s %v", out, err)
-	}
+		So(store.messages, ShouldHaveLength, 60)
+		for _, m := range store.messages {
+			So(m.ModelID, ShouldEqual, "model-"+m.ModelTier)
+		}
+		before := len(store.messages)
+		for _, tier := range []string{"", "PRO", "other"} {
+			_, err := s.StreamSession(context.Background(), "anon", "hello", nil, tier)
+			So(errors.Is(err, ErrInvalidModelTier), ShouldBeTrue)
+		}
+		delete(s.runtimes, "pro")
+		_, err := s.StreamSession(context.Background(), "anon", "hello", nil, "pro")
+		So(errors.Is(err, ErrModelTierUnavailable), ShouldBeTrue)
+		So(store.messages, ShouldHaveLength, before)
+	})
 }
 
 func TestHistoryModelCacheIsolation(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		models   []string
-		selected string
-		want     []bool
-	}{
-		{"same", []string{"lite", "lite"}, "lite", []bool{true, true}},
-		{"switch", []string{"lite", "lite"}, "pro", []bool{false, false}},
-		{"switch back", []string{"lite", "pro"}, "lite", []bool{false, false}},
-		{"resume new chain", []string{"lite", "pro", "lite"}, "lite", []bool{false, false, true}},
-		{"legacy", []string{""}, "lite", []bool{false}},
-		{"changed model", []string{"old-lite"}, "new-lite", []bool{false}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			history := make([]agenticsession.Message, len(tc.models))
-			for i, id := range tc.models {
-				history[i] = agenticsession.Message{Sequence: int64(i + 1), Role: agenticsession.MessageRoleAssistant, Content: "answer", ModelID: id, ResponseID: "response", ResponseCacheExpiresAt: time.Now().Add(time.Hour).Unix()}
-			}
-			filtered := historyForModel(history, tc.selected)
-			messages, err := sessioncontext.NewContextAssembler().AssembleForTurn(context.Background(), sessioncontext.TurnInput{History: filtered, DynamicReminder: schema.UserMessage("reminder"), UserMessage: schema.UserMessage("query")})
-			if err != nil {
-				t.Fatal(err)
-			}
-			count := 0
-			for i, m := range filtered {
-				if (m.ResponseID != "") != tc.want[i] {
-					t.Fatalf("cache %d: %+v", i, m)
+	Convey("模型切换清理响应缓存且不修改历史", t, func() {
+		for _, tc := range []struct {
+			name     string
+			models   []string
+			selected string
+			want     []bool
+		}{
+			{"same", []string{"lite", "lite"}, "lite", []bool{true, true}},
+			{"switch", []string{"lite", "lite"}, "pro", []bool{false, false}},
+			{"switch back", []string{"lite", "pro"}, "lite", []bool{false, false}},
+			{"resume new chain", []string{"lite", "pro", "lite"}, "lite", []bool{false, false, true}},
+			{"legacy", []string{""}, "lite", []bool{false}},
+			{"changed model", []string{"old-lite"}, "new-lite", []bool{false}},
+		} {
+			Convey(tc.name, func() {
+				history := make([]agenticsession.Message, len(tc.models))
+				for i, id := range tc.models {
+					history[i] = agenticsession.Message{Sequence: int64(i + 1), Role: agenticsession.MessageRoleAssistant, Content: "answer", ModelID: id, ResponseID: "response", ResponseCacheExpiresAt: time.Now().Add(time.Hour).Unix()}
 				}
-				if tc.want[i] {
-					count++
+				filtered := sanitizeHistoryForModel(history, tc.selected)
+				messages, err := sessioncontext.NewContextAssembler().AssembleForTurn(context.Background(), sessioncontext.TurnInput{History: filtered, DynamicReminder: schema.UserMessage("reminder"), UserMessage: schema.UserMessage("query")})
+				So(err, ShouldBeNil)
+				count := 0
+				for i, m := range filtered {
+					So(m.ResponseID != "", ShouldEqual, tc.want[i])
+					if tc.want[i] {
+						count++
+					}
+					So(history[i].ResponseID, ShouldEqual, "response")
 				}
-				if history[i].ResponseID == "" {
-					t.Fatal("mutated stored history")
+				actual := 0
+				for _, m := range messages {
+					if m.Extra["ark-response-id"] != nil {
+						actual++
+					}
 				}
-			}
-			actual := 0
-			for _, m := range messages {
-				if m.Extra["ark-response-id"] != nil {
-					actual++
-				}
-			}
-			if actual != count {
-				t.Fatalf("restored %d caches, want %d", actual, count)
-			}
-		})
-	}
+				So(actual, ShouldEqual, count)
+			})
+		}
+	})
 }

@@ -205,7 +205,7 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID), redisTaskPlanKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.ResponseID, strconv.FormatInt(input.ResponseCacheExpiresAt, 10), input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems), input.ModelTier, input.ModelID).Result()
+	result, err := redisAppendScript.Run(ctx, s.client, []string{redisMetaKey(sessionID), redisMessagesKey(sessionID), redisTaskPlanKey(sessionID)}, string(input.Role), input.Content, string(toolCalls), input.ToolCallID, input.ToolName, input.ReasoningContent, input.ResponseID, strconv.FormatInt(input.ResponseCacheExpiresAt, 10), input.RunID, messageID, now.Format(time.RFC3339Nano), strconv.FormatInt(s.ttl.Milliseconds(), 10), strconv.Itoa(s.maxItems), input.ModelTier, input.ModelID, input.ProtocolData).Result()
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("append ephemeral message: %w", err)
 	}
@@ -221,7 +221,7 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 		return AppendResult{}, errors.New("invalid Redis ephemeral message payload")
 	}
 	var message Message
-	if err := json.Unmarshal([]byte(encoded), &message); err != nil {
+	if err := decodeStoredMessage([]byte(encoded), &message); err != nil {
 		return AppendResult{}, fmt.Errorf("decode ephemeral message: %w", err)
 	}
 	return AppendResult{Message: message, Created: message.ID == messageID}, nil
@@ -242,7 +242,7 @@ func (s *RedisEphemeralStore) ListMessages(ctx context.Context, sessionID string
 	messages := make([]Message, 0, len(encoded))
 	for index := len(encoded) - 1; index >= 0; index-- {
 		var message Message
-		if err := json.Unmarshal([]byte(encoded[index]), &message); err != nil {
+		if err := decodeStoredMessage([]byte(encoded[index]), &message); err != nil {
 			return nil, fmt.Errorf("decode ephemeral message: %w", err)
 		}
 		messages = append(messages, message)
@@ -266,7 +266,7 @@ func (s *RedisEphemeralStore) ListMessagePage(ctx context.Context, sessionID str
 	matched := 0
 	for _, item := range encoded {
 		var message Message
-		if err := json.Unmarshal([]byte(item), &message); err != nil {
+		if err := decodeStoredMessage([]byte(item), &message); err != nil {
 			return agenticsession.MessagePage{}, fmt.Errorf("decode ephemeral page message: %w", err)
 		}
 		if snapshotSequence == 0 {
@@ -414,7 +414,7 @@ local ttl = tonumber(ARGV[12])
 local maxItems = tonumber(ARGV[13])
 local sequence = redis.call('HINCRBY', meta, 'next_sequence', 1)
 redis.call('HSET', meta, 'last_active_at', now)
-local item = cjson.encode({id=messageID, session_id=string.match(meta, '([^:]+):meta$'), run_id=runID, sequence=sequence, role=role, content=content, tool_calls=cjson.decode(toolCalls), tool_call_id=toolCallID, tool_name=toolName, reasoning_content=reasoningContent, model_tier=ARGV[14], model_id=ARGV[15], response_id=responseID, response_cache_expires_at=responseCacheExpiresAt, created_at=now})
+local item = cjson.encode({id=messageID, session_id=string.match(meta, '([^:]+):meta$'), run_id=runID, sequence=sequence, role=role, content=content, tool_calls=cjson.decode(toolCalls), tool_call_id=toolCallID, tool_name=toolName, reasoning_content=reasoningContent, model_tier=ARGV[14], model_id=ARGV[15], protocol_data=ARGV[16], response_id=responseID, response_cache_expires_at=responseCacheExpiresAt, created_at=now})
 redis.call('LPUSH', messages, item)
 redis.call('LTRIM', messages, 0, maxItems - 1)
 redis.call('PEXPIRE', meta, ttl)
@@ -457,3 +457,17 @@ redis.call('PEXPIRE', meta, ttl)
 redis.call('PEXPIRE', messages, ttl)
 return 1
 `)
+
+// decodeStoredMessage 恢复不对前端暴露的模型协议数据。
+func decodeStoredMessage(data []byte, message *Message) error {
+	var stored struct {
+		*Message
+		ProtocolData string `json:"protocol_data"`
+	}
+	stored.Message = message
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return err
+	}
+	message.ProtocolData = stored.ProtocolData
+	return nil
+}

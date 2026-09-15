@@ -1,4 +1,5 @@
 // Package session 定义多轮对话会话的纯领域契约。
+// TODO：待职责拆分
 package session
 
 import (
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/modelmeta"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -65,6 +67,7 @@ type Session struct {
 
 // Message 表示可作为后续模型输入的 canonical 对话消息。
 type Message struct {
+	ProtocolData           string            `json:"-"`
 	ModelTier              string            `json:"model_tier,omitempty"`
 	ModelID                string            `json:"model_id,omitempty"`
 	ID                     string            `json:"id"`
@@ -84,6 +87,7 @@ type Message struct {
 
 // NewMessage 描述待追加的 canonical 对话消息。
 type NewMessage struct {
+	ProtocolData           string
 	ModelTier              string
 	ModelID                string
 	RunID                  string
@@ -186,6 +190,7 @@ func NewMessageFromSchema(message *schema.Message) (NewMessage, error) {
 		return NewMessage{}, ErrInvalidMessage
 	}
 	input := NewMessage{Content: message.Content, ToolCalls: message.ToolCalls, ToolCallID: message.ToolCallID, ToolName: message.ToolName, ReasoningContent: message.ReasoningContent}
+	input.ProtocolData, _ = message.Extra[modelmeta.ProtocolKey].(string)
 	switch message.Role {
 	case schema.Assistant:
 		input.Role = MessageRoleAssistant

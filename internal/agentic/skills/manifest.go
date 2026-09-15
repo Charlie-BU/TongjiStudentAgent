@@ -22,7 +22,7 @@ var manifests = map[string]Manifest{
 	},
 	skillallowlist.WebToolsSkill: {
 		ID:          skillallowlist.WebToolsSkill,
-		Description: "用于公开信息研究、网页/URL 阅读与总结、官方来源查找、事实或时效核验、网页工具结果解读及失败诊断。指导 system.search_knowledge、system.web_search 和 system.url_fetch 的并行调度、DuckDuckGo 搜索页使用、正文核验、安全边界与来源化回答；个人实时数据、登录受保护资源和绕过反爬不适用。",
+		Description: "用于必要公开信息补证、明确联网或公开 URL 阅读请求。首问已有证据足够时不加载；同一问题第二次及以上追问或不满意时，场景适合公开检索且未限制联网，默认优先加载并调用网页工具交叉核验或补充视角，不要求先证明已有证据不足。纯表达调整、个人或内部私有事实除外。",
 	},
 	skillallowlist.CourseAndTeacherGuideSkill: {
 		ID:          skillallowlist.CourseAndTeacherGuideSkill,

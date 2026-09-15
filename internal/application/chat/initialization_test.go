@@ -13,6 +13,7 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/agentic/session/taskplan"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/knowledge"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -30,7 +31,7 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 			stage  string
 			closed []string
 		}{
-			{"instruction", nil}, {"model", nil}, {"knowledge", nil}, {"catalog", nil},
+			{"instruction", nil}, {"model", nil}, {"knowledge", nil}, {"tongji", nil}, {"catalog", nil},
 			{"tavily", nil}, {"webfetch", nil}, {"mcp", nil},
 			{"mcpTools", []string{"mcp"}}, {"sandboxEnabled", []string{"mcp"}},
 			{"middleware", []string{"mcp"}}, {"sessionConfig", []string{"mcp"}},
@@ -41,7 +42,7 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 		} {
 			Convey(tc.stage, func() {
 				fixture := newInitializationFixture(tc.stage)
-				service, err := newFromEnv(context.Background(), fixture.deps)
+				service, err := fixture.deps.initialize(context.Background())
 				So(service, ShouldBeNil)
 				So(errors.Is(err, fixture.failure), ShouldBeTrue)
 				So(fixture.closed, ShouldResemble, tc.closed)
@@ -51,15 +52,15 @@ func TestNewFromEnvResourceOwnership(t *testing.T) {
 	})
 	Convey("成功后由 Service.Close 释放连接，清理错误不阻断其余资源", t, func() {
 		fixture := newInitializationFixture("")
-		service, err := newFromEnv(context.Background(), fixture.deps)
+		service, err := fixture.deps.initialize(context.Background())
 		So(err, ShouldBeNil)
 		So(service, ShouldNotBeNil)
 		So(fixture.closed, ShouldBeEmpty)
-		So(service.mcpClient, ShouldEqual, fixture.mcp)
-		So(service.postgresSessionStore, ShouldEqual, fixture.postgres)
-		So(service.redisSessionStore, ShouldEqual, fixture.redis)
+		So(service.tongjiClient, ShouldNotBeNil)
+		So(service.durableSessionStore, ShouldEqual, fixture.postgres)
+		So(service.ephemeralSessionStore, ShouldEqual, fixture.redis)
 		So(service.historyMessageLimit, ShouldEqual, 7)
-		So(service.runtime, ShouldEqual, fixture.runtime)
+		So(service.runtimes["lite"].runtime, ShouldEqual, fixture.runtime)
 		err = service.Close()
 		So(fixture.closed, ShouldResemble, []string{"redis", "postgres", "mcp"})
 		So(errors.Is(err, fixture.closeFailure), ShouldBeTrue)
@@ -72,7 +73,7 @@ func TestOptionalChromium(t *testing.T) {
 	t.Setenv("MAX_MODEL", "")
 	Convey("浏览器为可选启动能力", t, func() {
 		fixture := newInitializationFixture("verifyChromium")
-		service, err := newFromEnv(context.Background(), fixture.deps)
+		service, err := fixture.deps.initialize(context.Background())
 		if err != nil || service == nil {
 			t.Fatalf("optional browser blocked startup: %v", err)
 		}
@@ -80,7 +81,7 @@ func TestOptionalChromium(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		fixture.deps.verifyChromium = func(context.Context) error { cancel(); return context.Canceled }
-		service, err = newFromEnv(ctx, fixture.deps)
+		service, err = fixture.deps.initialize(ctx)
 		if service != nil || !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected startup cancellation, got %v", err)
 		}
@@ -109,8 +110,9 @@ func newInitializationFixture(failStage string) *initializationFixture {
 	}
 	f.deps = initializationDeps{
 		instruction:    func(context.Context) (string, error) { return "instruction", step("instruction") },
-		model:          func(context.Context, string) (model.BaseChatModel, error) { return nil, step("model") },
+		model:          func(context.Context, string, string) (model.BaseChatModel, error) { return nil, step("model") },
 		knowledge:      func() (*knowledge.Client, error) { return nil, step("knowledge") },
+		tongji:         func() (*tongjiapi.Client, error) { return &tongjiapi.Client{}, step("tongji") },
 		catalog:        func() (string, error) { return "catalog", step("catalog") },
 		tavily:         func() (*tavily.Client, error) { return nil, step("tavily") },
 		webfetch:       func() (*webfetch.Client, error) { return nil, step("webfetch") },
@@ -184,7 +186,7 @@ func TestTierRuntimeInitialization(t *testing.T) {
 	Convey("为每档创建 Runtime 并共享工具，资源只释放一次", t, func() {
 		f := newInitializationFixture("")
 		var ids []string
-		f.deps.model = func(_ context.Context, id string) (model.BaseChatModel, error) {
+		f.deps.model = func(_ context.Context, id, tier string) (model.BaseChatModel, error) {
 			ids = append(ids, id)
 			return nil, nil
 		}
@@ -194,7 +196,7 @@ func TestTierRuntimeInitialization(t *testing.T) {
 			configs = append(configs, cfg)
 			return original(ctx, cfg)
 		}
-		service, err := newFromEnv(context.Background(), f.deps)
+		service, err := f.deps.initialize(context.Background())
 		So(err, ShouldBeNil)
 		So(ids, ShouldResemble, []string{"model-lite", "model-pro", "model-max"})
 		So(configs, ShouldHaveLength, 3)
@@ -209,13 +211,13 @@ func TestTierRuntimeInitialization(t *testing.T) {
 	})
 	Convey("可选模型创建失败会清理已打开资源", t, func() {
 		f := newInitializationFixture("")
-		f.deps.model = func(_ context.Context, id string) (model.BaseChatModel, error) {
+		f.deps.model = func(_ context.Context, id, tier string) (model.BaseChatModel, error) {
 			if id == "model-lite" {
 				return nil, nil
 			}
 			return nil, f.failure
 		}
-		service, err := newFromEnv(context.Background(), f.deps)
+		service, err := f.deps.initialize(context.Background())
 		So(service, ShouldBeNil)
 		So(errors.Is(err, f.failure), ShouldBeTrue)
 		So(f.closed, ShouldResemble, []string{"redis", "postgres", "mcp"})

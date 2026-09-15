@@ -16,7 +16,10 @@ import (
 const responseChainCacheTTLSeconds = 600
 
 // NewFromEnv 使用环境变量中的共享凭据和地址创建指定模型 ID 的 Ark ChatModel。
-func NewFromEnv(ctx context.Context, modelID string) (model.BaseChatModel, error) {
+func NewFromEnv(ctx context.Context, modelID, effort string) (model.BaseChatModel, error) {
+	if effort != "low" && effort != "medium" && effort != "high" {
+		return nil, fmt.Errorf("reasoning effort must be low, medium, or high")
+	}
 	arkAPIKey := os.Getenv("ARK_API_KEY")
 	if modelID == "" || arkAPIKey == "" {
 		return nil, fmt.Errorf("model ID or ARK_API_KEY is not set")
@@ -30,7 +33,7 @@ func NewFromEnv(ctx context.Context, modelID string) (model.BaseChatModel, error
 		return nil, fmt.Errorf("ARK_BASE_URL or ARK_BASE_URL_CN is not set")
 	}
 
-	reasoningEffort := arkruntimeModel.ReasoningEffortMedium
+	reasoningEffort := arkruntimeModel.ReasoningEffort(effort)
 	logs.Infof("about to initialize model with model: %s, base url: %s", modelID, arkBaseURL)
 	chatModel, err := ark.NewResponsesAPIChatModel(ctx, &ark.ResponsesAPIConfig{
 		Model:           modelID,
