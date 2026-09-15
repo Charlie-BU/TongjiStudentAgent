@@ -1,3 +1,61 @@
+## CHANGELOG - 2026-09-15 23:23 - 接入 OpenRouter Responses、流式推理与按需网页补证
+
+### 撰写时间
+
+- 2026-09-15 23:23（Asia/Shanghai）
+
+### Base Commit
+
+- `896abdd75b8d7d62309b5217488a4c9e3225f5e8`（按规范取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：全部当前未提交改动，相对 `HEAD`（`9262fca36327131133684fb45d157a3e01357902`）比较，包含暂存区及未暂存的审阅修正。已提交的三档路由和响应缓存隔离不作为本次新增功能。
+
+### 背景与改动目标
+
+此前三档模型统一通过 Ark Responses API 执行，模型 reasoning 在汇总消息后发送。此次为现有档位增加 OpenRouter 供应商选择，并让推理文本随模型流实时到达前端。OpenRouter 采用完整历史重放，需要把推理和工具调用的原始协议数据一起保存，避免仅保留正文后丢失后续调用需要的字段。
+
+聊天服务也按初始化、会话管理、消息存取和流式执行拆分，明确每轮 Runtime 的传递方式。网页策略同步调整：普通首问以证据是否足够决定补充检索；适合公开检索的实质追问或不满意反馈，则优先定向核验或扩展证据。
+
+### 改动概览
+
+- 新增 `integration/modelprovider` 与 `integration/openroutermodel`。`MODEL_PROVIDER` 缺省为 `ark`，设为 `openrouter` 时三档共同使用 OpenRouter；模型 ID 仍来自 `LITE_MODEL`、`PRO_MODEL`、`MAX_MODEL`。两个供应商均固定使用 lite=`low`、pro=`medium`、max=`high` 的推理强度。
+- 使用官方 OpenRouter Go SDK `v0.7.132` 发送 Responses 请求，通过单次请求独立的传输适配保留原始 input。工具名转换为稳定协议名称并反向还原；完成响应中的推理、工具调用及未知扩展字段保存为可重放数据。`Generate` 汇总同一条流式处理路径。
+- `assistant.reasoning` 改为 `data.delta`，Runtime 收到推理分片即发送，最终仍汇总完整 `ReasoningContent` 用于持久化。OpenRouter 对文本、拒绝文本和可见推理做完成后缀补齐与去重；断流、失败或未完成响应返回错误，消费者关闭时取消上游请求并释放响应体。
+- canonical 消息新增仅供服务端使用的 `ProtocolData`。PostgreSQL 启动时补齐 `protocol_data` 列，Redis 写入脚本与读取解码同步保存该字段；对外历史 JSON 不返回原始协议数据。
+- OpenRouter 声明无状态历史装配策略：清理孤立工具结果和未完成调用组，保留有效历史，并把动态提醒放在历史之后。`sanitizeHistoryForModel` 在模型切换时清理旧会话段的协议及响应缓存；Ark 继续恢复有效 response-chain 元数据。
+- Chat 将业务逻辑从 `service.go` 拆至独立文件，以 `runtimes` 映射和显式参数传递选中的 Runtime。`CreateSession(ctx, name)`、分页入口 `ListSessionMessages` 和必填档位的 `StreamSession` 同步到 Handler。同济客户端改为启动时创建、逐请求按 access token 查询学生资料；`Close` 统一调用初始化移交的清理闭包。
+- 系统提示词文档、网页与课程 Skill、工具说明同步按需补证策略。校园知识库可独立调用；首问已有证据足够时停止检索。公开信息的实质追问或不满意反馈优先网页补证，仍遵守不联网、来源限制和个人数据边界。
+- Go 最低版本及 Docker 构建镜像更新为 `1.25.10`；`.env.example`、`local_run.sh` 增加供应商配置和凭据检查。新增 OpenRouter 与 Chat 架构说明，修正档位参数和资源关闭的旧描述；中断工具历史、模型缓存隔离测试迁移至 GoConvey。
+
+### 关键链路解析（含上下游）
+
+- 上游配置：启动时根据供应商选择 Ark 或 OpenRouter 工厂，为已配置档位创建独立模型和 Runtime。OpenRouter 使用 `OPENROUTER_API_KEY`，`OPENROUTER_BASE_URL` 默认 `https://openrouter.ai/api/v1`；lite 必填，pro/max 留空时跳过。模型本地配置或同济 OAuth 配置不合法会使初始化失败。
+- 请求与模型：HTTP 层继续在省略 `model_tier` 时填入 `lite`。Chat 选择 Runtime，绑定模型和会话 ID，沿用会话锁、归属校验和历史读取，再由 Runtime 装配上下文。OpenRouter 发送 `session_id` 和本地历史，不发送 `previous_response_id`；工具结果按 call ID 回填同一轮模型循环。
+- 输出与存储：模型完成输出映射为 Eino 消息，Runtime 转发增量事件并逐条回调 Chat 保存助手及工具消息。下一轮从 PostgreSQL 或 Redis 恢复协议字段，适配器核对版本、端点和模型来源后重放；跨模型历史保留正文和工具信息，清除不兼容的私有协议与响应引用。
+- 下游兼容：HTTP 路径和会话历史的 `reasoning_content` 保持原有形式，实时推理消费者须改为按顺序追加字符串 `data.delta`。本地前端消费逻辑已在审阅时核对完成同步；发布时仍需协调版本。内部 Go 调用方必须使用新的函数签名，不能依赖 Service 层省略档位或资源字段回退清理。
+- 检索链路：普通首问先读取相关 MCP 或知识库结果，再决定是否有必要公开信息缺口；明确联网请求和适合公开检索的实质追问进入 `web-tools`。搜索返回实际 URL 后读取正文，目标完成即停止，个人实时数据仍使用对应 MCP。
+
+### 改动结果与业务影响
+
+- 已有三档路由可在部署时选择模型供应商，每轮执行固定使用选中的 Runtime。模型实例不保存当前请求工具或会话状态，减少并发请求之间的状态耦合。
+- 前端可实时接收可见推理，服务端历史仍保存完整消息。原始协议数据独立持久化，使同模型工具与推理数据能跨轮恢复，同时不增加前端历史接口的敏感协议字段。
+- OpenRouter 完整重放保留了上游前缀缓存的可能性，但缓存命中与费用收益尚无真实数据。当前历史仍按消息条数截取，动态提醒和用户消息包装的重建差异也会影响稳定前缀；协议保存会增加存储体积。
+- 网页调用从固定联合检索改为按证据需求调度，实质追问则更积极补证。实际调用次数、回答质量和延迟变化需要在真实问题样本上评估。
+
+### 风险与待办
+
+- 已验证：本会话审阅阶段 `go test ./...`（命中缓存）、`go test -race -count=1 ./...`（全仓实际重跑）和 `go vet ./...` 均通过；`bash -n local_run.sh` 与 diff 空白检查通过。补充的离线真实 Runtime → OpenRouter → 工具循环测试通过，该测试使用临时 overlay，未加入仓库。
+- 修正后验证：`go test`、`go test -race` 和 `go vet` 覆盖 `./internal/agentic/session/context`、`./internal/application/chat`，均通过。测试使用合成响应与本机替身，不调用真实模型或校园服务。本轮仅追加 changelog，不重复运行 Go 测试。
+- 未验证：真实 OpenRouter 模型的工具调用、推理数据重放、缓存命中及费用，生产 PostgreSQL 补列，以及实际前后端联调。部署前应覆盖连续同模型、lite → pro → lite、旧历史、工具中断后续聊和客户端取消。
+- 当前适配器只支持文本、拒绝文本、函数工具与推理数据；多模态、deferred tools、服务端工具搜索和 stop 参数未支持。目标模型需兼容当前 Responses 选项，不应把平台全部能力视为适配器已覆盖。
+- `docs/SYSTEM.md` 的修改不会自动发布到启用 Cozeloop 时使用的 PromptHub；部署需同步对应系统提示词。运行环境需提供 Go `1.25.10` 或更高版本，并配置所选供应商及同济 OAuth 凭据。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add OpenRouter, reasoning streams and targeted web research`
+
 ## CHANGELOG - 2026-09-11 18:55 - 支持按轮次选择模型档位并隔离响应缓存
 
 ### 撰写时间
@@ -22,7 +80,7 @@
 - Chat 初始化为 lite 及已配置的 pro、max 分别创建模型和 Runtime，共享现有工具、会话存储及其他集成依赖。`arkmodel.NewFromEnv` 接收指定模型 ID，继续使用共享的 Ark 凭据、地址及 Responses API 配置。
 - `StreamSession` 按本轮档位选择 Runtime，通过局部 Service 副本和请求上下文传递选择，避免并发请求改写共享 Runtime。下一轮可以重新选择档位，省略时仍默认 lite。
 - 会话消息增加 `model_tier`、`model_id`，用户消息、助手消息和工具结果统一携带本轮模型信息。PostgreSQL 写入和读取同步新字段，并通过启动迁移补列；Redis 追加脚本同步保存字段，旧记录继续可读。
-- `historyForModel` 根据当前模型 ID 找到历史中最后一个不匹配位置，清除该位置及之前的响应 ID 和缓存到期时间，保留历史正文及工具消息。同模型连续后缀仍可复用有效缓存，旧消息缺少模型信息时按不匹配处理。
+- `sanitizeHistoryForModel` 根据当前模型 ID 找到历史中最后一个不匹配位置，清除该位置及之前的响应 ID 和缓存到期时间，保留历史正文及工具消息。同模型连续后缀仍可复用有效缓存，旧消息缺少模型信息时按不匹配处理。
 - README 补充配置、请求参数、错误返回和模型切换说明；测试覆盖档位解析、初始化、并发路由、消息元数据存取和缓存隔离。
 
 ### 关键链路解析（含上下游）
@@ -320,7 +378,7 @@ MCP 课程详情已不再返回评价正文，评价和已有 AI 总结改为独
 ### 关键链路解析（含上下游）
 
 - 上游依赖：消息追加链路为每条 canonical message 分配单调递增的 `sequence`。PostgreSQL 通过 `(session_id, sequence)` 唯一约束保存顺序；Redis 通过 `next_sequence` 与 `LPUSH` 保存最新消息。
-- 当前改动：`SessionMessages` 解析 `limit`、`offset`、`snapshot_sequence` 后调用 `chat.ListSessionMessagePage`。`Service` 根据请求 context 中是否存在 `user_id`，分派到 PostgreSQL 或 Redis 分页实现。
+- 当前改动：`SessionMessages` 解析 `limit`、`offset`、`snapshot_sequence` 后调用 `chat.ListSessionMessages`。`Service` 根据请求 context 中是否存在 `user_id`，分派到 PostgreSQL 或 Redis 分页实现。
 - 下游影响：前端首页不传 `snapshot_sequence`，使用响应中的值继续翻页；请求后续页时需要原样携带该值。已有会话执行链仍调用 `ListMessages`，不会因分页 API 改动改变上下文装配行为。
 
 ### 改动结果与业务影响

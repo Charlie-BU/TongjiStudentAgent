@@ -11,13 +11,6 @@ import (
 var ErrInvalidModelTier = errors.New("model_tier must be lite, pro, or max")
 var ErrModelTierUnavailable = errors.New("model tier is not configured")
 
-type modelRuntime struct {
-	runtime sessionRuntime
-	modelID string
-}
-type modelSelectionKey struct{}
-type modelSelection struct{ tier, modelID string }
-
 // resolveModelTier 根据模型等级返回对应的运行时环境。
 func (s *Service) resolveModelTier(tier string) (modelRuntime, error) {
 	switch tier {
@@ -30,10 +23,6 @@ func (s *Service) resolveModelTier(tier string) (modelRuntime, error) {
 		if selected, ok := s.runtimes[tier]; ok && selected.runtime != nil {
 			return selected, nil
 		}
-		// Support explicitly injected single-runtime services.
-		if s.runtimes == nil && tier == "lite" && s.runtime != nil {
-			return modelRuntime{runtime: s.runtime}, nil
-		}
 	}
 	return modelRuntime{}, fmt.Errorf("%w: %s", ErrModelTierUnavailable, tier)
 }
@@ -45,7 +34,7 @@ func ValidateModelTier(tier string) error {
 	return err
 }
 
-// withModelMetadata 为上下文添加模型元数据。
+// withModelMetadata 为 input 从上下文添加模型元数据。
 func withModelMetadata(ctx context.Context, input agenticsession.NewMessage) agenticsession.NewMessage {
 	if selection, ok := ctx.Value(modelSelectionKey{}).(modelSelection); ok {
 		input.ModelTier, input.ModelID = selection.tier, selection.modelID
@@ -53,9 +42,9 @@ func withModelMetadata(ctx context.Context, input agenticsession.NewMessage) age
 	return input
 }
 
-// historyForModel 从历史记录中提取指定模型的连续后缀。
-// 用于在模型等级变更时，确保缓存的响应仅用于当前模型。
-func historyForModel(history []agenticsession.Message, modelID string) []agenticsession.Message {
+// sanitizeHistoryForModel 清理当前模型连续会话段之前的协议数据与响应缓存信息。
+// 用于在模型变更时，确保缓存的响应仅用于当前模型。
+func sanitizeHistoryForModel(history []agenticsession.Message, modelID string) []agenticsession.Message {
 	result := append([]agenticsession.Message(nil), history...)
 	boundary := -1 // 切换分界点
 	for i, m := range result {
@@ -65,6 +54,7 @@ func historyForModel(history []agenticsession.Message, modelID string) []agentic
 	}
 	for i := range result {
 		if i <= boundary {
+			result[i].ProtocolData = ""
 			result[i].ResponseID = ""
 			result[i].ResponseCacheExpiresAt = 0
 		}

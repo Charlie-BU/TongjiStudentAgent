@@ -9,7 +9,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - 开源 Hertz HTTP 服务，默认监听 `8080` 端口。
 - 健康检查接口：`GET /v1/ping`。
 - Agent 调用接口：创建会话后，通过 `POST /v1/sessions/:session_id/messages` 以 SSE 执行并持久化每轮对话。
-- 基于 Ark 兼容配置初始化 Eino Agent Graph。
+- 支持 Ark / OpenRouter Responses API，通过 lite、pro、max 三档模型初始化 Eino Runtime。
 - 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
 - 本地日志模块，不直接使用项目业务代码中的字节内部日志库。
@@ -22,7 +22,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 ├── internal/
 │   ├── application/chat/  # 会话聊天应用服务与依赖装配
 │   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
-│   ├── integration/       # Ark、知识库、Cozeloop（开源版 Fornax）、MCP、本地 Sandbox 与同济开放平台适配
+│   ├── integration/       # Ark / OpenRouter、知识库、Cozeloop、MCP、本地 Sandbox 与同济开放平台适配
 │   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
 ├── .env.example           # 本地配置模板
@@ -34,7 +34,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 
 ## 前置条件
 
-- Go `1.23.8`（项目的 `go.mod` 指定的 toolchain 版本）。
+- Go `1.25.10` 或更高版本（官方 OpenRouter Go SDK 的最低要求）。
 - 可访问项目 Go 依赖。
 - 可用的模型 Endpoint 凭据与可访问的远程 MCP Server。
 - 可访问的 PostgreSQL 与 Redis。服务会在启动时连接它们，并自动创建最小会话表结构；任一依赖不可用都会导致启动失败。
@@ -53,9 +53,26 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Cozeloop
 - 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-启动至少需要补齐以下变量：`LITE_MODEL`、`ARK_API_KEY`、`ARK_BASE_URL`（或 `ARK_BASE_URL_CN`）、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验并连接模型、会话存储和远程 MCP。
+启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
 
-模型分为三个 tier：`LITE_MODEL=deepseek-v4-flash-ga-260731`，`PRO_MODEL` 和 `MAX_MODEL` 暂留空。请求通过 `model_tier` 选择对应模型，统一通过 `ARK_API_KEY` 鉴权。启动时为已配置的 tier 创建独立 Runtime；修改模型配置后需重启。
+模型分为三个 tier，由 `LITE_MODEL`、`PRO_MODEL`、`MAX_MODEL` 分别配置，通过请求的 `model_tier` 选择。lite 必填，pro/max 可留空。启动时为已配置的 tier 创建独立 Runtime；修改模型配置后需重启。三档共享 `MODEL_PROVIDER`：省略或设为 `ark` 时使用现有 Ark Responses API；设为 `openrouter` 时使用 OpenRouter Responses API。
+
+OpenRouter 配置示例（模型标识需替换为账户可用且支持工具调用的模型）：
+
+```dotenv
+MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=<your-openrouter-api-key>
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+LITE_MODEL=<provider/lite-model>
+PRO_MODEL=<provider/pro-model>
+MAX_MODEL=<provider/max-model>
+```
+
+`OPENROUTER_BASE_URL` 可省略，默认使用上面的地址；不包含 `/responses`。无需配置额外的单模型变量，也不需要 Ark 模型凭据。保留 Ark 路径时需要 `ARK_API_KEY` 与 `ARK_BASE_URL` 或 `ARK_BASE_URL_CN`。知识库等集成仍使用各自的开关和凭据。
+
+OpenRouter 通过官方 Go SDK 使用无状态 Responses API，保留本地历史并利用上游前缀缓存；不发送 `previous_response_id`。支持流式文本与上游可见推理、函数工具调用和三档模型切换。Ark 与 OpenRouter 均在代码中固定推理强度：LITE=`low`、PRO=`medium`、MAX=`high`，无需额外环境变量。
+
+详细配置、架构与源码入口、协议数据存储、模型切换隔离、缓存观测、部署验收及已知限制，见 [OpenRouter Responses 接入与三档模型说明](docs/OPENROUTER.md)。
 
 如需启用 Cozeloop，请在 `.env` 中设置 `COZELOOP_ENABLED=true` 并补齐对应的 `COZELOOP_*` 变量。当前项目会用它注册 Eino 全局回调，并从 PromptHub 拉取 `prompt.tongjistudent.system_prompt` 作为系统提示词；它承担的是原先 Fornax 对应的观测与 Prompt 管理职责，但这里采用的是开源 Cozeloop 实现。
 
@@ -78,6 +95,8 @@ Railway 服务的 **Root Directory** 必须设为 `TongjiStudentAgent`，使其�
 Railway 会注入 `PORT`，服务也保留 `PORT0` 的旧部署兼容；若同时存在，以 `PORT0` 为准。建议在 Railway Variables 设置 `RAILWAY_SHM_SIZE_BYTES=268435456`；代码同时配置了 Chromium 的 `--disable-dev-shm-usage` 作为小共享内存环境的兜底。不要默认启用 `--no-sandbox`：若 Railway 日志明确显示 sandbox 无法启动，再以受限、非 root 的独立渲染服务为边界评估该降级。
 
 ## 同济开放平台浏览器授权
+
+Chat 服务在启动时创建并复用同济 API 客户端，所需 OAuth 配置缺失会导致初始化失败。学生信息查询仍按每次请求的 access token 执行，无 token 时跳过。
 
 服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考项目根目录的 [`.env.example`](./.env.example)。
 
@@ -323,7 +342,7 @@ go run .
 
 `model_tier` 可省略（默认 `lite`）；显式传入时只接受小写字符串 `lite`、`pro`、`max`。空字符串、null 和其他值返回 HTTP 400。合法但未配置的 tier 返回 HTTP 503，不自动降级；这些检查在开启 SSE 和写入用户消息前完成。当前 `PRO_MODEL`、`MAX_MODEL` 留空，因此这两档暂不可用。
 
-同一轮执行及其工具调用固定使用选定模型，同一会话下一轮可以切换 tier。消息持久化 `model_tier` 和实际 `model_id`；旧消息缺少这些字段时保持可读。实际模型发生变化时，基于现有历史窗口重建上下文，不复用切换前的响应缓存；同模型连续调用继续复用有效缓存。PostgreSQL 在启动时自动补齐这两个字段，Redis 旧记录无需迁移。
+同一轮执行及其工具调用固定使用选定模型，同一会话下一轮可以切换 tier。消息持久化 `model_tier` 和实际 `model_id`；旧消息缺少这些字段时保持可读。实际模型发生变化时，基于现有历史窗口重建上下文，不复用切换前的响应缓存；Ark 同模型连续调用继续复用有效响应缓存，OpenRouter 发送本地历史并由上游进行前缀缓存。PostgreSQL 在启动时自动补齐模型元数据字段，Redis 旧记录无需迁移。
 
 
 描述：向指定会话提交一轮用户消息，并通过 SSE 持续返回本轮执行事件与回答增量。
@@ -358,6 +377,7 @@ go run .
 | `run.started`         | `message`      | `string`        | 是   | Run 已接受并开始处理的提示文案                                                                         | 无       |
 | `agent.status`        | `phase`        | `string`        | 是   | 当前执行阶段                                                                                           | 无       |
 | `agent.status`        | `message`      | `string`        | 是   | 面向客户端展示的阶段描述                                                                               | 无       |
+| `assistant.reasoning` | `delta` | `string` | 是 | 本次新增推理文本，按当前轮顺序追加 | 无 |
 | `assistant.delta`     | `text`         | `string`        | 是   | 最终自然语言回答的增量文本                                                                             | 无       |
 | `tool.call.started`   | `call_id`      | `string`        | 是   | 工具调用 ID                                                                                            | 动态生成 |
 | `tool.call.started`   | `tool`         | `string`        | 是   | 工具标识                                                                                               | 无       |
@@ -620,12 +640,15 @@ console.log(historyPayload.messages);
 
 响应会包含用于问题排查的 `X-Request-ID`；普通日志只记录该 ID、方法、路径、状态码和耗时，不记录请求或响应内容。
 
+推理事件使用 `data.delta` 增量协议；历史消息的 `reasoning_content` 仍为完整内容，同轮多条助手消息按顺序合并。前后端统一使用 `data.delta`，推理事件缺少字符串类型的 `delta` 时忽略。
+
 所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。当前协议会发送模型 reasoning、工具参数和工具结果，前端必须按会话归属处理这些内容；事件不会包含 Bearer token、数据库连接串或其他服务端凭据。
 
 | 事件                  | `data` 契约                                         | 含义                                                   |
 | --------------------- | --------------------------------------------------- | ------------------------------------------------------ |
 | `run.started`         | `message`                                           | Run 已接受并开始处理。                                 |
 | `agent.status`        | `phase`, `message`                                  | 可展示的执行阶段。                                     |
+| `assistant.reasoning` | `delta` | 本次新增推理文本，按顺序追加；不发送累计全文。 |
 | `assistant.delta`     | `text`                                              | 最终自然语言回答的增量文本。                           |
 | `tool.call.started`   | `call_id`, `tool`, `display_name`                   | 模型已选择该工具，调用即将执行。                       |
 | `tool.call.completed` | `call_id`, `tool`, `duration_ms`                    | Agent 已收到工具结果；不代表上游业务一定成功。         |
@@ -644,7 +667,7 @@ console.log(historyPayload.messages);
 
 启动过程中会依次加载 system prompt（启用 CozeLoop 时）、Ark Responses API 模型客户端、可选 Ark 知识库客户端、远程 Streamable HTTP MCP Client、PostgreSQL/Redis 会话存储、任务计划仓库、allowlist 中的系统 Tool 与远程 MCP Tool，并最终创建 DeepAgent Runtime。因此，服务能成功启动不仅代表模型配置格式、远程 MCP 初始化和允许工具发现通过，也代表会话基础设施已经就绪。
 
-主 Agent 固定启用 Ark Responses API 的 response-chain 会话缓存，TTL 为 600 秒。每轮 Agent 输出的 `response_id` 和缓存到期时间会随 canonical 会话消息写入 PostgreSQL 或 Redis，并在下一轮恢复到模型历史；Ark SDK 因而会自动发送 `previous_response_id` 与未缓存的增量上下文。缓存过期或历史中没有可用 response ID 时，服务会自动回退为完整历史请求，不影响会话正确性。
+`MODEL_PROVIDER=ark` 时，主 Agent 启用 Ark Responses API 的 response-chain 会话缓存，TTL 为 600 秒。每轮 Agent 输出的 `response_id` 和缓存到期时间会随 canonical 会话消息写入 PostgreSQL 或 Redis，并在下一轮恢复到模型历史；Ark SDK 因而会自动发送 `previous_response_id` 与未缓存的增量上下文。缓存过期或历史中没有可用 response ID 时，服务会自动回退为完整历史请求，不影响会话正确性。
 
 会话消息接口会触发实际模型推理。默认运行时使用单个 DeepAgent 的标准模型—工具循环，关闭内置通用子 Agent，并通过 `system.manage_task_plan` 管理任务计划；单轮最多进行 12 次迭代。`/ping` 接口只用于服务存活检查。
 

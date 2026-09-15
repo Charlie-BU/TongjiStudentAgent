@@ -55,15 +55,24 @@ if [[ -z "${LITE_MODEL:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "${ARK_API_KEY:-}" ]]; then
-  echo "error: ARK_API_KEY is required" >&2
-  exit 1
-fi
-
-if [[ -z "${ARK_BASE_URL:-}" && -z "${ARK_BASE_URL_CN:-}" ]]; then
-  echo "error: ARK_BASE_URL or ARK_BASE_URL_CN is required" >&2
-  exit 1
-fi
+case "${MODEL_PROVIDER:-ark}" in
+  ark)
+    if [[ -z "${ARK_API_KEY:-}" || ( -z "${ARK_BASE_URL:-}" && -z "${ARK_BASE_URL_CN:-}" ) ]]; then
+      echo "error: ARK_API_KEY and ARK_BASE_URL or ARK_BASE_URL_CN are required" >&2
+      exit 1
+    fi
+    ;;
+  openrouter)
+    if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+      echo "error: OPENROUTER_API_KEY is required" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "error: MODEL_PROVIDER must be ark or openrouter" >&2
+    exit 1
+    ;;
+esac
 
 COZELOOP_ENABLED_VALUE="$(printf '%s' "${COZELOOP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${COZELOOP_ENABLED_VALUE}" == "1" || "${COZELOOP_ENABLED_VALUE}" == "true" || "${COZELOOP_ENABLED_VALUE}" == "yes" || "${COZELOOP_ENABLED_VALUE}" == "on" ]]; then

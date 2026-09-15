@@ -1,10 +1,9 @@
 module github.com/Charlie-BU/TongjiStudent
 
-go 1.23.2
-
-toolchain go1.23.8
+go 1.25.10
 
 require (
+	github.com/OpenRouterTeam/go-sdk v0.7.132
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/chromedp/cdproto v0.0.0-20250319231242-a755498943c8
 	github.com/chromedp/chromedp v0.13.2
@@ -79,6 +78,7 @@ require (
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spyzhov/ajson v0.8.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

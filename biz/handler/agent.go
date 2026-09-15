@@ -47,8 +47,8 @@ type sessionResponse struct {
 	LastActiveAt time.Time                  `json:"last_active_at"`
 }
 
-// createSessionWithName 用于测试时替换带名称的会话创建实现。
-var createSessionWithName = chat.CreateSessionWithName
+// createSession 用于测试时替换带名称的会话创建实现。
+var createSession = chat.CreateSession
 
 // listSessions 用于测试时替换会话列表读取实现。
 var listSessions = chat.ListSessions
@@ -63,8 +63,8 @@ var deleteSession = chat.DeleteSession
 var streamSession = chat.StreamSession
 var validateModelTier = chat.ValidateModelTier
 
-// listSessionMessagePage 用于测试时替换会话历史分页读取实现。
-var listSessionMessagePage = chat.ListSessionMessagePage
+// listSessionMessages 用于测试时替换会话历史分页读取实现。
+var listSessionMessages = chat.ListSessionMessages
 
 // getSessionTaskPlan 用于测试时替换会话任务计划读取实现。
 var getSessionTaskPlan = chat.GetSessionTaskPlan
@@ -76,7 +76,7 @@ func CreateSession(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
-	session, err := createSessionWithName(requestContext, request.Name)
+	session, err := createSession(requestContext, request.Name)
 	if err != nil {
 		c.JSON(consts.StatusServiceUnavailable, utils.H{"error": "session service unavailable"})
 		return
@@ -239,7 +239,7 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 		}
 		snapshotSequence = parsed
 	}
-	page, err := listSessionMessagePage(requestContext, sessionID, limit, offset, snapshotSequence)
+	page, err := listSessionMessages(requestContext, sessionID, limit, offset, snapshotSequence)
 	if err != nil {
 		status := consts.StatusInternalServerError
 		if errors.Is(err, agenticsession.ErrNotFound) {

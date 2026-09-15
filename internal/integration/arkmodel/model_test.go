@@ -13,7 +13,7 @@ func TestNewFromEnvUsesResponsesAPIWithSessionCache(t *testing.T) {
 		t.Setenv("ARK_BASE_URL", "https://ark.example.test/api/v3")
 		t.Setenv("ARK_BASE_URL_CN", "")
 
-		chatModel, err := NewFromEnv(context.Background(), "ep-test")
+		chatModel, err := NewFromEnv(context.Background(), "ep-test", "medium")
 
 		Convey("应创建启用 response-chain 缓存的 Responses API 模型", func() {
 			So(err, ShouldBeNil)

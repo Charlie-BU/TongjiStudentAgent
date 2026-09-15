@@ -23,7 +23,8 @@ var chineseWeekdays = [...]string{"周日", "周一", "周二", "周三", "周�
 
 // buildInputMessagesWithHistory 构建包含当前日期、学生基础信息、技能目录、用户请求的输入消息。
 // history 是用户与 Deep Agent 之前的交互历史记录。
-func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skillCatalog string, knowledgeClient knowledgeDocumentsProvider, now time.Time, history []agenticsession.Message) ([]*schema.Message, error) {
+// stateless 将模型的历史重放策略传给装配器；省略时沿用非 stateless 路径。
+func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skillCatalog string, knowledgeClient knowledgeDocumentsProvider, now time.Time, history []agenticsession.Message, stateless ...bool) ([]*schema.Message, error) {
 	interactionRequest, err := xml.MarshalIndent(struct {
 		XMLName   xml.Name `xml:"interaction_request"`
 		UserQuery string   `xml:"user_query"`
@@ -49,6 +50,7 @@ func buildInputMessagesWithHistory(ctx context.Context, query, studentInfo, skil
 
 	// 通过 ContextAssembler 构建最终模型输入
 	return sessioncontext.NewContextAssembler().AssembleForTurn(ctx, sessioncontext.TurnInput{
+		Stateless:       len(stateless) > 0 && stateless[0],
 		DynamicReminder: schema.UserMessage(reminder),
 		History:         history,
 		UserMessage:     schema.UserMessage(string(interactionRequest)),

@@ -1,4 +1,5 @@
 // Package sessioncontext 将 canonical 会话消息装配为模型输入。
+// TODO：待 review
 package sessioncontext
 
 import (
@@ -7,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/modelmeta"
 	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	"github.com/cloudwego/eino/schema"
 )
@@ -27,6 +29,9 @@ type TurnInput struct {
 	DynamicReminder *schema.Message
 	History         []Message
 	UserMessage     *schema.Message
+	// Stateless 为 true 时重放完整历史及原始协议数据，不恢复 Ark 响应链元数据。
+	// 同时清理不完整工具历史，并将动态提醒放到历史之后以保留稳定前缀。
+	Stateless bool
 }
 
 // ContextAssembler 将 canonical 会话消息转换为模型输入。
@@ -37,7 +42,7 @@ func NewContextAssembler() *ContextAssembler {
 	return &ContextAssembler{}
 }
 
-// AssembleForTurn 按动态提醒、历史消息、当前请求的顺序构造模型输入。
+// AssembleForTurn 根据历史重放策略和 Ark 缓存状态决定动态提醒的位置，当前请求始终放在末尾。
 func (a *ContextAssembler) AssembleForTurn(ctx context.Context, input TurnInput) ([]*schema.Message, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -46,9 +51,14 @@ func (a *ContextAssembler) AssembleForTurn(ctx context.Context, input TurnInput)
 		return nil, ErrInvalidTurnInput
 	}
 
+	if input.Stateless {
+		// 完整重放不能依赖服务端补齐被截断或失败轮次遗留的工具调用与结果。
+		input.History = completeToolHistory(input.History)
+	}
 	messages := make([]*schema.Message, 0, len(input.History)+2)
-	cacheActive := hasActiveArkResponseCache(input.History, time.Now().Unix())
-	if !cacheActive {
+	cacheActive := !input.Stateless && hasActiveArkResponseCache(input.History, time.Now().Unix())
+	reminderAfterHistory := input.Stateless || cacheActive
+	if !reminderAfterHistory {
 		// 无缓存时，直接在插入历史消息前添加动态 reminder
 		messages = append(messages, cloneMessage(input.DynamicReminder))
 	}
@@ -68,7 +78,14 @@ func (a *ContextAssembler) AssembleForTurn(ctx context.Context, input TurnInput)
 		case MessageRoleAssistant:
 			message := schema.AssistantMessage(historyMessage.Content, historyMessage.ToolCalls)
 			message.ReasoningContent = historyMessage.ReasoningContent
-			restoreArkResponseCache(message, historyMessage) // 历史 Assistant 消息需要恢复 Ark SDK 能识别的 Extra 字段，用于自动续聊
+			if !input.Stateless {
+				// Ark SDK 需要这些元数据来选择 previous_response_id 并裁剪已缓存的历史。
+				restoreArkResponseCache(message, historyMessage)
+			}
+			// 完整重放需要保留 reasoning 等原始输出项；供应商适配器负责检查来源后再使用。
+			if input.Stateless && historyMessage.ProtocolData != "" {
+				message.Extra = map[string]any{modelmeta.ProtocolKey: historyMessage.ProtocolData}
+			}
 			messages = append(messages, message)
 		case MessageRoleTool:
 			if strings.TrimSpace(historyMessage.ToolCallID) == "" {
@@ -79,8 +96,9 @@ func (a *ContextAssembler) AssembleForTurn(ctx context.Context, input TurnInput)
 			return nil, fmt.Errorf("%w: history role is invalid", ErrInvalidTurnInput)
 		}
 	}
-	if cacheActive {
-		// 若有缓存消息，Ark SDK 会裁剪最新缓存消息之前的输入，动态 reminder 必须添加在历史消息后。
+	if reminderAfterHistory {
+		// 完整重放时，把时间、任务计划等动态内容后置，避免它们破坏历史的稳定前缀。
+		// Ark 有活跃响应缓存时也需后置，防止 SDK 裁剪已缓存历史时把本轮提醒一起删除。
 		messages = append(messages, cloneMessage(input.DynamicReminder))
 	}
 	// 本轮用户 query

@@ -41,7 +41,7 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(first.Created, ShouldBeTrue)
 			So(first.Message.Sequence, ShouldEqual, int64(1))
 
-			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{ModelTier: "lite", ModelID: "model-lite", RunID: "run-001", Role: MessageRoleAssistant, Content: "你好，小济。", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000})
+			assistant, appendErr := store.Append(context.Background(), session.ID, NewMessage{ProtocolData: "opaque-protocol", ModelTier: "lite", ModelID: "model-lite", RunID: "run-001", Role: MessageRoleAssistant, Content: "你好，小济。", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000})
 			So(appendErr, ShouldBeNil)
 			So(assistant.Message.Sequence, ShouldEqual, int64(2))
 			So(assistant.Message.ResponseID, ShouldEqual, "resp-001")
@@ -57,6 +57,7 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(messages[0].ResponseID, ShouldEqual, "resp-001")
 			So(messages[0].ModelTier, ShouldEqual, "lite")
 			So(messages[0].ModelID, ShouldEqual, "model-lite")
+			So(messages[0].ProtocolData, ShouldEqual, "opaque-protocol")
 			So(messages[0].ResponseCacheExpiresAt, ShouldEqual, int64(1_785_000_000))
 			So(messages[1].Content, ShouldEqual, "我叫什么？")
 			So(messages[1].RunID, ShouldEqual, "run-002")
@@ -72,6 +73,7 @@ func TestRedisEphemeralStore(t *testing.T) {
 			So(pageErr, ShouldBeNil)
 			So(page.HasMore, ShouldBeFalse)
 			So(page.Messages[0].Sequence, ShouldEqual, int64(2))
+			So(page.Messages[0].ProtocolData, ShouldEqual, "opaque-protocol")
 		})
 
 		Convey("分页快照不会混入首页之后新增的消息", func() {

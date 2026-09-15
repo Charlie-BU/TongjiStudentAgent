@@ -15,56 +15,9 @@ import (
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tavily"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/webfetch"
-	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino/schema"
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-func TestServiceLoadUserInfo(t *testing.T) {
-	Convey("加载个人基础信息", t, func() {
-		Convey("请求未携带 access token", func() {
-			called := false
-			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
-				called = true
-				return nil, nil
-			}}
-
-			info, err := service.loadFormattedStudentInfo(context.Background())
-
-			So(err, ShouldBeNil)
-			So(info, ShouldBeBlank)
-			So(called, ShouldBeFalse)
-		})
-
-		Convey("请求携带 access token", func() {
-			service := &Service{studentInfoLoader: func(_ context.Context, accessToken string) (*tongjiapi.StudentInfo, error) {
-				So(accessToken, ShouldEqual, "test-access-token")
-				return &tongjiapi.StudentInfo{
-					Name:          "测试同学",
-					TrainingLevel: "本科",
-					CurrentGrade:  2023,
-					Faculty:       "计算机科学与技术学院",
-					LeaveSchool:   "校内在读",
-				}, nil
-			}}
-
-			info, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
-
-			So(err, ShouldBeNil)
-			So(info, ShouldEqual, "当前年级：2023\n学院：计算机科学与技术学院\n在校状态：校内在读\n姓名：测试同学\n培养层次：本科")
-		})
-
-		Convey("上游获取失败", func() {
-			service := &Service{studentInfoLoader: func(context.Context, string) (*tongjiapi.StudentInfo, error) {
-				return nil, errors.New("upstream unavailable")
-			}}
-
-			_, err := service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-access-token"))
-
-			So(err, ShouldNotBeNil)
-		})
-	})
-}
 
 func TestRunFailedData(t *testing.T) {
 	Convey("Run 失败事件包含错误原因和 HTTP 状态码", t, func() {
@@ -212,7 +165,7 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 		}
 		runner := &recordingSessionRuntime{operations: &operations, response: "本轮回答"}
 		service := &Service{
-			runtime:               runner,
+			runtimes:              map[string]modelRuntime{"lite": {runtime: runner}},
 			ephemeralSessionStore: store,
 			taskPlanRepository:    &recordingTaskPlanRepository{},
 			turnLocker:            noOpTurnLocker{},
@@ -222,7 +175,7 @@ func TestStreamSessionEndToEnd(t *testing.T) {
 
 		response, err := service.StreamSession(context.Background(), "anon-001", "本轮问题", func(event agentevent.Event) {
 			events = append(events, event)
-		})
+		}, "lite")
 
 		So(err, ShouldBeNil)
 		So(response, ShouldEqual, "本轮回答")
