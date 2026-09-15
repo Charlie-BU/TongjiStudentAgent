@@ -642,6 +642,8 @@ console.log(historyPayload.messages);
 
 推理事件使用 `data.delta` 增量协议；历史消息的 `reasoning_content` 仍为完整内容，同轮多条助手消息按顺序合并。前后端统一使用 `data.delta`，推理事件缺少字符串类型的 `delta` 时忽略。
 
+模型请求未注册工具并进入工具执行器时，返回 `tool.call.failed`，`data.code` 为 `tool_not_found`。该调用不会执行；对应错误结果写入会话历史并回填模型，允许模型改用当前已注册工具继续回答。同批有效工具仍可执行，整轮继续受最大迭代次数限制。客户端应以 `run.completed` 或 `run.failed` 判断整轮结束，不能因单个 `tool.call.failed` 停止读取事件。
+
 所有 SSE 事件都包含同一次运行的 `run_id`、所属 `session_id`、从 `1` 开始递增的 `seq` 和 UTC `occurred_at`；`id` 与 `seq` 相同，可供客户端去重。当前协议会发送模型 reasoning、工具参数和工具结果，前端必须按会话归属处理这些内容；事件不会包含 Bearer token、数据库连接串或其他服务端凭据。
 
 | 事件                  | `data` 契约                                         | 含义                                                   |

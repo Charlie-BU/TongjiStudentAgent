@@ -34,7 +34,8 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		ToolsConfig: adk.ToolsConfig{
 			EmitInternalEvents: true,
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: cfg.Tools,
+				Tools:               cfg.Tools,
+				UnknownToolsHandler: unknownToolResult,
 			},
 		},
 	})
@@ -119,9 +120,16 @@ func (r *Runtime) StreamWithHistoryAndMessages(ctx context.Context, query, stude
 			if !exists {
 				toolData = agentevent.ToolCallStartedData{CallID: output.ToolCallID, Tool: output.ToolName, DisplayName: output.ToolName}
 			}
-			emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: agentevent.ToolCallCompletedData{
-				CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]), Result: output.Content,
-			}})
+			if unknown, _ := output.Extra[unknownToolResultKey].(bool); unknown {
+				emit(agentevent.Event{Type: agentevent.ToolCallFailed, Data: agentevent.ToolCallFailedData{
+					CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]),
+					Code: "tool_not_found", Message: "工具未注册，本次调用未执行，Agent 将尝试其他可用能力",
+				}})
+			} else {
+				emit(agentevent.Event{Type: agentevent.ToolCallCompleted, Data: agentevent.ToolCallCompletedData{
+					CallID: toolData.CallID, Tool: toolData.Tool, DurationMS: elapsedMilliseconds(toolStartedAt[output.ToolCallID]), Result: output.Content,
+				}})
+			}
 			delete(pendingTools, output.ToolCallID)
 			delete(toolStartedAt, output.ToolCallID)
 		}

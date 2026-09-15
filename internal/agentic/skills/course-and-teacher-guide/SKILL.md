@@ -59,6 +59,7 @@ tongji.course.course-detail({"courseId":101})
 - `courseId` 必填正整数，来自搜索、关联结果或用户明确提供的课程 ID；禁止将课程代码 `primaryCode` 或教师 ID 当成 courseId。
 - `data` 必有 `id/primaryCode/name`，可选 `department/creditX10/teacherId/teacherName/ratingAvg/reviewCount/ratingDistribution/reviewScope/offerings`。
 - `offerings[]` 必有 `id`，可选 `termCode/termName/campus/faculty/classCode/className/instructors/ratingAvg/reviewCount`。
+- `offerings` 是课程详情返回的字段，不是独立工具；不要调用 `tongji.course.offerings`。查询开课记录应调用已注册的 `tongji.course.course-detail` 并读取其 `offerings[]`。
 - 详情不含评价正文。用 `offerings[].id` 与评价 `offeringId` 对齐，核对学期及教师；若所属教师或合授归属有矛盾，以不确定或课程层面呈现，不能强行归人。
 - 课程事实以详情为依据：保留 primaryCode，区分别名与班号，学分按 creditX10 / 10 展示；按学期分组列出实际返回的教师、校区、班级。缺失字段标记未提供，开课历史不能证明本学期仍开放选课。
 - 工具未提供教学大纲、先修要求、学分归类、上课时间/教室、剩余容量或当前选课资格。需要这些信息时按下文 web-tools 查询官方公开来源，不能从课名或历史开课记录推断。
