@@ -36,26 +36,13 @@ func normalizeNamedMCPToolResult(name string, result *protocol.CallToolResult) *
 		// 非瑞幸工具沿用现有归一规则。
 		return normalizeMCPToolResult(result)
 	}
+	if name == "luckin.auth.check" {
+		return normalizeLuckinCheckResult(result)
+	}
 	if result != nil && !result.IsError {
-		// check 的缺失/非法结果不能被视为已登录；使用指针区分 false 与没有 valid 字段。
-		if name == "luckin.auth.check" {
-			for _, content := range result.Content {
-				text, ok := toolResultText(content)
-				var value struct {
-					Valid *bool `json:"valid"`
-				}
-				if ok && json.Unmarshal([]byte(text), &value) == nil && value.Valid != nil {
-					return protocol.NewToolResultText(text)
-				}
-			}
-			return protocol.NewToolResultText(`{"valid":false}`)
-		}
 		// 与 Content 重复的顶层 StructuredContent 不再交给 Eino；文本中的业务包装仍保留。
 		result.StructuredContent = nil
 		return result
-	}
-	if name == "luckin.auth.check" {
-		return protocol.NewToolResultText(`{"valid":false}`)
 	}
 	if result != nil {
 		for _, content := range result.Content {
@@ -86,11 +73,14 @@ func normalizeNamedMCPToolResult(name string, result *protocol.CallToolResult) *
 
 // namedToolFailureJSON 用于传输失败或无法识别的 MCP 错误；不执行任何恢复操作。
 func namedToolFailureJSON(name, status string) string {
+	if name == "luckin.auth.check" {
+		if status == toolStatusUpstreamTimeout {
+			return luckinCheckErrorJSON("upstream_timeout")
+		}
+		return luckinCheckErrorJSON("upstream_unavailable")
+	}
 	if !strings.HasPrefix(name, "luckin.") {
 		return stableToolResultJSON(status)
-	}
-	if name == "luckin.auth.check" {
-		return `{"valid":false}`
 	}
 	message := "瑞幸服务暂时不可用，请稍后重试。"
 	if status == toolStatusUnauthorized {

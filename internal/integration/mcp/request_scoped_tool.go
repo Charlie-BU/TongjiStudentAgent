@@ -42,11 +42,11 @@ func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON st
 		return result, nil
 	}
 	// 用户取消或整个 Run 超时应继续向上传播，不能伪装成可继续执行的业务结果。
-	// 因此这两种上下文错误不走下方 check=false 等降级分支。
+	// 因此这两种上下文错误不走下方 业务错误归一分支。
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", err
 	}
-	// 其他调用失败不暴露原始错误：check 返回 false，订单写操作提示先核实、不要重试；
+	// 其他调用失败不暴露原始错误：check 返回检查失败提示，订单写操作提示先核实、不要重试；
 	// 非瑞幸工具沿用校园服务提示。这里只返回恢复信息，不实际重试或额外调用 check。
 	return namedToolFailureJSON(t.name, toolStatusForInvocationError(err)), nil
 }
