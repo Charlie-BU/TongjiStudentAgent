@@ -181,9 +181,9 @@ sequenceDiagram
 | --- | --- | --- |
 | `SESSION_ANONYMOUS_TTL` | `24h` | 匿名会话 TTL，必须是正时长。 |
 | `SESSION_ANONYMOUS_MAX_MESSAGES` | `20` | 匿名消息容量，必须是正整数。 |
-| `SESSION_HISTORY_MAX_MESSAGES` | `20` | 本轮历史消息读取上限，必须是正整数。 |
+| `SESSION_HISTORY_MAX_MESSAGES` | `100` | 本轮历史消息读取上限，必须是正整数。 |
 
-`historyLimit` 对手工构造且未设置历史上限的实例也回退到 20。数据库连接、MCP、沙箱和各集成客户端的配置由对应包解析；部署参数以 Agent 仓根目录的 `.env.example` 和 `README.md` 为准。
+`historyLimit` 对手工构造且未设置历史上限的实例也回退到 100。数据库连接、MCP、沙箱和各集成客户端的配置由对应包解析；部署参数以 Agent 仓根目录的 `.env.example` 和 `README.md` 为准。
 
 本层通过统一 Emitter 发送 `RunStarted`、`AgentStatus`、`RunCompleted` 或 `RunFailed`，并转发 Runtime 事件。主要失败码如下：
 

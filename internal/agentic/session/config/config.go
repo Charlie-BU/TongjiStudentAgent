@@ -14,8 +14,8 @@ const (
 	anonymousSessionMessageLimitEnv = "SESSION_ANONYMOUS_MAX_MESSAGES"
 	historyMessageLimitEnv          = "SESSION_HISTORY_MAX_MESSAGES"
 	defaultAnonymousSessionTTL      = 24 * time.Hour
-	defaultAnonymousMessageLimit    = 20
-	defaultHistoryMessageLimit      = 20
+	defaultAnonymousMessageLimit    = 100
+	defaultHistoryMessageLimit      = 100
 )
 
 // Config 描述会话存储的容量与历史窗口配置。

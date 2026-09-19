@@ -98,5 +98,5 @@ func (s *Service) historyLimit() int {
 	if s.historyMessageLimit > 0 {
 		return s.historyMessageLimit
 	}
-	return 20
+	return 100
 }

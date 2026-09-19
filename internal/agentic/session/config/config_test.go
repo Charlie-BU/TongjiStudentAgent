@@ -14,8 +14,8 @@ func TestConfigFromEnv(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(config.AnonymousTTL, ShouldEqual, 24*time.Hour)
-			So(config.AnonymousMessageLimit, ShouldEqual, 20)
-			So(config.HistoryMessageLimit, ShouldEqual, 20)
+			So(config.AnonymousMessageLimit, ShouldEqual, 100)
+			So(config.HistoryMessageLimit, ShouldEqual, 100)
 		})
 
 		Convey("允许覆盖容量与历史窗口", func() {
