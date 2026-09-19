@@ -5,10 +5,11 @@ const (
 	DocGeneratorSkill          = "doc-generator"
 	WebToolsSkill              = "web-tools"
 	CourseAndTeacherGuideSkill = "course-and-teacher-guide"
+	LuckinCoffeeSkill          = "luckin-coffee"
 )
 
 var (
-	allowedSkills = []string{DocGeneratorSkill, WebToolsSkill, CourseAndTeacherGuideSkill}
+	allowedSkills = []string{DocGeneratorSkill, WebToolsSkill, CourseAndTeacherGuideSkill, LuckinCoffeeSkill}
 )
 
 // Skills 返回已批准 Skill 标识的副本，调用方修改结果不会影响 allowlist。

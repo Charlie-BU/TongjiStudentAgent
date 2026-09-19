@@ -40,6 +40,17 @@ const (
 	TongjiCourseSummaryTool        = "tongji.course.summary"
 	TongjiCourseCatalogTool        = "tongji.course.search"
 	TongjiCalendarListTool         = "tongji.course.calendar_list"
+	LuckinAuthCheckTool            = "luckin.auth.check"
+	LuckinAuthSendSMSCodeTool      = "luckin.auth.send_sms_code"
+	LuckinAuthLoginTool            = "luckin.auth.login"
+	LuckinShopSearchTool           = "luckin.shop.search"
+	LuckinProductSearchTool        = "luckin.product.search"
+	LuckinProductDetailTool        = "luckin.product.detail"
+	LuckinProductSwitchTool        = "luckin.product.switch"
+	LuckinOrderPreviewTool         = "luckin.order.preview"
+	LuckinOrderCreateTool          = "luckin.order.create"
+	LuckinOrderGetTool             = "luckin.order.get"
+	LuckinOrderCancelTool          = "luckin.order.cancel"
 )
 
 var (
@@ -77,6 +88,18 @@ var (
 		TongjiCourseSummaryTool,
 		TongjiCourseCatalogTool,
 		TongjiCalendarListTool,
+
+		LuckinAuthCheckTool,
+		LuckinAuthSendSMSCodeTool,
+		LuckinAuthLoginTool,
+		LuckinShopSearchTool,
+		LuckinProductSearchTool,
+		LuckinProductDetailTool,
+		LuckinProductSwitchTool,
+		LuckinOrderPreviewTool,
+		LuckinOrderCreateTool,
+		LuckinOrderGetTool,
+		LuckinOrderCancelTool,
 	}
 )
 

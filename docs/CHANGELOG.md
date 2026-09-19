@@ -1,3 +1,54 @@
+## CHANGELOG - 2026-09-20 00:41 - 开放瑞幸工具并增加点单 Skill 与错误恢复提示
+
+### 撰写时间
+
+- 2026-09-20 00:41（Asia/Shanghai）
+
+### Base Commit
+
+- `baf292ab6e7de7699795596070f1b9fa7df30c56`（沿用历史记录格式，取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：全部当前未提交改动，相对 `HEAD`（`14e33c18bca9f981d673927dc1fdff2dbfe03a09`）比较。MCP Server 已实现的凭据存储及业务接口不作为本仓新增实现。
+
+### 背景与改动目标
+
+MCP Server 已提供瑞幸鉴权、门店、商品与订单能力，但 Agent 尚未开放这些工具，也缺少对应流程指引。原有 MCP 错误统一转换为校园服务提示，会丢失瑞幸验证码错误及订单结果不明时的恢复信息。本次开放工具，增加按需加载的瑞幸 Skill，并按工具名称处理业务错误和传输失败。
+
+### 改动概览
+
+- 新增 `luckin-coffee` Skill，加入 Skill allowlist 和目录摘要，通过 `system.load_skill` 按需加载。覆盖短信登录、查店、选品、规格切换、订单预览、确认创建、支付展示、查单和取消。
+- Tool allowlist 增加 11 个远程工具：`luckin.auth.check`、`luckin.auth.send_sms_code`、`luckin.auth.login`、`luckin.shop.search`、`luckin.product.search`、`luckin.product.detail`、`luckin.product.switch`、`luckin.order.preview`、`luckin.order.create`、`luckin.order.get`、`luckin.order.cancel`。
+- 新增瑞幸结果归一逻辑：保留成功业务内容；鉴权检查失败或缺少合法 valid 字段时返回 `{valid:false}`；业务错误仅保留允许的状态及固定公开文案，未知错误使用本地兜底提示。
+- 请求级工具包装保存发现时的工具名称，为未取得 MCP 响应的调用失败选择对应提示。更新 allowlist 测试、新增错误恢复及远程发现调用测试，并补充 README。
+
+### 关键链路解析（含上下游）
+
+- 工具发现：Agent 启动时从 MCP Server 发现 allowlist 中的工具，校验完整性，再包装为 Eino Tool。部署的 MCP Server 必须提供本次开放的全部瑞幸工具，否则现有完整性检查会使装配失败。
+- 请求鉴权：每次调用从当前请求上下文读取同济 access token，通过 `X-Tongji-Access-Token` 注入本次 MCP 请求，不写入共享客户端默认 Header。瑞幸 Token 仍由 MCP Server 按用户读取并注入，Agent 不负责 Token 存储。
+- Skill 流程：先检查瑞幸登录状态；false 时按手机号、发送短信、收集验证码、登录、再次检查的顺序处理。业务流程要求核实自取门店和规格，确认订单及价格条件，预览并检查优惠后创建；结果不明时先核实订单，不直接重复提交。
+- 返回处理：已收到的 MCP 结果按工具名归一，非瑞幸工具沿用原规则。瑞幸成功结果移除重复的顶层 structuredContent，保留文本中的业务包装；可公开错误只重建 status/message，不携带额外诊断字段。
+- 传输失败：非上下文取消或 DeadlineExceeded 的调用错误按工具名生成安全结果。订单创建和取消提示先核实状态、不要直接重复；短信和登录提示不要自动重复发送或提交。上下文取消及 DeadlineExceeded 错误继续向上传播。
+
+### 改动结果与业务影响
+
+- Agent 可以发现并调用瑞幸的 11 个工具，使用同济用户已绑定的瑞幸账号完成业务流程。
+- 瑞幸验证码、授权及订单异常不再统一显示为校园服务错误，模型可以根据保留的公开提示选择后续步骤。
+- Skill 明确订单号使用准确字符串、保留预览优惠券、仅展示真实支付二维码，并在查单确认支付后展示取餐码。工具正文作为数据处理，不能据此跳过流程约束。
+- Skill 提供模型执行指引，不是服务端确认票据、鉴权状态机或订单幂等机制；本次不新增后台轮询、自动支付、配送或订单列表能力。
+
+### 风险与待办
+
+- 已验证：审阅期间使用 `go test -count=1` 重跑 `./internal/agentic/skills`、`./internal/agentic/systemtools/load_skill`、`./internal/integration/mcp`、`./internal/application/chat`，四个包全部通过；差异检查通过。
+- 测试覆盖 Skill 装配、工具 allowlist、11 个瑞幸工具的离线发现与调用、固定错误文案保留、未知错误脱敏和写操作恢复提示。本次仅生成文档，未重复运行测试，也未执行全仓测试或 race 检查。
+- 未验证真实模型能否稳定遵循鉴权、预览与用户确认顺序，亦未进行真实瑞幸登录、创建、支付后查单或取消联调；这些流程仍需受控端到端验证。
+- 发布需先确保 MCP Server 版本已提供全部对应工具。手机号和验证码通过现有对话与工具调用链传递，本次未实现专用输入组件或聊天历史脱敏，不能把“不复述验证码”的 Skill 指引视为存储脱敏保证。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): enable Luckin tools with ordering skill and error recovery`
+
 ## CHANGELOG - 2026-09-15 23:23 - 接入 OpenRouter Responses、流式推理与按需网页补证
 
 ### 撰写时间

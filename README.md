@@ -699,3 +699,5 @@ console.log(historyPayload.messages);
 
 - A2A 架构和原字节内部 MCP Client 已移除。
 - Hertz 已替换为开源 `github.com/cloudwego/hertz`。
+
+瑞幸接入包含 11 个 MCP tools、skill 流程指引和业务错误归一。
