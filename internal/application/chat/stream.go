@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"time"
@@ -102,8 +103,14 @@ func (s *Service) stream(ctx context.Context, runner sessionRuntime, runID, quer
 	emitter.Emit(agentevent.AgentStatus, agentevent.AgentStatusData{Phase: "context", Message: "正在准备回答上下文"})
 	studentInfo, err := s.loadFormattedStudentInfo(ctx)
 	if err != nil {
-		emitter.Emit(agentevent.RunFailed, runFailedData("student_info_unavailable", "学生基础信息暂时不可用，请稍后重试", err))
-		return "", err
+		// 学生资料仅用于补充上下文；无效凭据、非学生或上游异常均不阻塞普通对话。
+		// 请求取消仍需结束本轮，不能继续调用模型。
+		if ctx.Err() != nil {
+			emitter.Emit(agentevent.RunFailed, runFailedData("agent_execution_failed", "Agent 执行失败", ctx.Err()))
+			return "", ctx.Err()
+		}
+		slog.WarnContext(ctx, "Student context unavailable; continuing without student info", "run_id", runID)
+		studentInfo = ""
 	}
 	// Agent 执行前
 	if beforeModel != nil {

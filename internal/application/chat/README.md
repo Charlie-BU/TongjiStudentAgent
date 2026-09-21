@@ -185,6 +185,8 @@ sequenceDiagram
 
 `historyLimit` 对手工构造且未设置历史上限的实例也回退到 100。数据库连接、MCP、沙箱和各集成客户端的配置由对应包解析；部署参数以 Agent 仓根目录的 `.env.example` 和 `README.md` 为准。
 
+学生资料是可选上下文：无 token 时不查询；token 无效、非学生、资料为空或上游异常时记录告警并以空资料继续对话，不发送 `student_info_unavailable`。请求取消仍终止本轮，会话归属与工具授权校验保持不变。
+
 本层通过统一 Emitter 发送 `RunStarted`、`AgentStatus`、`RunCompleted` 或 `RunFailed`，并转发 Runtime 事件。主要失败码如下：
 
 | 失败码 | 含义 |
@@ -192,7 +194,6 @@ sequenceDiagram
 | `session_unavailable` | 会话、任务计划或历史准备失败。 |
 | `turn_in_progress` | 会话执行锁冲突，或用户消息追加返回轮次冲突。 |
 | `agent_unavailable` | 内部 `stream` 收到不可用服务或运行时。 |
-| `student_info_unavailable` | 学生信息加载失败。 |
 | `session_write_failed` | 模型执行前的用户消息追加失败。 |
 | `agent_execution_failed` | Runtime 执行返回错误，包括其传播的消息记录错误。 |
 

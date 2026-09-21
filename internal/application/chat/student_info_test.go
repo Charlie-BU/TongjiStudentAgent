@@ -3,8 +3,12 @@ package chat
 import (
 	"context"
 	"fmt"
+	agentevent "github.com/Charlie-BU/TongjiStudent/internal/agentic/event"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
+	"github.com/cloudwego/eino/schema"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
@@ -52,4 +56,78 @@ func TestLoadFormattedStudentInfo(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(info, ShouldBeBlank)
 	})
+}
+
+// Exercise the full turn so optional context failures cannot prevent persistence or completion.
+func TestStreamSessionOptionalStudentInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, body string
+		status            int
+		wantInfo          bool
+	}{
+		{"anonymous", "", "", 200, false},
+		{"invalid token", "invalid", `{}`, 401, false},
+		{"non student", "teacher", `{"code":"A00500","msg":"学号不能为空"}`, 200, false},
+		{"empty profile", "empty", `{"code":"A00000","data":[]}`, 200, false},
+		{"upstream unavailable", "unavailable", `{}`, 503, false},
+		{"student", "student", `{"code":"A00000","data":[{"name":"测试同学"}]}`, 200, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			client, err := tongjiapi.New(tongjiapi.Config{ClientID: "test", ClientSecret: "test", RedirectURI: "https://example.test/callback", StateSecret: "test", APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operations := []string{}
+			store := &recordingEphemeralStore{operations: &operations}
+			runner := &studentContextRuntime{recordingSessionRuntime: recordingSessionRuntime{operations: &operations, response: "回答"}}
+			service := &Service{tongjiClient: client, runtimes: map[string]modelRuntime{"lite": {runtime: runner}}, ephemeralSessionStore: store, taskPlanRepository: &recordingTaskPlanRepository{}, turnLocker: noOpTurnLocker{}}
+			events := []agentevent.Event{}
+			ctx := platformauth.WithAccessToken(context.Background(), tc.token)
+			response, err := service.StreamSession(ctx, "anon-test", "问题", func(e agentevent.Event) { events = append(events, e) }, "lite")
+			if err != nil || response != "回答" {
+				t.Fatalf("response=%q err=%v", response, err)
+			}
+			if len(store.appended) != 2 {
+				t.Fatalf("expected user and assistant persistence: %#v", store.appended)
+			}
+			if (strings.Contains(runner.studentInfo, "测试同学")) != tc.wantInfo {
+				t.Fatalf("unexpected student context %q", runner.studentInfo)
+			}
+			if !tc.wantInfo && runner.studentInfo != "" {
+				t.Fatalf("unexpected context %q", runner.studentInfo)
+			}
+			for _, e := range events {
+				if e.Type == agentevent.RunFailed {
+					t.Fatalf("unexpected failure: %#v", e)
+				}
+			}
+			if events[len(events)-1].Type != agentevent.RunCompleted {
+				t.Fatal("turn did not complete")
+			}
+			wantCalls := 1
+			if tc.token == "" {
+				wantCalls = 0
+			}
+			if calls != wantCalls {
+				t.Fatalf("profile requests=%d want=%d", calls, wantCalls)
+			}
+		})
+	}
+}
+
+type studentContextRuntime struct {
+	recordingSessionRuntime
+	studentInfo string
+}
+
+func (r *studentContextRuntime) StreamWithHistoryAndMessages(ctx context.Context, query, info string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
+	r.studentInfo = info
+	return r.recordingSessionRuntime.StreamWithHistoryAndMessages(ctx, query, info, history, emit, record)
 }
