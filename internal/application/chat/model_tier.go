@@ -27,10 +27,9 @@ func (s *Service) resolveModelTier(tier string) (modelRuntime, error) {
 	return modelRuntime{}, fmt.Errorf("%w: %s", ErrModelTierUnavailable, tier)
 }
 
-// ValidateModelTier 校验模型等级是否有效。
-// 在处理消息前调用，确保模型等级配置正确。
-func ValidateModelTier(tier string) error {
-	_, err := defaultService.resolveModelTier(tier)
+// ValidateModelTier 校验当前服务的模型档位。
+func (s *Service) ValidateModelTier(tier string) error {
+	_, err := s.resolveModelTier(tier)
 	return err
 }
 

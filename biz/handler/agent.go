@@ -47,36 +47,31 @@ type sessionResponse struct {
 	LastActiveAt time.Time                  `json:"last_active_at"`
 }
 
-// createSession 用于测试时替换带名称的会话创建实现。
-var createSession = chat.CreateSession
+// ChatService 是 HTTP 会话接口使用的应用服务边界。
+type ChatService interface {
+	CreateSession(ctx context.Context, name string) (agenticsession.Session, error)
+	ListSessions(ctx context.Context) ([]agenticsession.Session, error)
+	RenameSession(ctx context.Context, sessionID, name string) (agenticsession.Session, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+	StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event), tier string) (string, error)
+	ValidateModelTier(tier string) error
+	ListSessionMessages(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error)
+	GetSessionTaskPlan(ctx context.Context, sessionID string) (*taskplan.TaskPlan, error)
+}
 
-// listSessions 用于测试时替换会话列表读取实现。
-var listSessions = chat.ListSessions
+// ChatHandler 持有启动时绑定的服务，不修改包级函数。
+type ChatHandler struct{ service ChatService }
 
-// renameSession 用于测试时替换会话重命名实现。
-var renameSession = chat.RenameSession
-
-// deleteSession 用于测试时替换会话删除实现。
-var deleteSession = chat.DeleteSession
-
-// streamSession 用于测试时替换会话流式执行实现。
-var streamSession = chat.StreamSession
-var validateModelTier = chat.ValidateModelTier
-
-// listSessionMessages 用于测试时替换会话历史分页读取实现。
-var listSessionMessages = chat.ListSessionMessages
-
-// getSessionTaskPlan 用于测试时替换会话任务计划读取实现。
-var getSessionTaskPlan = chat.GetSessionTaskPlan
+func NewChatHandler(service ChatService) *ChatHandler { return &ChatHandler{service: service} }
 
 // CreateSession 创建与当前请求身份对应的会话。
-func CreateSession(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) CreateSession(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	request, ok := bindCreateSession(c)
 	if !ok {
 		return
 	}
-	session, err := createSession(requestContext, request.Name)
+	session, err := h.service.CreateSession(requestContext, request.Name)
 	if err != nil {
 		c.JSON(consts.StatusServiceUnavailable, utils.H{"error": "session service unavailable"})
 		return
@@ -85,9 +80,9 @@ func CreateSession(ctx context.Context, c *app.RequestContext) {
 }
 
 // Sessions 返回当前 AccessToken 对应用户的全部持久会话。
-func Sessions(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) Sessions(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
-	sessions, err := listSessions(requestContext)
+	sessions, err := h.service.ListSessions(requestContext)
 	if err != nil {
 		if errors.Is(err, agenticsession.ErrInvalidOwner) {
 			c.JSON(consts.StatusUnauthorized, utils.H{"error": "valid access token is required"})
@@ -104,13 +99,13 @@ func Sessions(ctx context.Context, c *app.RequestContext) {
 }
 
 // RenameSession 修改当前 AccessToken 对应用户拥有的会话名称。
-func RenameSession(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) RenameSession(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	request, ok := bindRenameSession(c)
 	if !ok {
 		return
 	}
-	session, err := renameSession(requestContext, request.SessionID, request.Name)
+	session, err := h.service.RenameSession(requestContext, request.SessionID, request.Name)
 	if err != nil {
 		switch {
 		case errors.Is(err, agenticsession.ErrInvalidOwner):
@@ -126,13 +121,13 @@ func RenameSession(ctx context.Context, c *app.RequestContext) {
 }
 
 // DeleteSession 删除当前 AccessToken 对应用户拥有的会话及其关联数据。
-func DeleteSession(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) DeleteSession(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	request, ok := bindDeleteSession(c)
 	if !ok {
 		return
 	}
-	if err := deleteSession(requestContext, request.SessionID); err != nil {
+	if err := h.service.DeleteSession(requestContext, request.SessionID); err != nil {
 		switch {
 		case errors.Is(err, agenticsession.ErrInvalidOwner):
 			c.JSON(consts.StatusUnauthorized, utils.H{"error": "valid access token is required"})
@@ -147,7 +142,7 @@ func DeleteSession(ctx context.Context, c *app.RequestContext) {
 }
 
 // SessionMessageStream 向指定会话提交消息并以 SSE 返回本轮执行事件。
-func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	request, ok := bindSessionMessage(c)
 	if !ok {
@@ -165,7 +160,7 @@ func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
-	if err := validateModelTier(tier); err != nil {
+	if err := h.service.ValidateModelTier(tier); err != nil {
 		status := consts.StatusServiceUnavailable
 		if errors.Is(err, chat.ErrInvalidModelTier) {
 			status = consts.StatusBadRequest
@@ -184,7 +179,7 @@ func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 			cancel()
 		}
 	}
-	_, err := streamSession(streamContext, sessionID, request.Message, func(event agentevent.Event) {
+	_, err := h.service.StreamSession(streamContext, sessionID, request.Message, func(event agentevent.Event) {
 		if streamStopped.Load() {
 			return
 		}
@@ -206,7 +201,7 @@ func SessionMessageStream(ctx context.Context, c *app.RequestContext) {
 }
 
 // SessionMessages 返回当前请求有权读取的会话 canonical 历史。
-func SessionMessages(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) SessionMessages(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	sessionID := strings.TrimSpace(c.Param("session_id"))
 	if sessionID == "" {
@@ -239,7 +234,7 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 		}
 		snapshotSequence = parsed
 	}
-	page, err := listSessionMessages(requestContext, sessionID, limit, offset, snapshotSequence)
+	page, err := h.service.ListSessionMessages(requestContext, sessionID, limit, offset, snapshotSequence)
 	if err != nil {
 		status := consts.StatusInternalServerError
 		if errors.Is(err, agenticsession.ErrNotFound) {
@@ -252,14 +247,14 @@ func SessionMessages(ctx context.Context, c *app.RequestContext) {
 }
 
 // SessionTaskPlan 返回当前请求有权访问的活动任务计划。
-func SessionTaskPlan(ctx context.Context, c *app.RequestContext) {
+func (h *ChatHandler) SessionTaskPlan(ctx context.Context, c *app.RequestContext) {
 	requestContext := withChatAccessToken(ctx, string(c.Request.Header.Get("Authorization")))
 	sessionID := strings.TrimSpace(c.Param("session_id"))
 	if sessionID == "" {
 		c.JSON(consts.StatusBadRequest, utils.H{"error": "session_id is required"})
 		return
 	}
-	plan, err := getSessionTaskPlan(requestContext, sessionID)
+	plan, err := h.service.GetSessionTaskPlan(requestContext, sessionID)
 	if err != nil {
 		status := consts.StatusInternalServerError
 		if errors.Is(err, agenticsession.ErrNotFound) {
@@ -349,7 +344,7 @@ func newSessionResponse(session agenticsession.Session) sessionResponse {
 func withChatAccessToken(ctx context.Context, authorization string) context.Context {
 	accessToken, err := platformauth.ExtractBearerToken(authorization)
 	if err != nil {
-		return ctx
+		return platformauth.WithAccessToken(ctx, "")
 	}
 	return platformauth.WithAccessToken(ctx, accessToken)
 }

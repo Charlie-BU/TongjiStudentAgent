@@ -8,16 +8,20 @@ import (
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 )
 
-// loadFormattedStudentInfo 仅在请求上下文携带 access token 时读取学生基础信息。
+// loadFormattedStudentInfo 仅使用本轮可信用户 ID 和服务凭据查询学生资料。
 func (s *Service) loadFormattedStudentInfo(ctx context.Context) (string, error) {
-	accessToken, ok := platformauth.AccessTokenFromContext(ctx)
+	userID, ok := platformauth.UserIDFromContext(ctx)
 	if !ok {
 		return "", nil
 	}
 	if s.tongjiClient == nil {
 		return "", fmt.Errorf("Tongji Open Platform client is not initialized")
 	}
-	studentInfo, err := s.tongjiClient.GetStudentInfo(ctx, accessToken)
+	accessToken, err := tongjiapi.MCPAccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	studentInfo, err := s.tongjiClient.GetStudentInfo(ctx, accessToken, userID)
 	if err != nil {
 		return "", fmt.Errorf("get Tongji student info: %w", err)
 	}

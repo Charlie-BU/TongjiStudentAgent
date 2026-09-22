@@ -73,8 +73,8 @@ func NewFromEnv() (*Client, error) {
 	timeout := defaultTimeout
 
 	return New(Config{
-		ClientID:              strings.TrimSpace(os.Getenv("TONGJI_OPEN_PLATFORM_CLIENT_ID")),
-		ClientSecret:          strings.TrimSpace(os.Getenv("TONGJI_OPEN_PLATFORM_CLIENT_SECRET")),
+		ClientID:              strings.TrimSpace(os.Getenv("TONGJI_LOGIN_CLIENT_ID")),
+		ClientSecret:          strings.TrimSpace(os.Getenv("TONGJI_LOGIN_CLIENT_SECRET")),
 		RedirectURI:           strings.TrimSpace(os.Getenv("TONGJI_OPEN_PLATFORM_REDIRECT_URI")),
 		StateSecret:           strings.TrimSpace(os.Getenv("TONGJI_OPEN_PLATFORM_STATE_SECRET")),
 		AuthorizationEndpoint: envOrDefault("TONGJI_OPEN_PLATFORM_AUTHORIZATION_ENDPOINT", defaultAuthorizationEndpoint),

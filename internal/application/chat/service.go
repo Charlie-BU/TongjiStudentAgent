@@ -35,3 +35,6 @@ func (s *Service) Close() error {
 	}
 	return s.closeResources()
 }
+
+// DefaultService 返回启动时初始化的服务，用于绑定 HTTP Handler。
+func DefaultService() *Service { return defaultService }

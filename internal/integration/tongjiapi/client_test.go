@@ -74,7 +74,7 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		token, err := client.ExchangeAuthorizationCode(context.Background(), "code-from-callback")
 		So(err, ShouldBeNil)
 		So(token.AccessToken, ShouldEqual, "test-access-token")
-		studentInfo, err := client.GetStudentInfo(context.Background(), token.AccessToken)
+		studentInfo, err := client.GetStudentInfo(context.Background(), token.AccessToken, "2350939")
 		So(err, ShouldBeNil)
 		So(studentInfo.Name, ShouldEqual, "测试同学")
 		So(studentInfo.Faculty, ShouldEqual, "计算机科学与技术学院")
@@ -94,7 +94,7 @@ func TestTongjiOpenPlatformClient(t *testing.T) {
 		So(apiRequest.method, ShouldEqual, http.MethodPost)
 		So(apiRequest.path, ShouldEqual, studentInfoPath)
 		So(apiRequest.contentType, ShouldEqual, "application/json")
-		So(apiRequest.body, ShouldEqual, "{}")
+		So(apiRequest.body, ShouldEqual, `{"userId":"2350939"}`)
 		So(apiRequest.authorization, ShouldEqual, "Bearer test-access-token")
 	})
 }
@@ -110,10 +110,24 @@ func TestTongjiOpenPlatformClientRejectsInvalidInput(t *testing.T) {
 			So(client.ValidateState("not-a-state"), ShouldNotBeNil)
 		})
 
+		Convey("缺少用户 ID 时不发送请求", func() {
+			calls := 0
+			client := newTestClient(t, func(*http.Request) (*http.Response, error) {
+				calls++
+				return jsonResponse(http.StatusOK, `{}`), nil
+			})
+			for _, userID := range []string{"", "   "} {
+				_, err := client.GetStudentInfo(context.Background(), "service-token", userID)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldEqual, "user ID is required")
+			}
+			So(calls, ShouldEqual, 0)
+		})
+
 		Convey("空授权码和空 access token", func() {
 			_, err := client.ExchangeAuthorizationCode(context.Background(), " ")
 			So(err, ShouldNotBeNil)
-			_, err = client.GetStudentInfo(context.Background(), " ")
+			_, err = client.GetStudentInfo(context.Background(), " ", "2350939")
 			So(err, ShouldNotBeNil)
 		})
 	})
@@ -170,7 +184,7 @@ func TestTongjiOpenPlatformClientHandlesUpstreamFailure(t *testing.T) {
 				if test.exchange {
 					_, err = client.ExchangeAuthorizationCode(context.Background(), "code")
 				} else {
-					_, err = client.GetStudentInfo(context.Background(), "access-token")
+					_, err = client.GetStudentInfo(context.Background(), "access-token", "2350939")
 				}
 
 				So(err, ShouldNotBeNil)

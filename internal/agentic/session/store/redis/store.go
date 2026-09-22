@@ -46,9 +46,6 @@ var (
 	ErrTaskPlanNotFound    = taskplan.ErrTaskPlanNotFound
 	ErrNotFound            = agenticsession.ErrNotFound
 	ErrTurnInProgress      = agenticsession.ErrTurnInProgress
-	newID                  = agenticsession.NewID
-	validateMessage        = agenticsession.ValidateMessage
-	validateTaskPlanTasks  = taskplan.ValidateTaskPlanTasks
 )
 
 const (
@@ -114,7 +111,7 @@ func (s *RedisEphemeralStore) AcquireTurn(ctx context.Context, sessionID string)
 	if sessionID == "" {
 		return nil, ErrInvalidSessionID
 	}
-	token := newID("turn-lock")
+	token := agenticsession.NewID("turn-lock")
 	locked, err := s.client.SetNX(ctx, redisTurnLockKey(sessionID), token, ephemeralTurnLockTTL).Result()
 	if err != nil {
 		return nil, fmt.Errorf("acquire session turn lock: %w", err)
@@ -157,7 +154,7 @@ func (s *RedisEphemeralStore) renewTurnLock(done <-chan struct{}, renewed chan<-
 // Create 创建没有用户身份归属的临时会话。
 func (s *RedisEphemeralStore) Create(ctx context.Context) (Session, error) {
 	now := time.Now().UTC()
-	result := Session{ID: newID("anon"), Persistence: PersistenceEphemeral, CreatedAt: now, LastActiveAt: now}
+	result := Session{ID: agenticsession.NewID("anon"), Persistence: PersistenceEphemeral, CreatedAt: now, LastActiveAt: now}
 	if err := s.client.HSet(ctx, redisMetaKey(result.ID), "created_at", now.Format(time.RFC3339Nano), "last_active_at", now.Format(time.RFC3339Nano), "next_sequence", "0").Err(); err != nil {
 		return Session{}, fmt.Errorf("create ephemeral session: %w", err)
 	}
@@ -195,12 +192,12 @@ func (s *RedisEphemeralStore) Append(ctx context.Context, sessionID string, inpu
 	if strings.TrimSpace(sessionID) == "" {
 		return AppendResult{}, ErrInvalidSessionID
 	}
-	input, err := validateMessage(input)
+	input, err := agenticsession.ValidateMessage(input)
 	if err != nil {
 		return AppendResult{}, err
 	}
 	now := time.Now().UTC()
-	messageID := newID("msg")
+	messageID := agenticsession.NewID("msg")
 	toolCalls, err := json.Marshal(input.ToolCalls)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
@@ -324,7 +321,7 @@ func (s *RedisEphemeralStore) SaveTaskPlan(ctx context.Context, sessionID string
 	if expectedRevision < 0 {
 		return TaskPlan{}, ErrInvalidTaskPlan
 	}
-	validatedTasks, err := validateTaskPlanTasks(tasks)
+	validatedTasks, err := taskplan.ValidateTaskPlanTasks(tasks)
 	if err != nil {
 		return TaskPlan{}, err
 	}

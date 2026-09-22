@@ -40,18 +40,18 @@ func TestChatAuthorization(t *testing.T) {
 }
 
 func TestSessionTaskPlan(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("读取会话任务计划接口", t, func() {
-		originalGetSessionTaskPlan := getSessionTaskPlan
-		t.Cleanup(func() { getSessionTaskPlan = originalGetSessionTaskPlan })
 
 		Convey("会返回当前计划快照", func() {
-			getSessionTaskPlan = func(_ context.Context, sessionID string) (*taskplan.TaskPlan, error) {
+			service.getSessionTaskPlan = func(_ context.Context, sessionID string) (*taskplan.TaskPlan, error) {
 				So(sessionID, ShouldEqual, "ses-001")
 				return &taskplan.TaskPlan{SessionID: sessionID, Revision: 2, Tasks: []taskplan.TaskItem{{ID: "step1", Desc: "查询成绩", Status: taskplan.TaskStatusDone}}}, nil
 			}
 			requestContext := newSessionRequest("ses-001")
 
-			SessionTaskPlan(context.Background(), requestContext)
+			handler.SessionTaskPlan(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"revision":2`)
@@ -59,15 +59,15 @@ func TestSessionTaskPlan(t *testing.T) {
 		})
 
 		Convey("无计划时返回空 plan，会话不存在时返回 404", func() {
-			getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, nil }
+			service.getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, nil }
 			requestContext := newSessionRequest("ses-001")
-			SessionTaskPlan(context.Background(), requestContext)
+			handler.SessionTaskPlan(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"plan":null`)
 
-			getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, agenticsession.ErrNotFound }
+			service.getSessionTaskPlan = func(context.Context, string) (*taskplan.TaskPlan, error) { return nil, agenticsession.ErrNotFound }
 			requestContext = newSessionRequest("ses-001")
-			SessionTaskPlan(context.Background(), requestContext)
+			handler.SessionTaskPlan(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
 		})
 	})
@@ -86,12 +86,12 @@ func TestBindSessionMessage(t *testing.T) {
 }
 
 func TestCreateSession(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("创建会话接口", t, func() {
-		originalCreateSession := createSession
-		t.Cleanup(func() { createSession = originalCreateSession })
 
 		Convey("会返回创建的会话标识与持久化类型", func() {
-			createSession = func(ctx context.Context, name string) (agenticsession.Session, error) {
+			service.createSession = func(ctx context.Context, name string) (agenticsession.Session, error) {
 				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
 				So(ok, ShouldBeTrue)
 				So(accessToken, ShouldEqual, "test-access-token")
@@ -101,7 +101,7 @@ func TestCreateSession(t *testing.T) {
 			requestContext := app.NewContext(0)
 			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
 
-			CreateSession(context.Background(), requestContext)
+			handler.CreateSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusCreated)
 			var response struct {
@@ -114,13 +114,13 @@ func TestCreateSession(t *testing.T) {
 		})
 
 		Convey("会保留请求体中的会话名称", func() {
-			createSession = func(_ context.Context, name string) (agenticsession.Session, error) {
+			service.createSession = func(_ context.Context, name string) (agenticsession.Session, error) {
 				So(name, ShouldEqual, "成绩查询")
 				return agenticsession.Session{ID: "ses-001", Name: name, Persistence: agenticsession.PersistenceDurable}, nil
 			}
 			requestContext := newAgentJSONRequest(`{"name":" 成绩查询 "}`)
 
-			CreateSession(context.Background(), requestContext)
+			handler.CreateSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusCreated)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"成绩查询"`)
@@ -129,18 +129,18 @@ func TestCreateSession(t *testing.T) {
 		Convey("请求体不是合法 JSON 时返回 400", func() {
 			requestContext := newAgentJSONRequest(`{"name":`)
 
-			CreateSession(context.Background(), requestContext)
+			handler.CreateSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 		})
 
 		Convey("服务不可用时返回 503", func() {
-			createSession = func(context.Context, string) (agenticsession.Session, error) {
+			service.createSession = func(context.Context, string) (agenticsession.Session, error) {
 				return agenticsession.Session{}, errors.New("store unavailable")
 			}
 			requestContext := app.NewContext(0)
 
-			CreateSession(context.Background(), requestContext)
+			handler.CreateSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusServiceUnavailable)
 		})
@@ -148,16 +148,12 @@ func TestCreateSession(t *testing.T) {
 }
 
 func TestSessionsAndRenameSession(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("会话列表与重命名接口", t, func() {
-		originalListSessions := listSessions
-		originalRenameSession := renameSession
-		t.Cleanup(func() {
-			listSessions = originalListSessions
-			renameSession = originalRenameSession
-		})
 
 		Convey("会根据当前访问凭据返回全部会话", func() {
-			listSessions = func(ctx context.Context) ([]agenticsession.Session, error) {
+			service.listSessions = func(ctx context.Context) ([]agenticsession.Session, error) {
 				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
 				So(ok, ShouldBeTrue)
 				So(accessToken, ShouldEqual, "test-access-token")
@@ -166,7 +162,7 @@ func TestSessionsAndRenameSession(t *testing.T) {
 			requestContext := app.NewContext(0)
 			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
 
-			Sessions(context.Background(), requestContext)
+			handler.Sessions(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"id":"ses-001"`)
@@ -174,7 +170,7 @@ func TestSessionsAndRenameSession(t *testing.T) {
 		})
 
 		Convey("会校验重命名输入并返回更新后的会话", func() {
-			renameSession = func(_ context.Context, sessionID, name string) (agenticsession.Session, error) {
+			service.renameSession = func(_ context.Context, sessionID, name string) (agenticsession.Session, error) {
 				So(sessionID, ShouldEqual, "ses-001")
 				So(name, ShouldEqual, "新名称")
 				return agenticsession.Session{ID: sessionID, Name: name, Persistence: agenticsession.PersistenceDurable}, nil
@@ -183,48 +179,48 @@ func TestSessionsAndRenameSession(t *testing.T) {
 			requestContext.Request.Header.Set("Content-Type", "application/json")
 			requestContext.Request.SetBodyString(`{"session_id":"ses-001","name":" 新名称 "}`)
 
-			RenameSession(context.Background(), requestContext)
+			handler.RenameSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"新名称"`)
 		})
 
 		Convey("无有效身份时列表与重命名均返回 401", func() {
-			listSessions = func(context.Context) ([]agenticsession.Session, error) { return nil, agenticsession.ErrInvalidOwner }
+			service.listSessions = func(context.Context) ([]agenticsession.Session, error) { return nil, agenticsession.ErrInvalidOwner }
 			requestContext := app.NewContext(0)
-			Sessions(context.Background(), requestContext)
+			handler.Sessions(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
 
-			renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
+			service.renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
 				return agenticsession.Session{}, agenticsession.ErrInvalidOwner
 			}
 			requestContext = newAgentJSONRequest(`{"session_id":"ses-001","name":"新名称"}`)
-			RenameSession(context.Background(), requestContext)
+			handler.RenameSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
 		})
 
 		Convey("重命名非本人或不存在的会话返回 404，缺少字段返回 400", func() {
-			renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
+			service.renameSession = func(context.Context, string, string) (agenticsession.Session, error) {
 				return agenticsession.Session{}, agenticsession.ErrNotFound
 			}
 			requestContext := newAgentJSONRequest(`{"session_id":"ses-other","name":"新名称"}`)
-			RenameSession(context.Background(), requestContext)
+			handler.RenameSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
 
 			requestContext = newAgentJSONRequest(`{"session_id":"ses-001"}`)
-			RenameSession(context.Background(), requestContext)
+			handler.RenameSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 		})
 	})
 }
 
 func TestDeleteSession(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("删除会话接口", t, func() {
-		originalDeleteSession := deleteSession
-		t.Cleanup(func() { deleteSession = originalDeleteSession })
 
 		Convey("会校验会话标识并删除当前用户的会话", func() {
-			deleteSession = func(ctx context.Context, sessionID string) error {
+			service.deleteSession = func(ctx context.Context, sessionID string) error {
 				accessToken, ok := platformauth.AccessTokenFromContext(ctx)
 				So(ok, ShouldBeTrue)
 				So(accessToken, ShouldEqual, "test-access-token")
@@ -234,36 +230,36 @@ func TestDeleteSession(t *testing.T) {
 			requestContext := newAgentJSONRequest(`{"session_id":" ses-001 "}`)
 			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
 
-			DeleteSession(context.Background(), requestContext)
+			handler.DeleteSession(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNoContent)
 		})
 
 		Convey("未认证、会话不存在及缺少会话标识时返回对应状态", func() {
-			deleteSession = func(context.Context, string) error { return agenticsession.ErrInvalidOwner }
+			service.deleteSession = func(context.Context, string) error { return agenticsession.ErrInvalidOwner }
 			requestContext := newAgentJSONRequest(`{"session_id":"ses-001"}`)
-			DeleteSession(context.Background(), requestContext)
+			handler.DeleteSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
 
-			deleteSession = func(context.Context, string) error { return agenticsession.ErrNotFound }
+			service.deleteSession = func(context.Context, string) error { return agenticsession.ErrNotFound }
 			requestContext = newAgentJSONRequest(`{"session_id":"ses-001"}`)
-			DeleteSession(context.Background(), requestContext)
+			handler.DeleteSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
 
 			requestContext = newAgentJSONRequest(`{}`)
-			DeleteSession(context.Background(), requestContext)
+			handler.DeleteSession(context.Background(), requestContext)
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 		})
 	})
 }
 
 func TestSessionMessages(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("读取会话历史接口", t, func() {
-		originalListSessionMessages := listSessionMessages
-		t.Cleanup(func() { listSessionMessages = originalListSessionMessages })
 
 		Convey("会转发分页快照参数，并返回分页元数据", func() {
-			listSessionMessages = func(_ context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
+			service.listSessionMessages = func(_ context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
 				So(sessionID, ShouldEqual, "ses-001")
 				So(limit, ShouldEqual, 2)
 				So(offset, ShouldEqual, 4)
@@ -273,7 +269,7 @@ func TestSessionMessages(t *testing.T) {
 			requestContext := newSessionRequest("ses-001")
 			requestContext.Request.SetRequestURI("/v1/sessions/ses-001/messages?limit=2&offset=4&snapshot_sequence=10")
 
-			SessionMessages(context.Background(), requestContext)
+			handler.SessionMessages(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"content":"你好"`)
@@ -282,12 +278,12 @@ func TestSessionMessages(t *testing.T) {
 		})
 
 		Convey("会话不存在时返回 404", func() {
-			listSessionMessages = func(context.Context, string, int, int, int64) (agenticsession.MessagePage, error) {
+			service.listSessionMessages = func(context.Context, string, int, int, int64) (agenticsession.MessagePage, error) {
 				return agenticsession.MessagePage{}, agenticsession.ErrNotFound
 			}
 			requestContext := newSessionRequest("ses-001")
 
-			SessionMessages(context.Background(), requestContext)
+			handler.SessionMessages(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusNotFound)
 		})
@@ -295,15 +291,13 @@ func TestSessionMessages(t *testing.T) {
 }
 
 func TestSessionMessageStream(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("提交会话消息接口", t, func() {
-		originalValidate := validateModelTier
-		validateModelTier = func(string) error { return nil }
-		t.Cleanup(func() { validateModelTier = originalValidate })
-		originalStreamSession := streamSession
-		t.Cleanup(func() { streamSession = originalStreamSession })
+		service.validateModelTier = func(string) error { return nil }
 
 		Convey("会将会话标识写入 SSE 事件", func() {
-			streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event), tier string) (string, error) {
+			service.streamSession = func(_ context.Context, sessionID, message string, send func(agentevent.Event), tier string) (string, error) {
 				So(sessionID, ShouldEqual, "anon-001")
 				So(message, ShouldEqual, "现在几点？")
 				send(agentevent.Event{Type: agentevent.RunStarted, RunID: "run-test", Sequence: 1, OccurredAt: time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)})
@@ -315,7 +309,7 @@ func TestSessionMessageStream(t *testing.T) {
 			writer := &testSSEWriter{}
 			requestContext.Response.HijackWriter(writer)
 
-			SessionMessageStream(context.Background(), requestContext)
+			handler.SessionMessageStream(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
 			So(writer.String(), ShouldContainSubstring, "event: run.started")
@@ -324,13 +318,13 @@ func TestSessionMessageStream(t *testing.T) {
 
 		Convey("缺少会话标识时返回 400 且不调用服务", func() {
 			called := false
-			streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
+			service.streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
 				called = true
 				return "", nil
 			}
 			requestContext := newAgentJSONRequest(`{"message":"你好"}`)
 
-			SessionMessageStream(context.Background(), requestContext)
+			handler.SessionMessageStream(context.Background(), requestContext)
 
 			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadRequest)
 			So(called, ShouldBeFalse)
@@ -359,9 +353,9 @@ func (w *testSSEWriter) Flush() error    { return nil }
 func (w *testSSEWriter) Finalize() error { return nil }
 
 func TestMessageModelTierValidation(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewChatHandler(service)
 	Convey("HTTP 层默认档位和显式档位校验", t, func() {
-		oldValidate, oldStream := validateModelTier, streamSession
-		t.Cleanup(func() { validateModelTier, streamSession = oldValidate, oldStream })
 		for _, tc := range []struct {
 			body, tier string
 			status     int
@@ -377,7 +371,7 @@ func TestMessageModelTierValidation(t *testing.T) {
 			{`{"message":"hi","model_tier":12}`, "", 400},
 		} {
 			Convey(tc.body, func() {
-				validateModelTier = func(tier string) error {
+				service.validateModelTier = func(tier string) error {
 					switch tier {
 					case "lite", "pro", "max":
 						return nil
@@ -385,7 +379,7 @@ func TestMessageModelTierValidation(t *testing.T) {
 					return chat.ErrInvalidModelTier
 				}
 				called := false
-				streamSession = func(_ context.Context, _, _ string, _ func(agentevent.Event), tier string) (string, error) {
+				service.streamSession = func(_ context.Context, _, _ string, _ func(agentevent.Event), tier string) (string, error) {
 					called = true
 					So(tier, ShouldEqual, tc.tier)
 					return "", nil
@@ -393,22 +387,57 @@ func TestMessageModelTierValidation(t *testing.T) {
 				c := newSessionRequest("anon-001")
 				c.Request.Header.Set("Content-Type", "application/json")
 				c.Request.SetBodyString(tc.body)
-				SessionMessageStream(context.Background(), c)
+				handler.SessionMessageStream(context.Background(), c)
 				So(c.Response.StatusCode(), ShouldEqual, tc.status)
 				So(called, ShouldEqual, tc.status == 200)
 			})
 		}
-		validateModelTier = func(string) error { return chat.ErrModelTierUnavailable }
+		service.validateModelTier = func(string) error { return chat.ErrModelTierUnavailable }
 		called := false
-		streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
+		service.streamSession = func(context.Context, string, string, func(agentevent.Event), string) (string, error) {
 			called = true
 			return "", nil
 		}
 		c := newSessionRequest("anon-001")
 		c.Request.Header.Set("Content-Type", "application/json")
 		c.Request.SetBodyString(`{"message":"hi","model_tier":"pro"}`)
-		SessionMessageStream(context.Background(), c)
+		handler.SessionMessageStream(context.Background(), c)
 		So(c.Response.StatusCode(), ShouldEqual, 503)
 		So(called, ShouldBeFalse)
 	})
+}
+
+// Each test owns its service double; no production function is replaced.
+type fakeChatService struct {
+	createSession       func(ctx context.Context, name string) (agenticsession.Session, error)
+	listSessions        func(ctx context.Context) ([]agenticsession.Session, error)
+	renameSession       func(ctx context.Context, sessionID, name string) (agenticsession.Session, error)
+	deleteSession       func(ctx context.Context, sessionID string) error
+	streamSession       func(ctx context.Context, sessionID, query string, send func(agentevent.Event), tier string) (string, error)
+	validateModelTier   func(tier string) error
+	listSessionMessages func(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error)
+	getSessionTaskPlan  func(ctx context.Context, sessionID string) (*taskplan.TaskPlan, error)
+}
+
+func (s *fakeChatService) CreateSession(ctx context.Context, name string) (agenticsession.Session, error) {
+	return s.createSession(ctx, name)
+}
+func (s *fakeChatService) ListSessions(ctx context.Context) ([]agenticsession.Session, error) {
+	return s.listSessions(ctx)
+}
+func (s *fakeChatService) RenameSession(ctx context.Context, sessionID, name string) (agenticsession.Session, error) {
+	return s.renameSession(ctx, sessionID, name)
+}
+func (s *fakeChatService) DeleteSession(ctx context.Context, sessionID string) error {
+	return s.deleteSession(ctx, sessionID)
+}
+func (s *fakeChatService) StreamSession(ctx context.Context, sessionID, query string, send func(agentevent.Event), tier string) (string, error) {
+	return s.streamSession(ctx, sessionID, query, send, tier)
+}
+func (s *fakeChatService) ValidateModelTier(tier string) error { return s.validateModelTier(tier) }
+func (s *fakeChatService) ListSessionMessages(ctx context.Context, sessionID string, limit, offset int, snapshotSequence int64) (agenticsession.MessagePage, error) {
+	return s.listSessionMessages(ctx, sessionID, limit, offset, snapshotSequence)
+}
+func (s *fakeChatService) GetSessionTaskPlan(ctx context.Context, sessionID string) (*taskplan.TaskPlan, error) {
+	return s.getSessionTaskPlan(ctx, sessionID)
 }

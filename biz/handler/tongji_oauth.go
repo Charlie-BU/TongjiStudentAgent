@@ -11,28 +11,9 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
 
-// 同济开放平台授权范围
+// 同济开放平台授权范围：仅获取用户 ID
 var tongjiAuthorizationScopes = []string{
 	"openid",
-	"rt_onetongji_school_calendar_all_term_calendar",
-	"dc_student_work_info_stipend",
-	"rt_onetongji_undergraduate_score",
-	"dc_sep_auth_student_accommodation_info",
-	"user",
-	"dc_student_work_info_honorary_title",
-	"dc_student_work_info_competition_winners",
-	"dc_lib_lib_access_control",
-	"dc_door_school_access_control",
-	"rt_teaching_info_sports_test_health",
-	"dc_user_student_info",
-	"rt_onetongji_student_timetable",
-	"rt_onetongji_cet_score",
-	"rt_teaching_info_sports_test_data",
-	"dc_lib_lend_info",
-	"rt_onetongji_school_calendar_current_term_calendar",
-	"dc_card_card_history_flow",
-	"dc_student_work_info_scholarship",
-	"dc_lib_lend_info_all",
 }
 
 // tongjiTokenRequest 表示回调页面提交的授权码。

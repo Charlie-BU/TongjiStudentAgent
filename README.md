@@ -53,7 +53,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Cozeloop
 - 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_OPEN_PLATFORM_CLIENT_ID`、`TONGJI_OPEN_PLATFORM_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
+启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_LOGIN_CLIENT_ID`、`TONGJI_LOGIN_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
 
 模型分为三个 tier，由 `LITE_MODEL`、`PRO_MODEL`、`MAX_MODEL` 分别配置，通过请求的 `model_tier` 选择。lite 必填，pro/max 可留空。启动时为已配置的 tier 创建独立 Runtime；修改模型配置后需重启。三档共享 `MODEL_PROVIDER`：省略或设为 `ark` 时使用现有 Ark Responses API；设为 `openrouter` 时使用 OpenRouter Responses API。
 
@@ -96,7 +96,7 @@ Railway 会注入 `PORT`，服务也保留 `PORT0` 的旧部署兼容；若同�
 
 ## 同济开放平台浏览器授权
 
-Chat 服务在启动时创建并复用同济 API 客户端，所需 OAuth 配置缺失会导致初始化失败。学生信息查询仍按每次请求的 access token 执行，无 token 时跳过。
+Chat 服务在启动时创建并复用同济 API 客户端，所需 OAuth 配置缺失会导致初始化失败。每轮 run 先用请求头中的用户 token 查询 basic-info；本轮取得 userId 后，学生信息查询使用服务 token 并在请求体中限定该 userId，无可信 userId 时跳过。
 
 服务提供授权码模式的两个接口，客户端密钥和 state 签名密钥只从 `.env` 读取；`.env` 已被 Git 忽略，可直接参考项目根目录的 [`.env.example`](./.env.example)。
 
@@ -679,7 +679,9 @@ console.log(historyPayload.messages);
   `system.load_skill`、`system.manage_task_plan`，以及在启用 Ark 知识库时额外注册的 `system.search_knowledge`。
 - 远程 MCP Tool：
 
-每次远程 MCP Tool 调用都会从当前请求 context 读取 Bearer access token，并以 `X-Tongji-Access-Token` 注入远程 MCP 请求；缺失 token 时仍会继续发起 MCP 请求，但请求头值为空，由远程 MCP 与同济开放平台继续验证 token 的有效性、用户绑定和 scope。MCP 业务错误会在本地收敛为稳定结果，避免把上游原始错误正文暴露给模型、SSE 或普通日志；部署远程 MCP 时仍必须保护该请求头，不能写入普通日志。
+每轮 run 均使用本次 HTTP `Authorization: Bearer <用户 token>` 查询 basic-info，取得的 `userId` 仅保存在本轮上下文，不缓存用户登录状态。每次远程 MCP Tool 调用，仅在本轮有可信 userId 时同时发送 `X-Tongji-User-Id` 和 `X-Tongji-Access-Token`；后者是服务 token，绝不透传用户 token。匿名或身份查询失败时两个请求头都不发送。
+
+登录凭据使用 `TONGJI_LOGIN_CLIENT_ID` / `TONGJI_LOGIN_CLIENT_SECRET`；MCP 服务凭据使用 `TONGJI_MCP_CLIENT_ID` / `TONGJI_MCP_CLIENT_SECRET`。旧的 `TONGJI_OPEN_PLATFORM_CLIENT_ID` / `TONGJI_OPEN_PLATFORM_CLIENT_SECRET` 不再读取。服务 token 通过 `/v1/token` 的 `client_credentials` 表单申请，按最多 7200 秒缓存在进程内，并在每次使用前通过 basic-info 检查服务身份（00001 / 李建中 / 教职工）。身份校验在缓存锁外并发执行；检查失败或到期后合并刷新并覆盖缓存，等待刷新的请求可独立取消，旧校验结果不会覆盖新缓存；刷新失败不调用 MCP，也不回退使用用户 token。多进程各自维护缓存，进程重启后重新申请。Agent 与 MCP Server 需配套部署，服务凭据不得写入模型上下文、响应或日志。
 
 ## 路由一览
 

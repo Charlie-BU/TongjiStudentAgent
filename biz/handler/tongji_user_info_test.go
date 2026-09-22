@@ -2,64 +2,56 @@ package handler
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	"github.com/cloudwego/hertz/pkg/app"
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestTongjiUserBasicInfo(t *testing.T) {
-	Convey("用户基础信息接口", t, func() {
-		originalNewClient := newUserBasicInfoClient
-		t.Cleanup(func() { newUserBasicInfoClient = originalNewClient })
-
-		Convey("使用 Bearer access token 查询并返回基础信息", func() {
-			client := &fakeUserBasicInfoClient{info: &tongjiapi.UserBasicInfo{Name: "测试同学", UserId: "2350939", UserTypeName: "本科生"}}
-			newUserBasicInfoClient = func() (userBasicInfoClient, error) { return client, nil }
-			requestContext := app.NewContext(0)
-			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
-
-			TongjiUserBasicInfo(context.Background(), requestContext)
-
-			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusOK)
-			So(client.accessToken, ShouldEqual, "test-access-token")
-			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"name":"测试同学"`)
-			So(string(requestContext.Response.Body()), ShouldContainSubstring, `"userId":"2350939"`)
-		})
-
-		Convey("缺少或格式错误的 Bearer access token 返回 401", func() {
-			for _, authorization := range []string{"", "Basic token", "Bearer"} {
-				requestContext := app.NewContext(0)
-				requestContext.Request.Header.Set("Authorization", authorization)
-				TongjiUserBasicInfo(context.Background(), requestContext)
-				So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusUnauthorized)
+	for _, tc := range []struct {
+		name, authorization string
+		upstream, want      int
+		configured          bool
+	}{
+		{"success", "Bearer test-access-token", 200, 200, true},
+		{"missing token", "", 200, 401, true},
+		{"invalid scheme", "Basic token", 200, 401, true},
+		{"empty bearer", "Bearer", 200, 401, true},
+		{"upstream failure", "Bearer test-access-token", 503, 502, true},
+		{"missing configuration", "Bearer test-access-token", 200, 500, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Header.Get("Authorization") != "Bearer test-access-token" {
+					t.Error("unexpected authorization")
+				}
+				w.WriteHeader(tc.upstream)
+				fmt.Fprint(w, `{"code":"A00000","data":{"list":[{"name":"测试同学","userId":"2350939","userTypeName":"本科生"}]}}`)
+			}))
+			defer server.Close()
+			for key, value := range map[string]string{"TONGJI_LOGIN_CLIENT_ID": "login", "TONGJI_LOGIN_CLIENT_SECRET": "secret", "TONGJI_OPEN_PLATFORM_REDIRECT_URI": "https://example.test", "TONGJI_OPEN_PLATFORM_STATE_SECRET": "state", "TONGJI_OPEN_PLATFORM_API_BASE_URL": server.URL} {
+				t.Setenv(key, value)
+			}
+			if !tc.configured {
+				t.Setenv("TONGJI_LOGIN_CLIENT_SECRET", "")
+			}
+			request := app.NewContext(0)
+			request.Request.Header.Set("Authorization", tc.authorization)
+			TongjiUserBasicInfo(context.Background(), request)
+			if request.Response.StatusCode() != tc.want {
+				t.Fatalf("status=%d want=%d", request.Response.StatusCode(), tc.want)
+			}
+			if tc.want == 200 && string(request.Response.Body()) != `{"name":"测试同学","userId":"2350939","userTypeName":"本科生"}` {
+				t.Fatalf("unexpected response: %s", request.Response.Body())
+			}
+			if (tc.want == 401 || tc.want == 500) && calls != 0 {
+				t.Fatal("unexpected upstream call")
 			}
 		})
-
-		Convey("上游查询失败返回 502", func() {
-			newUserBasicInfoClient = func() (userBasicInfoClient, error) {
-				return &fakeUserBasicInfoClient{err: errors.New("upstream unavailable")}, nil
-			}
-			requestContext := app.NewContext(0)
-			requestContext.Request.Header.Set("Authorization", "Bearer test-access-token")
-
-			TongjiUserBasicInfo(context.Background(), requestContext)
-
-			So(requestContext.Response.StatusCode(), ShouldEqual, http.StatusBadGateway)
-		})
-	})
-}
-
-type fakeUserBasicInfoClient struct {
-	accessToken string
-	info        *tongjiapi.UserBasicInfo
-	err         error
-}
-
-func (c *fakeUserBasicInfoClient) GetUserBasicInfo(_ context.Context, accessToken string) (*tongjiapi.UserBasicInfo, error) {
-	c.accessToken = accessToken
-	return c.info, c.err
+	}
 }

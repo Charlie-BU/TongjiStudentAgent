@@ -10,14 +10,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
 
-type userBasicInfoClient interface {
-	GetUserBasicInfo(ctx context.Context, accessToken string) (*tongjiapi.UserBasicInfo, error)
-}
-
-var newUserBasicInfoClient = func() (userBasicInfoClient, error) {
-	return tongjiapi.NewFromEnv()
-}
-
 // TongjiUserBasicInfo 使用当前 Bearer access token 查询用户基础信息。
 func TongjiUserBasicInfo(ctx context.Context, c *app.RequestContext) {
 	accessToken, err := platformauth.ExtractBearerToken(string(c.Request.Header.Get("Authorization")))
@@ -25,7 +17,7 @@ func TongjiUserBasicInfo(ctx context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusUnauthorized, utils.H{"error": "valid access token is required"})
 		return
 	}
-	client, err := newUserBasicInfoClient()
+	client, err := tongjiapi.NewFromEnv()
 	if err != nil {
 		c.JSON(consts.StatusInternalServerError, utils.H{"error": "Tongji Open Platform is not configured"})
 		return
@@ -41,5 +33,3 @@ func TongjiUserBasicInfo(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(consts.StatusOK, info)
 }
-
-var _ userBasicInfoClient = (*tongjiapi.Client)(nil)

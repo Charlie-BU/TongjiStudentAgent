@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -73,13 +74,38 @@ func TestNewRemoteClientInitializationFailure(t *testing.T) {
 }
 
 func TestRequestScopedMCPTool(t *testing.T) {
+	identityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			fmt.Fprint(w, `{"access_token":"service-token","expires_in":7200}`)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer service-token" {
+			fmt.Fprint(w, `{"code":"A00000","data":{"list":[{"userId":"00001","name":"李建中","userTypeName":"教职工"}]}}`)
+			return
+		}
+		id := "student-a"
+		if r.Header.Get("Authorization") == "Bearer another-access-token" {
+			id = "student-b"
+		}
+		fmt.Fprintf(w, `{"code":"A00000","data":{"list":[{"userId":%q}]}}`, id)
+	}))
+	defer identityServer.Close()
+	for key, value := range map[string]string{"TONGJI_LOGIN_CLIENT_ID": "login", "TONGJI_LOGIN_CLIENT_SECRET": "secret", "TONGJI_OPEN_PLATFORM_REDIRECT_URI": "https://example.test", "TONGJI_OPEN_PLATFORM_STATE_SECRET": "state", "TONGJI_OPEN_PLATFORM_API_BASE_URL": identityServer.URL} {
+		t.Setenv(key, value)
+	}
+	t.Setenv("TONGJI_MCP_CLIENT_ID", "service")
+	t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
+	t.Setenv("TONGJI_OPEN_PLATFORM_TOKEN_ENDPOINT", identityServer.URL+"/token")
+
 	Convey("请求级 MCP Tool 包装器", t, func() {
 		var receivedTokens []string
+		var receivedUsers []string
 		var receivedTokensMu sync.Mutex
 		mcpServer := server.NewMCPServer("test-mcp-server", "1.0.0")
 		mcpServer.AddTool(githubmcp.NewTool(testMCPToolName), func(_ context.Context, request githubmcp.CallToolRequest) (*githubmcp.CallToolResult, error) {
 			receivedTokensMu.Lock()
 			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
+			receivedUsers = append(receivedUsers, request.Header.Get(tongjiUserIDHeader))
 			receivedTokensMu.Unlock()
 			switch request.GetArguments()["scenario"] {
 			case "unauthorized":
@@ -158,8 +184,18 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			So(result, ShouldNotContainSubstring, "test-access-token")
 			So(secondResult, ShouldNotContainSubstring, "another-access-token")
 			receivedTokensMu.Lock()
-			So(receivedTokens, ShouldResemble, []string{"test-access-token", "another-access-token"})
+			So(receivedTokens, ShouldResemble, []string{"service-token", "service-token"})
+			So(receivedUsers, ShouldResemble, []string{"student-a", "student-b"})
 			receivedTokensMu.Unlock()
+		})
+
+		Convey("服务凭据获取失败不得下传用户 token 或发起工具请求", func() {
+			t.Setenv("TONGJI_MCP_CLIENT_SECRET", "")
+			defer t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
+			result, err := invokable.InvokableRun(platformauth.WithAccessToken(context.Background(), "test-access-token"), `{}`)
+			So(err, ShouldBeNil)
+			So(result, ShouldContainSubstring, toolStatusExecutionUnavailable)
+			So(receivedTokens, ShouldBeEmpty)
 		})
 
 		Convey("应将 MCP 业务错误收敛为稳定结果", func() {

@@ -175,8 +175,8 @@ func testTongjiConfig(authorizationEndpoint, tokenEndpoint string) tongjiapi.Con
 
 func setTongjiOAuthEnv(t *testing.T, authorizationEndpoint, tokenEndpoint string) {
 	t.Helper()
-	t.Setenv("TONGJI_OPEN_PLATFORM_CLIENT_ID", "test-client-id")
-	t.Setenv("TONGJI_OPEN_PLATFORM_CLIENT_SECRET", "test-client-secret")
+	t.Setenv("TONGJI_LOGIN_CLIENT_ID", "test-client-id")
+	t.Setenv("TONGJI_LOGIN_CLIENT_SECRET", "test-client-secret")
 	t.Setenv("TONGJI_OPEN_PLATFORM_REDIRECT_URI", "https://app.tongji.edu.cn/wallbreakerAuth/callback.html")
 	t.Setenv("TONGJI_OPEN_PLATFORM_STATE_SECRET", testTongjiStateSecret)
 	t.Setenv("TONGJI_OPEN_PLATFORM_AUTHORIZATION_ENDPOINT", authorizationEndpoint)
@@ -187,8 +187,8 @@ func setTongjiOAuthEnv(t *testing.T, authorizationEndpoint, tokenEndpoint string
 func clearTongjiOAuthEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"TONGJI_OPEN_PLATFORM_CLIENT_ID",
-		"TONGJI_OPEN_PLATFORM_CLIENT_SECRET",
+		"TONGJI_LOGIN_CLIENT_ID",
+		"TONGJI_LOGIN_CLIENT_SECRET",
 		"TONGJI_OPEN_PLATFORM_REDIRECT_URI",
 		"TONGJI_OPEN_PLATFORM_STATE_SECRET",
 		"TONGJI_OPEN_PLATFORM_AUTHORIZATION_ENDPOINT",

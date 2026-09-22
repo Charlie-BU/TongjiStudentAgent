@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	einoext "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/components/tool"
@@ -13,6 +14,7 @@ import (
 )
 
 const tongjiAccessTokenHeader = "X-Tongji-Access-Token"
+const tongjiUserIDHeader = "X-Tongji-User-Id"
 
 // requestScopedTool 为可复用的 Eino Tool 添加请求级凭据注入和传输失败归一。
 // 不保存用户凭据，不检查 Skill，也不编排瑞幸登录或业务调用顺序。
@@ -28,13 +30,19 @@ func (t *requestScopedTool) Info(ctx context.Context) (*schema.ToolInfo, error) 
 
 // InvokableRun 使用当前请求上下文中的校园访问凭据调用底层 MCP Tool。
 func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON string, options ...tool.Option) (string, error) {
-	// 每次从当前请求读取同济凭据，不能缓存到 Tool 实例，否则并发用户可能串号。
-	// 缺少凭据也允许请求到达 MCP Server，由具体工具决定是否需要身份。
-	accessToken, _ := platformauth.AccessTokenFromContext(ctx)
-
-	// 注入的是同济 access_token，不是瑞幸 Bearer。瑞幸 Token 由 MCP Server 按用户查询。
-	// 使用本次调用的 options，避免修改共享 MCP Client 的默认 Header。
-	headers := map[string]string{tongjiAccessTokenHeader: accessToken}
+	headers := map[string]string{}
+	// 只有在用户已登录（context 中存在 userId）时才注入
+	if userID, loggedIn := platformauth.UserIDFromContext(ctx); loggedIn {
+		accessToken, err := tongjiapi.MCPAccessToken(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return namedToolFailureJSON(t.name, toolStatusExecutionUnavailable), nil
+		}
+		headers[tongjiAccessTokenHeader] = accessToken
+		headers[tongjiUserIDHeader] = userID
+	}
 	options = append(options, einoext.WithCustomHeaders(headers))
 	result, err := t.delegate.InvokableRun(ctx, argumentsInJSON, options...)
 	// err=nil 只表示调用层正常返回；业务失败也可能已被结果处理器转成稳定 JSON。

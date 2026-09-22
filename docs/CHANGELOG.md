@@ -1,3 +1,53 @@
+## CHANGELOG - 2026-09-22 15:33 - 分离登录与 MCP 服务凭据并修复缓存并发等待
+
+### 撰写时间
+
+- 2026-09-22 15:33（Asia/Shanghai）
+
+### Base Commit
+
+- `89aa3b9ba162270792e8e17198deb2c0c1a7f940`（沿用历史记录格式，取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：全部当前未提交改动，相对 `HEAD`（`d47633e57141cf3dbee32a4abc11e8660bd163b7`）比较，包含暂存区及本轮审阅修复。MCP Server 的配套实现不作为本仓新增功能。
+
+### 背景与改动目标
+
+将用户登录身份与校园数据访问凭据分离：登录只申请 `openid`，Agent 使用服务凭据访问校园数据，并显式传递当前用户 ID。修复服务 Token 缓存持锁执行 HTTP 请求导致的跨用户阻塞和取消不及时问题，同时移除 Handler 与存储测试依赖的可变全局函数替身。
+
+### 改动概览
+
+- 登录配置改用 `TONGJI_LOGIN_CLIENT_ID` / `TONGJI_LOGIN_CLIENT_SECRET`；新增 `TONGJI_MCP_CLIENT_ID` / `TONGJI_MCP_CLIENT_SECRET`，通过 `client_credentials` 获取服务 Token。
+- 服务 Token 在进程内缓存，缓存有效期最多 7200 秒，每次使用前通过 basic-info 校验指定服务身份。到期或校验失败后刷新，刷新失败不回退到用户 Token。
+- 身份校验移到缓存锁外；刷新保持单次执行，等待者可通过 context 取消。缓存版本校验避免旧校验结果覆盖新缓存或再次触发刷新，取消身份校验不会清空共享 Token。
+- MCP 调用只在上下文有可信 userId 时注入服务 Token 与 `X-Tongji-User-Id`；匿名请求不发送这两个身份头。学生信息查询使用服务 Token，并通过请求体 `userId` 限定用户。
+- 重新绑定认证上下文时清空继承的 Token 和用户 ID，避免缺失或无效凭据沿用旧身份。
+- Chat Handler 改为通过 `ChatService` 接口注入服务，路由绑定启动时初始化的实例；模型档位校验改为 Service 方法。用户信息 Handler 与 PostgreSQL/Redis 存储移除可变全局函数别名，测试相应调整。
+- 更新配置示例、README 与身份、MCP、学生信息及 Handler 测试；增加缓存并发、取消和过时校验结果回归测试。
+
+### 关键链路解析（含上下游）
+
+- 用户登录与会话：授权码模式使用登录客户端；请求中的用户 Token 经 basic-info 解析为 userId，仅用于本次请求身份绑定。
+- 校园数据调用：Agent 获取并校验服务 Token，将其与可信 userId 传给配套 MCP Server；学生信息接口直接发送服务 Token 和目标 userId。
+- 缓存并发：锁只保护缓存状态与刷新登记，HTTP 请求在锁外执行。刷新结束唤醒等待者，取消的等待者可独立退出；其他请求刷新过缓存后，旧校验结果重新读取当前状态。
+
+### 改动结果与业务影响
+
+- 登录不再申请原有各校园数据 scope，数据访问改走服务身份；用户数据隔离依赖可信 userId 与配套 MCP Server 的校验和查询限定。
+- 慢身份校验不再串行阻塞所有缓存命中的调用，等待刷新时的请求取消可及时返回。
+- 旧的 `TONGJI_OPEN_PLATFORM_CLIENT_ID` / `TONGJI_OPEN_PLATFORM_CLIENT_SECRET` 不再读取，部署需迁移配置并配套更新 MCP Server。服务凭据缺失或不可用时，已登录用户的 MCP 调用无法执行。
+
+### 风险与待办
+
+- 已验证：`go test -count=1 -timeout=60s` 覆盖 `./biz/handler`、`./internal/integration/tongjiapi`、`./internal/integration/mcp`、`./internal/platform/auth`、`./internal/application/chat` 和 `./internal/agentic/session/store/...`，共 7 个包全部通过。
+- 最终缓存测试通过 `go test -race -count=1 -timeout=60s ./internal/integration/tongjiapi`，覆盖并发校验不互相阻塞、刷新等待超时、刷新者取消后的状态释放、取消校验保留缓存、过时校验不重复刷新。暂存区与工作区差异检查通过；未执行全仓测试。
+- 未调用真实校园接口，`openid` 登录及服务身份权限仍需受控联调验证。服务 Token 缓存仅在单进程内协调，不提供跨进程刷新互斥。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(auth): separate login and MCP credentials with cancellable token refresh`
+
 ## CHANGELOG - 2026-09-20 00:41 - 开放瑞幸工具并增加点单 Skill 与错误恢复提示
 
 ### 撰写时间

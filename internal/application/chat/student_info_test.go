@@ -17,6 +17,7 @@ import (
 )
 
 func TestLoadFormattedStudentInfo(t *testing.T) {
+	setupStudentIdentity(t)
 	Convey("通过复用的同济客户端加载学生信息", t, func() {
 		calls := 0
 		var tokens []string
@@ -43,7 +44,7 @@ func TestLoadFormattedStudentInfo(t *testing.T) {
 			So(info, ShouldEqual, "当前年级：2023\n学院：测试学院\n在校状态：校内在读\n姓名：测试同学\n培养层次：本科")
 			So(service.tongjiClient, ShouldEqual, client)
 		}
-		So(tokens, ShouldResemble, []string{"Bearer test-token-a", "Bearer test-token-b"})
+		So(tokens, ShouldResemble, []string{"Bearer service-token", "Bearer service-token"})
 		status = http.StatusServiceUnavailable
 		_, err = service.loadFormattedStudentInfo(platformauth.WithAccessToken(context.Background(), "test-token"))
 		So(err, ShouldNotBeNil)
@@ -73,6 +74,7 @@ func TestStreamSessionOptionalStudentInfo(t *testing.T) {
 		{"student", "student", `{"code":"A00000","data":[{"name":"测试同学"}]}`, 200, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			setupStudentIdentity(t)
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -80,14 +82,14 @@ func TestStreamSessionOptionalStudentInfo(t *testing.T) {
 				fmt.Fprint(w, tc.body)
 			}))
 			defer server.Close()
-			client, err := tongjiapi.New(tongjiapi.Config{ClientID: "test", ClientSecret: "test", RedirectURI: "https://example.test/callback", StateSecret: "test", APIBaseURL: server.URL})
+			client, err := tongjiapi.New(tongjiapi.Config{ClientID: "test", ClientSecret: "test", RedirectURI: "https://example.test/callback", StateSecret: "test", AuthorizationEndpoint: server.URL, TokenEndpoint: server.URL, APIBaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
 			operations := []string{}
 			store := &recordingEphemeralStore{operations: &operations}
 			runner := &studentContextRuntime{recordingSessionRuntime: recordingSessionRuntime{operations: &operations, response: "回答"}}
-			service := &Service{tongjiClient: client, runtimes: map[string]modelRuntime{"lite": {runtime: runner}}, ephemeralSessionStore: store, taskPlanRepository: &recordingTaskPlanRepository{}, turnLocker: noOpTurnLocker{}}
+			service := &Service{tongjiClient: client, runtimes: map[string]modelRuntime{"lite": {runtime: runner}}, ephemeralSessionStore: store, durableSessionStore: &studentDurableStore{store}, taskPlanRepository: &recordingTaskPlanRepository{}, turnLocker: noOpTurnLocker{}}
 			events := []agentevent.Event{}
 			ctx := platformauth.WithAccessToken(context.Background(), tc.token)
 			response, err := service.StreamSession(ctx, "anon-test", "问题", func(e agentevent.Event) { events = append(events, e) }, "lite")
@@ -130,4 +132,42 @@ type studentContextRuntime struct {
 func (r *studentContextRuntime) StreamWithHistoryAndMessages(ctx context.Context, query, info string, history []agenticsession.Message, emit func(agentevent.Event), record func(context.Context, *schema.Message) error) (string, error) {
 	r.studentInfo = info
 	return r.recordingSessionRuntime.StreamWithHistoryAndMessages(ctx, query, info, history, emit, record)
+}
+
+// Mock only the per-run identity boundary; profile failures remain independent.
+func setupStudentIdentity(t *testing.T) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			fmt.Fprint(w, `{"access_token":"service-token","expires_in":7200}`)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer service-token" {
+			fmt.Fprint(w, `{"code":"A00000","data":{"list":[{"userId":"00001","name":"李建中","userTypeName":"教职工"}]}}`)
+			return
+		}
+		fmt.Fprint(w, `{"code":"A00000","data":{"list":[{"userId":"student-1"}]}}`)
+	}))
+	t.Cleanup(server.Close)
+	for key, value := range map[string]string{"TONGJI_LOGIN_CLIENT_ID": "login", "TONGJI_LOGIN_CLIENT_SECRET": "secret", "TONGJI_OPEN_PLATFORM_REDIRECT_URI": "https://example.test", "TONGJI_OPEN_PLATFORM_STATE_SECRET": "state", "TONGJI_OPEN_PLATFORM_API_BASE_URL": server.URL} {
+		t.Setenv(key, value)
+	}
+	t.Setenv("TONGJI_MCP_CLIENT_ID", "service")
+	t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
+	t.Setenv("TONGJI_OPEN_PLATFORM_TOKEN_ENDPOINT", server.URL+"/token")
+}
+
+type studentDurableStore struct{ *recordingEphemeralStore }
+
+func (s *studentDurableStore) Create(ctx context.Context, owner string) (agenticsession.Session, error) {
+	return s.recordingEphemeralStore.Create(ctx)
+}
+func (s *studentDurableStore) Get(ctx context.Context, id, owner string) (agenticsession.Session, error) {
+	return s.recordingEphemeralStore.Get(ctx, id)
+}
+func (s *studentDurableStore) Append(ctx context.Context, id, owner string, m agenticsession.NewMessage) (agenticsession.AppendResult, error) {
+	return s.recordingEphemeralStore.Append(ctx, id, m)
+}
+func (s *studentDurableStore) ListMessages(ctx context.Context, id, owner string, limit int) ([]agenticsession.Message, error) {
+	return s.recordingEphemeralStore.ListMessages(ctx, id, limit)
 }

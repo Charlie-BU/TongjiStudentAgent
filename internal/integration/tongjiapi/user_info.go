@@ -86,19 +86,28 @@ func (c *Client) GetUserBasicInfo(ctx context.Context, accessToken string) (*Use
 	return &data.List[0], nil
 }
 
-// GetStudentInfo 调用边界豁免的当前授权学生资料接口。
-func (c *Client) GetStudentInfo(ctx context.Context, accessToken string) (*StudentInfo, error) {
+// GetStudentInfo 使用服务凭据查询指定用户的学生资料。
+func (c *Client) GetStudentInfo(ctx context.Context, accessToken string, userID string) (*StudentInfo, error) {
 	if strings.TrimSpace(accessToken) == "" {
 		return nil, fmt.Errorf("access token is required")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.APIBaseURL+studentInfoPath, bytes.NewBufferString("{}"))
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+	payload := map[string]string{"userId": userID}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.APIBaseURL+studentInfoPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create user info request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", "Bearer "+accessToken) // 这里的 accessToken 是 MCP Access Token
 
 	response, err := c.doAPIRequest(req)
 	if err != nil {

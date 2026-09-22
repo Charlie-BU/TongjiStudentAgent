@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	agenticsession "github.com/Charlie-BU/TongjiStudent/internal/agentic/session"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,9 +22,9 @@ func TestPostgresStoreValidation(t *testing.T) {
 			So(errors.Is(validateOwnerAndSessionID("", "user-001"), ErrInvalidSessionID), ShouldBeTrue)
 			So(errors.Is(validateOwnerAndSessionID("ses-001", ""), ErrInvalidOwner), ShouldBeTrue)
 
-			_, err := validateMessage(NewMessage{Role: MessageRoleUser, Content: " "})
+			_, err := agenticsession.ValidateMessage(NewMessage{Role: MessageRoleUser, Content: " "})
 			So(errors.Is(err, ErrInvalidMessage), ShouldBeTrue)
-			message, err := validateMessage(NewMessage{Role: MessageRoleAssistant, Content: " 你好 "})
+			message, err := agenticsession.ValidateMessage(NewMessage{Role: MessageRoleAssistant, Content: " 你好 "})
 			So(err, ShouldBeNil)
 			So(message.Content, ShouldEqual, "你好")
 		})
@@ -95,17 +96,15 @@ func TestPostgresStoreNamedSessionPersistence(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer pool.Close()
 		store := &PostgresStore{pool: pool}
-		originalNewID := newID
-		newID = func(string) string { return "ses-001" }
-		defer func() { newID = originalNewID }()
 
 		Convey("创建时保存名称，并按归属查询和更新", func() {
 			pool.ExpectExec(regexp.QuoteMeta(`INSERT INTO agent_sessions (id, owner_user_id, name, created_at, last_active_at) VALUES ($1, $2, $3, $4, $5)`)).
-				WithArgs("ses-001", "user-001", "成绩查询", pgxmock.AnyArg(), pgxmock.AnyArg()).
+				WithArgs(pgxmock.AnyArg(), "user-001", "成绩查询", pgxmock.AnyArg(), pgxmock.AnyArg()).
 				WillReturnResult(pgxmock.NewResult("INSERT", 1))
 			created, createErr := store.CreateWithName(context.Background(), " user-001 ", " 成绩查询 ")
 			So(createErr, ShouldBeNil)
 			So(created.Name, ShouldEqual, "成绩查询")
+			So(created.ID, ShouldStartWith, "ses_")
 
 			createdAt := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, owner_user_id, name, created_at, last_active_at FROM agent_sessions WHERE owner_user_id = $1 ORDER BY last_active_at DESC, created_at DESC`)).

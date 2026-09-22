@@ -12,11 +12,6 @@ import (
 type accessTokenContextKey struct{}
 type userIDContextKey struct{}
 
-// userIDResolver 通过当前请求的访问凭据解析可信用户 ID。
-type userIDResolver func(ctx context.Context, accessToken string) (string, error)
-
-var resolveUserID userIDResolver = resolveUserIDFromTongji
-
 // ExtractBearerToken 解析 HTTP Authorization 头中的 Bearer 凭据。
 func ExtractBearerToken(authorization string) (string, error) {
 	parts := strings.Fields(authorization)
@@ -31,12 +26,15 @@ func ExtractBearerToken(authorization string) (string, error) {
 
 // WithAccessToken 将已规范化的校园访问凭据写入请求上下文，并尽力补充可信用户 ID。
 func WithAccessToken(ctx context.Context, accessToken string) context.Context {
+	// 每次请求清除继承身份；本轮解析失败不能沿用上一轮 userId。
+	ctx = context.WithValue(ctx, userIDContextKey{}, "")
+	ctx = context.WithValue(ctx, accessTokenContextKey{}, "")
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {
 		return ctx
 	}
 	ctx = context.WithValue(ctx, accessTokenContextKey{}, accessToken)
-	userID, err := resolveUserID(ctx, accessToken)
+	userID, err := resolveUserIDFromTongji(ctx, accessToken)
 	if err != nil || strings.TrimSpace(userID) == "" {
 		return ctx
 	}

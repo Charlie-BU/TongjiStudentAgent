@@ -38,16 +38,13 @@ const (
 )
 
 var (
-	ErrInvalidOwner       = agenticsession.ErrInvalidOwner
-	ErrInvalidSessionID   = agenticsession.ErrInvalidSessionID
-	ErrInvalidMessage     = agenticsession.ErrInvalidMessage
-	ErrInvalidTaskPlan    = taskplan.ErrInvalidTaskPlan
-	ErrTaskPlanConflict   = taskplan.ErrTaskPlanConflict
-	ErrTaskPlanNotFound   = taskplan.ErrTaskPlanNotFound
-	ErrNotFound           = agenticsession.ErrNotFound
-	newID                 = agenticsession.NewID
-	validateMessage       = agenticsession.ValidateMessage
-	validateTaskPlanTasks = taskplan.ValidateTaskPlanTasks
+	ErrInvalidOwner     = agenticsession.ErrInvalidOwner
+	ErrInvalidSessionID = agenticsession.ErrInvalidSessionID
+	ErrInvalidMessage   = agenticsession.ErrInvalidMessage
+	ErrInvalidTaskPlan  = taskplan.ErrInvalidTaskPlan
+	ErrTaskPlanConflict = taskplan.ErrTaskPlanConflict
+	ErrTaskPlanNotFound = taskplan.ErrTaskPlanNotFound
+	ErrNotFound         = agenticsession.ErrNotFound
 )
 
 const postgresDSNEnv = "POSTGRES_DSN"
@@ -108,7 +105,7 @@ func (s *PostgresStore) CreateWithName(ctx context.Context, ownerUserID, name st
 	}
 	name = strings.TrimSpace(name)
 	now := time.Now().UTC()
-	result := Session{ID: newID("ses"), OwnerUserID: ownerUserID, Name: name, Persistence: PersistenceDurable, CreatedAt: now, LastActiveAt: now}
+	result := Session{ID: agenticsession.NewID("ses"), OwnerUserID: ownerUserID, Name: name, Persistence: PersistenceDurable, CreatedAt: now, LastActiveAt: now}
 	_, err := s.pool.Exec(ctx, `INSERT INTO agent_sessions (id, owner_user_id, name, created_at, last_active_at) VALUES ($1, $2, $3, $4, $5)`, result.ID, result.OwnerUserID, result.Name, result.CreatedAt, result.LastActiveAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("create durable session: %w", err)
@@ -194,7 +191,7 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID strin
 	if err := validateOwnerAndSessionID(sessionID, ownerUserID); err != nil {
 		return AppendResult{}, err
 	}
-	input, err := validateMessage(input)
+	input, err := agenticsession.ValidateMessage(input)
 	if err != nil {
 		return AppendResult{}, err
 	}
@@ -217,7 +214,7 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID, ownerUserID strin
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("marshal session tool calls: %w", err)
 	}
-	message := Message{ID: newID("msg"), SessionID: sessionID, RunID: input.RunID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, ModelTier: input.ModelTier, ModelID: input.ModelID, ProtocolData: input.ProtocolData, ResponseID: input.ResponseID, ResponseCacheExpiresAt: input.ResponseCacheExpiresAt, CreatedAt: now}
+	message := Message{ID: agenticsession.NewID("msg"), SessionID: sessionID, RunID: input.RunID, Sequence: sequence, Role: input.Role, Content: input.Content, ToolCalls: input.ToolCalls, ToolCallID: input.ToolCallID, ToolName: input.ToolName, ReasoningContent: input.ReasoningContent, ModelTier: input.ModelTier, ModelID: input.ModelID, ProtocolData: input.ProtocolData, ResponseID: input.ResponseID, ResponseCacheExpiresAt: input.ResponseCacheExpiresAt, CreatedAt: now}
 	_, err = tx.Exec(ctx, `INSERT INTO agent_session_messages (id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, model_tier, model_id, protocol_data, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, message.ID, message.SessionID, message.RunID, message.Sequence, message.Role, message.Content, toolCalls, message.ToolCallID, message.ToolName, message.ReasoningContent, message.ResponseID, message.ResponseCacheExpiresAt, message.ModelTier, message.ModelID, message.ProtocolData, message.CreatedAt)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("insert durable message: %w", err)
@@ -346,7 +343,7 @@ func (s *PostgresStore) SaveTaskPlan(ctx context.Context, sessionID, ownerUserID
 	if expectedRevision < 0 {
 		return TaskPlan{}, ErrInvalidTaskPlan
 	}
-	validatedTasks, err := validateTaskPlanTasks(tasks)
+	validatedTasks, err := taskplan.ValidateTaskPlanTasks(tasks)
 	if err != nil {
 		return TaskPlan{}, err
 	}
