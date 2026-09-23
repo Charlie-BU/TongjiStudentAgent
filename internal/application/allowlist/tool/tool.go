@@ -15,42 +15,65 @@ const (
 	WebSearchTool       = "system.web_search"
 	URLFetchTool        = "system.url_fetch"
 	// 远程 MCP Tool
-	TongjiAnnualBillTool           = "tongji.student.annual_bill"
-	TongjiCardSpendingFlowTool     = "tongji.student.card_spending_flow"
-	TongjiStudentTimetableTool     = "tongji.student.timetable"
-	TongjiStudentDetailedInfoTool  = "tongji.student.detailed_info"
-	TongjiStudentScoreTool         = "tongji.student.score"
-	TongjiTermCalendarTool         = "tongji.student.term-calendar"
-	TongjiCurrentTermCalendarTool  = "tongji.student.current-term-calendar"
-	TongjiCETScoreTool             = "tongji.student.cet-score"
-	TongjiBookLendInfoTool         = "tongji.student.book-lend-info"
-	TongjiStatisticsInfoTool       = "tongji.student.statistics-info"
-	TongjiStipendInfoTool          = "tongji.student.stipend-info"
-	TongjiAccommodationInfoTool    = "tongji.student.accommodation-info"
-	TongjiCompetitionPrizeTool     = "tongji.student.competition_prize"
-	TongjiHonoraryTitleTool        = "tongji.student.honorary_title"
-	TongjiScholarshipInfoTool      = "tongji.student.scholarship_info"
-	TongjiSchoolAccessTool         = "tongji.student.school_access"
-	TongjiLibraryAccessTool        = "tongji.student.library_access"
-	TongjiUserBasicInfoTool        = "tongji.user.basic_info"
-	TongjiLegacyTeacherReviewsTool = "tongji.course.legacy-teacher-reviews"
-	TongjiCourseDetailTool         = "tongji.course.course-detail"
-	TongjiCourseRelatedTool        = "tongji.course.course-related"
-	TongjiCourseReviewsTool        = "tongji.course.reviews"
-	TongjiCourseSummaryTool        = "tongji.course.summary"
-	TongjiCourseCatalogTool        = "tongji.course.search"
-	TongjiCalendarListTool         = "tongji.course.calendar_list"
-	LuckinAuthCheckTool            = "luckin.auth.check"
-	LuckinAuthSendSMSCodeTool      = "luckin.auth.send_sms_code"
-	LuckinAuthLoginTool            = "luckin.auth.login"
-	LuckinShopSearchTool           = "luckin.shop.search"
-	LuckinProductSearchTool        = "luckin.product.search"
-	LuckinProductDetailTool        = "luckin.product.detail"
-	LuckinProductSwitchTool        = "luckin.product.switch"
-	LuckinOrderPreviewTool         = "luckin.order.preview"
-	LuckinOrderCreateTool          = "luckin.order.create"
-	LuckinOrderGetTool             = "luckin.order.get"
-	LuckinOrderCancelTool          = "luckin.order.cancel"
+	TongjiUserAnnualBillTool              = "tongji.user.annual_bill"
+	TongjiUserCardSpendingFlowTool        = "tongji.user.card_spending_flow"
+	TongjiStudentTimetableTool            = "tongji.student.timetable"
+	TongjiStudentDetailedInfoTool         = "tongji.student.detailed_info"
+	TongjiBachelorScoreTool               = "tongji.bachelor.score"
+	TongjiUserTermCalendarTool            = "tongji.user.term-calendar"
+	TongjiUserCurrentTermCalendarTool     = "tongji.user.current-term-calendar"
+	TongjiCETScoreTool                    = "tongji.student.cet-score"
+	TongjiUserBookLendInfoTool            = "tongji.user.book-lend-info"
+	TongjiUserStatisticsInfoTool          = "tongji.user.statistics-info"
+	TongjiStipendInfoTool                 = "tongji.student.stipend-info"
+	TongjiAccommodationInfoTool           = "tongji.student.accommodation-info"
+	TongjiBachelorCompetitionPrizeTool    = "tongji.bachelor.competition_prize"
+	TongjiHonoraryTitleTool               = "tongji.student.honorary_title"
+	TongjiScholarshipInfoTool             = "tongji.student.scholarship_info"
+	TongjiUserSchoolAccessTool            = "tongji.user.school_access"
+	TongjiUserLibraryAccessTool           = "tongji.user.library_access"
+	TongjiPostgraduateGPATool             = "tongji.postgraduate.gpa"
+	TongjiPostgraduateRequiredCreditTool  = "tongji.postgraduate.required_credit"
+	TongjiUserResearchProjectsTool        = "tongji.user.research_projects"
+	TongjiUserResearchWorksTool           = "tongji.user.research_works"
+	TongjiUserContactInfoTool             = "tongji.user.contact_info"
+	TongjiUserUpdateContactInfoTool       = "tongji.user.update_contact_info"
+	TongjiStudentHardshipAllowanceTool    = "tongji.student.hardship_allowance"
+	TongjiStudentLoanTool                 = "tongji.student.loan"
+	TongjiStudentWorkStudyTool            = "tongji.student.work_study"
+	TongjiTeacherTimetableTool            = "tongji.teacher.timetable"
+	TongjiUserCardBalanceTool             = "tongji.user.card_balance"
+	TongjiPostgraduatePlanProgressTool    = "tongji.postgraduate.plan_progress"
+	TongjiPostgraduatePlanTool            = "tongji.postgraduate.plan"
+	TongjiPostgraduateMajorsTool          = "tongji.postgraduate.majors"
+	TongjiPostgraduateScoreTool           = "tongji.postgraduate.score"
+	TongjiUserResearchPatentsTool         = "tongji.user.research_patents"
+	TongjiStudentFinalExamsTool           = "tongji.student.final_exams"
+	TongjiStudentDeferredExamsTool        = "tongji.student.deferred_exams"
+	TongjiBachelorGradeSummaryTool        = "tongji.bachelor.grade_summary"
+	TongjiUserEmailTool                   = "tongji.user.email"
+	TongjiTeacherTitleTool                = "tongji.teacher.title"
+	TongjiStudentCounselorTool            = "tongji.student.counselor"
+	TongjiPostgraduateCompletedCreditTool = "tongji.postgraduate.completed_credit"
+	TongjiPostgraduateDegreeCreditTool    = "tongji.postgraduate.degree_credit"
+	TongjiPostgraduateDegreeAverageTool   = "tongji.postgraduate.degree_average"
+	TongjiLegacyTeacherReviewsTool        = "tongji.course.legacy-teacher-reviews"
+	TongjiCourseDetailTool                = "tongji.course.course-detail"
+	TongjiCourseRelatedTool               = "tongji.course.course-related"
+	TongjiCourseReviewsTool               = "tongji.course.reviews"
+	TongjiCourseSummaryTool               = "tongji.course.summary"
+	TongjiCourseCatalogTool               = "tongji.course.search"
+	LuckinAuthCheckTool                   = "luckin.auth.check"
+	LuckinAuthSendSMSCodeTool             = "luckin.auth.send_sms_code"
+	LuckinAuthLoginTool                   = "luckin.auth.login"
+	LuckinShopSearchTool                  = "luckin.shop.search"
+	LuckinProductSearchTool               = "luckin.product.search"
+	LuckinProductDetailTool               = "luckin.product.detail"
+	LuckinProductSwitchTool               = "luckin.product.switch"
+	LuckinOrderPreviewTool                = "luckin.order.preview"
+	LuckinOrderCreateTool                 = "luckin.order.create"
+	LuckinOrderGetTool                    = "luckin.order.get"
+	LuckinOrderCancelTool                 = "luckin.order.cancel"
 )
 
 var (
@@ -63,31 +86,54 @@ var (
 	}
 
 	allowedMCPTools = []string{
-		TongjiAnnualBillTool,
-		TongjiCardSpendingFlowTool,
+		TongjiUserAnnualBillTool,
+		TongjiUserCardSpendingFlowTool,
 		TongjiStudentTimetableTool,
 		TongjiStudentDetailedInfoTool,
-		TongjiStudentScoreTool,
-		TongjiTermCalendarTool,
-		TongjiCurrentTermCalendarTool,
+		TongjiBachelorScoreTool,
+		TongjiUserTermCalendarTool,
+		TongjiUserCurrentTermCalendarTool,
 		TongjiCETScoreTool,
-		TongjiBookLendInfoTool,
-		TongjiStatisticsInfoTool,
+		TongjiUserBookLendInfoTool,
+		TongjiUserStatisticsInfoTool,
 		TongjiStipendInfoTool,
 		TongjiAccommodationInfoTool,
-		TongjiCompetitionPrizeTool,
+		TongjiBachelorCompetitionPrizeTool,
 		TongjiHonoraryTitleTool,
 		TongjiScholarshipInfoTool,
-		TongjiSchoolAccessTool,
-		TongjiLibraryAccessTool,
-		TongjiUserBasicInfoTool,
+		TongjiUserSchoolAccessTool,
+		TongjiUserLibraryAccessTool,
+		TongjiPostgraduateGPATool,
+		TongjiPostgraduateRequiredCreditTool,
+		TongjiUserResearchProjectsTool,
+		TongjiUserResearchWorksTool,
+		TongjiUserContactInfoTool,
+		TongjiUserUpdateContactInfoTool,
+		TongjiStudentHardshipAllowanceTool,
+		TongjiStudentLoanTool,
+		TongjiStudentWorkStudyTool,
+		TongjiTeacherTimetableTool,
+		TongjiUserCardBalanceTool,
+		TongjiPostgraduatePlanProgressTool,
+		TongjiPostgraduatePlanTool,
+		TongjiPostgraduateMajorsTool,
+		TongjiPostgraduateScoreTool,
+		TongjiUserResearchPatentsTool,
+		TongjiStudentFinalExamsTool,
+		TongjiStudentDeferredExamsTool,
+		TongjiBachelorGradeSummaryTool,
+		TongjiUserEmailTool,
+		TongjiTeacherTitleTool,
+		TongjiStudentCounselorTool,
+		TongjiPostgraduateCompletedCreditTool,
+		TongjiPostgraduateDegreeCreditTool,
+		TongjiPostgraduateDegreeAverageTool,
 		TongjiLegacyTeacherReviewsTool,
 		TongjiCourseDetailTool,
 		TongjiCourseRelatedTool,
 		TongjiCourseReviewsTool,
 		TongjiCourseSummaryTool,
 		TongjiCourseCatalogTool,
-		TongjiCalendarListTool,
 
 		LuckinAuthCheckTool,
 		LuckinAuthSendSMSCodeTool,

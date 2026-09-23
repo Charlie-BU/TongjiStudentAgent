@@ -34,7 +34,6 @@ func TestCourseAndTeacherGuideSkill(t *testing.T) {
 				toolallowlist.TongjiCourseRelatedTool,
 				toolallowlist.TongjiCourseReviewsTool,
 				toolallowlist.TongjiCourseSummaryTool,
-				toolallowlist.TongjiCalendarListTool,
 				toolallowlist.TongjiLegacyTeacherReviewsTool,
 			} {
 				So(toolallowlist.IsAllowedTool(name), ShouldBeTrue)

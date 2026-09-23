@@ -200,7 +200,7 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			}
 			So(EnsurePostgresSchema(context.Background(), store), ShouldBeNil)
 
-			toolCalls := []schema.ToolCall{{ID: "call-001", Function: schema.FunctionCall{Name: "tongji.student.score", Arguments: `{"term":"2025-1"}`}}}
+			toolCalls := []schema.ToolCall{{ID: "call-001", Function: schema.FunctionCall{Name: "tongji.bachelor.score", Arguments: `{"term":"2025-1"}`}}}
 			pool.ExpectBeginTx(pgx.TxOptions{})
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id FROM agent_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`)).
 				WithArgs("ses-001", "user-001").
@@ -231,7 +231,7 @@ func TestPostgresStoreSchemaAndToolMessagePersistence(t *testing.T) {
 			pool.ExpectQuery(regexp.QuoteMeta(`SELECT id, session_id, run_id, sequence, role, content, tool_calls, tool_call_id, tool_name, reasoning_content, response_id, response_cache_expires_at, model_tier, model_id, protocol_data, created_at FROM agent_session_messages WHERE session_id = $1 ORDER BY sequence DESC LIMIT $2`)).
 				WithArgs("ses-001", 20).
 				WillReturnRows(pgxmock.NewRows([]string{"id", "session_id", "run_id", "sequence", "role", "content", "tool_calls", "tool_call_id", "tool_name", "reasoning_content", "response_id", "response_cache_expires_at", "model_tier", "model_id", "protocol_data", "created_at"}).
-					AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleTool, `{"scores":[{"course":"高等数学"}]}`, []byte(`[]`), "call-001", "tongji.student.score", "", "", int64(0), "lite", "model-lite", "", createdAt).
+					AddRow("msg-002", "ses-001", "run-001", int64(2), MessageRoleTool, `{"scores":[{"course":"高等数学"}]}`, []byte(`[]`), "call-001", "tongji.bachelor.score", "", "", int64(0), "lite", "model-lite", "", createdAt).
 					AddRow("msg-001", "ses-001", "run-001", int64(1), MessageRoleAssistant, "", toolCallsJSON, "", "", "需要查询成绩", "resp-001", int64(1_785_000_000), "lite", "model-lite", "opaque-protocol", createdAt))
 
 			messages, listErr := store.ListMessages(context.Background(), "ses-001", "user-001", 20)

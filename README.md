@@ -10,7 +10,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - 健康检查接口：`GET /v1/ping`。
 - Agent 调用接口：创建会话后，通过 `POST /v1/sessions/:session_id/messages` 以 SSE 执行并持久化每轮对话。
 - 支持 Ark / OpenRouter Responses API，通过 lite、pro、max 三档模型初始化 Eino Runtime。
-- 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。
+- 启动时连接远程 Streamable HTTP MCP Server，并只向 Agent 暴露 allowlist 中的工具。当前批准 59 个远程工具；部署时 MCP Server 必须提供完整名单，否则启动完整性检查会失败。
 - 可选 Cozeloop 集成，用于 Trace 观测与系统 Prompt 管理；可视为开源版 Fornax。
 - 本地日志模块，不直接使用项目业务代码中的字节内部日志库。
 

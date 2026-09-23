@@ -21,6 +21,13 @@ description: 查询同济课程信息、学分、开课学期、任课教师、�
 
 示例中的“测试老师”、101、301、游标和网页 URL 都是示意值；实际调用必须替换为用户提供或工具返回的已核实值。
 
+### 学期 ID 查询
+
+- 查询全部学期 ID、按学年或学期名称查找对应 ID，使用 `tongji.user.term-calendar({})`。
+- 查询当前学期及其 ID，使用 `tongji.user.current-term-calendar({})`。
+- 学期 ID 必须以工具实际返回为准，不根据当前日期或学期名称猜测；也不要将课程搜索中的 `term` 编码直接当作 `calendarId`。
+- 这两个学期查询工具需要登录，与公开课程及评价工具不同；不可用或未授权时说明缺口，不索要 token，也不伪造学期 ID。
+
 ### 1. 历史教师评价：`tongji.course.legacy-teacher-reviews`
 
 ```text
@@ -102,19 +109,9 @@ tongji.course.course-related({"courseId":101})
 - `sameCourseOtherTeachers`、`lineage` 可选，元素结构开放。仅使用实际返回且可识别的字段，不能预设与 teacherOtherCourses 同构。
 - 用于发现比较候选；拿到 ID 后仍要查详情和课评。`ratingCount` 与 `reviewCount` 分开保留。缺少可用 ID 时回到课程搜索，不编造字段或标识。
 
-### 7. 可用学期列表：`tongji.course.calendar_list`
-
-```text
-tongji.course.calendar_list({})
-```
-
-- 不接受参数，公开读取。成功 `data.list[]` 的 `calendarId` 为 number 或 null，`calendarName` 为 string 或 null；外层有 `status` 和 `source`。
-- 用于用户询问有哪些学期、需要了解学期名称时；已从详情得到所需 termCode/termName 则不必额外调用。
-- 这是旧课程服务的学期列表，calendarId 不是 YourTJ 搜索的 termCode。不能把数字 ID 填入 search.term，也不能凭列表顺序或最大 ID 认定当前学期。搜索筛选使用已核实的 termCode；无法映射时先搜索再按详情开课记录筛选，并说明学期覆盖限制。
-
 ### 统一响应解释
 
-五个 YourTJ 课程工具及学期列表工具的成功业务 JSON 为 `{"status":"ok|empty","data":{...},"source":"YourTJ"}`，不是上游 HTTP 的 `code/result`。Agent MCP 集成会移除重复的 structuredContent，优先从 Tool 的文本 JSON 读取业务数据；历史工具的内层 `content` 字符串数组不要与 MCP 协议的外层 content 混淆。
+五个 YourTJ 课程工具的成功业务 JSON 为 `{"status":"ok|empty","data":{...},"source":"YourTJ"}`，不是上游 HTTP 的 `code/result`。Agent MCP 集成会移除重复的 structuredContent，优先从 Tool 的文本 JSON 读取业务数据；历史工具的内层 `content` 字符串数组不要与 MCP 协议的外层 content 混淆。
 
 失败可能被 Agent 转成 `{"status":"upstream_unavailable|upstream_timeout|tool_execution_failed|unauthorized","message":"..."}`，不应只检查 isError。失败不等于空结果。不要依赖原始 HTTP 状态、messageCode 或 Retry-After 在 Agent 层仍存在。
 
@@ -126,7 +123,7 @@ tongji.course.calendar_list({})
 | --- | --- | --- |
 | 课程名称/代码查课程信息、学分、学院 | 搜索 → 选择匹配课程 → 详情；同名课程先按代码、学院区分 | 用户只要候选清单时搜索即可；仅当用户需要且详情未提供大纲、先修要求等时查官方网页 |
 | 给出课程 ID 或 `/courses/<数字>` 链接查课程信息 | 直接详情，不必重复搜索；不能把 primaryCode 当 courseId | 需要评价时接课评；需要其他教师/相关课程时接关联 |
-| 某学期谁上、在哪个校区、有哪些开课记录 | 搜索 → 详情 → 按 offerings 的学期、教师、校区整理 | 询问可用学期时查 calendar_list；“本学期”须核实，历史记录不等于实时排课 |
+| 某学期谁上、在哪个校区、有哪些开课记录 | 搜索 → 详情 → 按 offerings 的学期、教师、校区整理 | “本学期”须核实，历史记录不等于实时排课 |
 | “这门课怎么样/难不难/作业多吗/值得选吗” | 搜索或已知 ID → 详情 → 课评；指定学期或教师时确定 offeringId 后筛选 | 对明确教师查历史并筛出该课程相关原文；总结辅助归纳，大纲或现行考核要求用官网核验 |
 | “这些课程选哪门/推荐某学院有评价的课” | 搜索候选（可按已知学院/学期筛选）→ 各候选详情 → 课评 | 关联扩充候选；总结辅助；需要评价教师时加历史。按学分、内容、负担和学习目标比较，不只看均分 |
 | “同一老师还上什么/同一课还有谁教” | 搜索或已知 ID → 详情 → 关联；可识别候选 ID 后取详情核对 | 关联缺少可用候选时按教师/课程再搜索；仅查课程关系不用读评价，不把 lineage 当先修或学分互认 |

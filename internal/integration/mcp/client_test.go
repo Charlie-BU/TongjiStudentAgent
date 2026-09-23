@@ -18,7 +18,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-const testMCPToolName = "tongji.student.score"
+const testMCPToolName = "tongji.bachelor.score"
 
 func TestRemoteConfigFromEnv(t *testing.T) {
 	Convey("远程 MCP 连接配置", t, func() {

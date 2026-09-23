@@ -55,8 +55,8 @@ func TestContextAssembler(t *testing.T) {
 
 		Convey("应恢复工具调用、工具结果与模型 reasoning", func() {
 			fullHistory := []Message{
-				{Sequence: 1, Role: MessageRoleAssistant, ToolCalls: []schema.ToolCall{{ID: "call-001", Function: schema.FunctionCall{Name: "tongji.student.score", Arguments: `{"term":"2025-1"}`}}}, ReasoningContent: "需要先查询成绩", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000},
-				{Sequence: 2, Role: MessageRoleTool, Content: `{"gpa":4.0}`, ToolCallID: "call-001", ToolName: "tongji.student.score"},
+				{Sequence: 1, Role: MessageRoleAssistant, ToolCalls: []schema.ToolCall{{ID: "call-001", Function: schema.FunctionCall{Name: "tongji.bachelor.score", Arguments: `{"term":"2025-1"}`}}}, ReasoningContent: "需要先查询成绩", ResponseID: "resp-001", ResponseCacheExpiresAt: 1_785_000_000},
+				{Sequence: 2, Role: MessageRoleTool, Content: `{"gpa":4.0}`, ToolCallID: "call-001", ToolName: "tongji.bachelor.score"},
 				{Sequence: 3, Role: MessageRoleAssistant, Content: "你的绩点是 4.0。"},
 			}
 			messages, err := assembler.AssembleForTurn(context.Background(), TurnInput{DynamicReminder: input.DynamicReminder, History: fullHistory, UserMessage: input.UserMessage})
