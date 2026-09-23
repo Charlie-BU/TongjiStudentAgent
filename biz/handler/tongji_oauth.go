@@ -14,6 +14,7 @@ import (
 // 同济开放平台授权范围：仅获取用户 ID
 var tongjiAuthorizationScopes = []string{
 	"openid",
+	"user",
 }
 
 // tongjiTokenRequest 表示回调页面提交的授权码。
