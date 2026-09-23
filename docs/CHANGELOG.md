@@ -1,3 +1,51 @@
+## CHANGELOG - 2026-09-23 20:08 - 新增校园工具 Skill 与每轮调用前置指引
+
+### 撰写时间
+
+- 2026-09-23 20:08（Asia/Shanghai）
+
+### Base Commit
+
+- `dc2e01e0b14a577c40068a85b9121f9f077d3964`（沿用历史记录格式，取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：全部当前未提交改动及新增文件，相对 `HEAD`（`a496bc2c15338b6ef1a9472991f70c53f4d405b5`）比较。此前已提交的 59 个工具 allowlist、工具重命名及学期查询入口不作为本次新增实现。
+
+### 背景与改动目标
+
+为校园工具增加统一使用指南，要求模型每轮先加载 Skill，再根据可信身份和业务需求选择适用工具，避免跨人群查询、猜测参数及误用个人接口。系统提示词补充规则维护在 docs/SYSTEM.md，由维护者手动同步到 PromptHub，代码不追加本地规则。
+
+### 改动概览
+
+- 新增 `tongji-campus-tools` Skill，并加入 Skill allowlist 和 manifest 目录摘要。
+- 指南逐项覆盖 42 个校园工具，按全体已登录用户、教师、学生、本科生和研究生分类，说明业务用途、查询范围及结果解释边界。
+- 规定每轮首次校园调用前成功加载 Skill，禁止加载与查询并行；同轮可复用加载结果，跨轮需重新加载。公开 `tongji.course.*` 继续遵循课程与教师指南。
+- 增加可信身份判断、本人查询、学期编号、分页完整性和错误处理指引；修改联系方式要求明确操作意图，结果不明时先核实。
+- `loadSystemInstruction` 在关闭 Cozeloop 时返回本地校园规则，启用时将其追加到远程 system prompt 后。
+- 课程与教师指南增加校园学期查询的 Skill 前置要求，README 说明提示词约束与后端鉴权的边界。
+- 新增校园工具指南覆盖测试，更新关闭 Cozeloop 时的系统提示词测试预期。
+
+### 关键链路解析（含上下游）
+
+- 装配：Skill allowlist 与 manifest 使新指南进入目录并可由 `system.load_skill` 加载；系统提示词要求校园调用前先加载。
+- 选择：模型读取本轮可信资料后按工具人群及用途决定调用。此机制是提示词与 Skill 指引，未增加工具运行时拦截或基于角色的后端鉴权。
+- 课程任务：公开课程查询沿用原 Skill；调用校园学期日历时，还需加载新校园 Skill。
+
+### 改动结果与业务影响
+
+- 校园工具具有统一的逐项使用指南和每轮加载要求，开启或关闭 Cozeloop 均会加入本地规则。
+- 当前仍存在身份上下文缺口，尚不能认定教师及资料缺失用户的校园查询链路可用，见下方审阅发现。
+
+### 风险与待办
+
+- 已执行 `go test -count=1 ./internal/agentic/skills ./internal/agentic/systemtools/load_skill ./internal/application/chat`，3 个包全部通过。现有测试验证指南覆盖、加载和提示词内容，不证明上述身份前置链路或模型实际遵循规则。
+- 文档差异检查通过。未执行全仓测试，未调用真实模型或校园接口；本轮未修改实现以修复审阅发现。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): add campus tool skill and per-run usage guidance`
+
 ## CHANGELOG - 2026-09-23 19:59 - 同步校园工具名单并明确学期查询指引
 
 ### 撰写时间
