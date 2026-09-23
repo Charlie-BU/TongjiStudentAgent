@@ -4,10 +4,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
+AIR_VERSION="v1.63.0"
+AIR_DIR="${ROOT_DIR}/.bin/air-${AIR_VERSION}"
 
 usage() {
   cat <<'EOF'
 Usage: ./local_run.sh [port]
+
+Starts development mode with automatic rebuild and restart.
 
 Environment:
   SKIP_GO_MOD_DOWNLOAD=1  Skip "go mod download" before startup.
@@ -22,6 +26,17 @@ EOF
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
+fi
+
+# Air re-enters this script for each new binary so .env is loaded afresh.
+RUN_BUILT=0
+if [[ "${1:-}" == "--run-built" ]]; then
+  RUN_BUILT=1
+  shift
+fi
+if [[ $# -gt 1 || ( $# -eq 1 && ! "$1" =~ ^[0-9]+$ ) ]]; then
+  usage >&2
+  exit 1
 fi
 
 if ! command -v go >/dev/null 2>&1; then
@@ -43,6 +58,19 @@ Copy .env.example to .env and fill in at least:
 See .env.example and README.md for the full local configuration.
 EOF
   exit 1
+fi
+
+if [[ "${RUN_BUILT}" == "0" ]]; then
+  if [[ "${SKIP_GO_MOD_DOWNLOAD:-0}" != "1" ]]; then
+    echo "==> Downloading Go modules"
+    go mod download
+  fi
+  if [[ ! -x "${AIR_DIR}/air" ]]; then
+    echo "==> Installing Air ${AIR_VERSION}"
+    mkdir -p "${AIR_DIR}"
+    GOBIN="${AIR_DIR}" go install "github.com/air-verse/air@${AIR_VERSION}"
+  fi
+  exec "${AIR_DIR}/air" -c .air.toml -- "$@"
 fi
 
 set -a
@@ -97,10 +125,5 @@ fi
 PORT_VALUE="${1:-${PORT0:-8080}}"
 export PORT0="${PORT_VALUE}"
 
-if [[ "${SKIP_GO_MOD_DOWNLOAD:-0}" != "1" ]]; then
-  echo "==> Downloading Go modules"
-  go mod download
-fi
-
 echo "==> Starting TongjiStudent on port ${PORT0}"
-exec go run . -port="${PORT0}"
+exec "${ROOT_DIR}/.air-tmp/tongjistudent" -port="${PORT0}"

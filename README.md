@@ -140,7 +140,19 @@ go test ./internal/integration/tongjiapi
 
 ## 本地启动
 
-推荐直接运行源码，`godotenv` 会自动加载项目根目录的 `.env`：
+开发时推荐使用热重载（需先配置 `.env`）：
+
+```bash
+./local_run.sh
+# 自定义端口
+./local_run.sh 8081
+```
+
+首次运行会下载固定版本的 [Air](https://github.com/air-verse/air) 到项目 `.bin/`，后续复用；不会修改应用的 Go 模块依赖。保存 Go 源码、`.env`、`go.mod` 或 `go.sum` 后会自动重新编译并重启服务，测试文件和构建产物不触发重启。每次重启都会重新执行环境校验并加载 `.env`，同名环境变量以 `.env` 为准；端口参数优先于 `.env`。设置 `SKIP_GO_MOD_DOWNLOAD=1` 可跳过启动前的依赖下载。编译失败时停止旧服务，修复并保存后恢复。
+
+重启会中断当前 SSE 连接和正在执行的请求；先发送中断信号执行退出清理，2 秒后强制结束仍未退出的旧进程。如需等待较长请求完成，可调大 `.air.toml` 中的 `kill_delay`（Hertz 的 `FUNC_TIMEOUT` 默认是 30 秒）。按 `Command+C` 退出。
+
+如需单次运行源码，`godotenv` 会自动加载项目根目录的 `.env`：
 
 ```bash
 go mod download
@@ -168,7 +180,7 @@ go build -o bin/tongjistudent .
 ./bin/tongjistudent -port=8080
 ```
 
-> 本地也可使用 `./local_run.sh [port]` 完成环境校验、依赖下载和启动；部署模板中的 `script/bootstrap.sh` 已移除。
+> `./local_run.sh [port]` 默认启用热重载；部署模板中的 `script/bootstrap.sh` 已移除。
 
 ## 验证服务
 

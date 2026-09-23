@@ -48,3 +48,7 @@ log/
 .env.test
 .env.production
 tongjistudent
+
+# Local development watcher and build artifacts
+/.bin/
+/.air-tmp/
