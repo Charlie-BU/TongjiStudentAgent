@@ -23,6 +23,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 │   ├── application/chat/  # 会话聊天应用服务与依赖装配
 │   ├── agentic/runtime/   # 与具体模型、工具解耦的 DeepAgent 运行时封装
 │   ├── integration/       # Ark / OpenRouter、知识库、Cozeloop、MCP、本地 Sandbox 与同济开放平台适配
+│   ├── transport/a2a/    # 独立 A2A 协议入口、流式投影与身份隔离
 │   └── platform/          # 服务配置与日志等基础能力
 ├── script/                # 构建产物启动脚本
 ├── .env.example           # 本地配置模板
@@ -31,6 +32,10 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 ├── router.go              # 自定义路由
 └── router_gen.go          # Hertz 路由注册
 ```
+
+## A2A 低码平台接入
+
+独立接入模块、Agent Card、A2A 1.0 / 0.3 地址、鉴权及部署说明见 [A2A 接入模块](internal/transport/a2a/README.md)。默认注册 A2A 路由，对外地址由当前请求自动生成，无需环境变量；当前内存存储版用于单实例联调，平台端到端接入尚未验收。
 
 ## 前置条件
 

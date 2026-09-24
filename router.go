@@ -3,12 +3,19 @@ package main
 import (
 	"github.com/Charlie-BU/TongjiStudent/biz/handler"
 	"github.com/Charlie-BU/TongjiStudent/internal/application/chat"
+	a2atransport "github.com/Charlie-BU/TongjiStudent/internal/transport/a2a"
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/adaptor"
 )
 
 // customizeRegister register customize routers.
 func customizeRegister(r *server.Hertz) {
 	chatHandler := handler.NewChatHandler(chat.DefaultService())
+	a2aHandler, err := a2atransport.New(chat.DefaultService(), a2atransport.Config{})
+	if err != nil {
+		panic(err)
+	}
+	r.Any("/a2a/*path", adaptor.HertzHandler(a2aHandler))
 	r.GET("/v1/ping", handler.Ping)
 	r.POST("/v1/sessions", chatHandler.CreateSession)
 	r.GET("/v1/sessions", chatHandler.Sessions)
