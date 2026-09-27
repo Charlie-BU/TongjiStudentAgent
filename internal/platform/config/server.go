@@ -21,10 +21,7 @@ func GracefulTime() time.Duration {
 
 // ServerPort 返回 HTTP 服务监听端口。
 func ServerPort() string {
-	if port := os.Getenv("PORT0"); port != "" {
-		return port
-	}
-	if port := os.Getenv("PORT"); port != "" {
+	if port := os.Getenv("APP_PORT"); port != "" {
 		return port
 	}
 	return "8080"

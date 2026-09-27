@@ -13,6 +13,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
       chromium \
       fonts-noto-cjk \
  && chromium --version \
@@ -32,6 +33,9 @@ RUN mkdir -p /home/agent/.config /home/agent/.cache \
 ENV HOME=/home/agent \
     XDG_CONFIG_HOME=/home/agent/.config \
     XDG_CACHE_HOME=/home/agent/.cache
+
+HEALTHCHECK --interval=5s --timeout=4s --start-period=60s --retries=12 \
+  CMD curl --fail --silent --max-time 3 "http://127.0.0.1:${APP_PORT:-8080}/v1/ping" > /dev/null || exit 1
 
 USER 65532:65532
 CMD ["/app/tongji-student-agent"]

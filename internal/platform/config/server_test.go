@@ -37,14 +37,15 @@ func TestCORSAllowOrigins(t *testing.T) {
 }
 
 func TestServerPort(t *testing.T) {
-	t.Setenv("PORT0", "")
-	t.Setenv("PORT", "4567")
-	if actual := ServerPort(); actual != "4567" {
-		t.Fatalf("ServerPort() = %q, want Railway PORT", actual)
+	t.Setenv("APP_PORT", "")
+	t.Setenv("PORT", "10022") // GitLab SSH port must not change the HTTP listener.
+	t.Setenv("PORT0", "1234")
+	if actual := ServerPort(); actual != "8080" {
+		t.Fatalf("ServerPort() = %q, want default 8080", actual)
 	}
 
-	t.Setenv("PORT0", "1234")
-	if actual := ServerPort(); actual != "1234" {
-		t.Fatalf("ServerPort() = %q, want legacy PORT0 to win", actual)
+	t.Setenv("APP_PORT", "9080")
+	if actual := ServerPort(); actual != "9080" {
+		t.Fatalf("ServerPort() = %q, want APP_PORT", actual)
 	}
 }

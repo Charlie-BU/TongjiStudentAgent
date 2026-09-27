@@ -39,6 +39,10 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - 可用的模型 Endpoint 凭据与可访问的远程 MCP Server。
 - 可访问的 PostgreSQL 与 Redis。服务会在启动时连接它们，并自动创建最小会话表结构；任一依赖不可用都会导致启动失败。
 
+## GitLab CI 部署
+
+推送 `main` 自动测试、构建镜像并部署测试环境；生产部署手动触发。全部应用配置通过 GitLab Variables 注入，PostgreSQL 与 Redis 使用独立的 SIT / PROD 连接变量。完整配置清单与部署说明见 [GitLab CI 部署](docs/GITLAB_CI.md)。
+
 ## 配置本地环境
 
 请基于项目根目录的 [`.env.example`](./.env.example) 创建 `.env`，再按实际环境填写；`.env` 不会提交到 Git。

@@ -1,0 +1,225 @@
+stages:
+  - test
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+    - when: never
+
+test:
+  stage: test
+  image: golang:1.25.10-bookworm
+  script:
+    - go test ./...
+
+build:
+  stage: build
+  image: docker:27-cli
+  script:
+    - export AGENT_IMAGE="$CI_REGISTRY_IMAGE/agent:$CI_COMMIT_SHA-$CI_PIPELINE_IID"
+    - docker build --pull -t "$AGENT_IMAGE" .
+    - printf '%s' "$CI_REGISTRY_PASSWORD" | docker login --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker push "$AGENT_IMAGE"
+
+.deploy:
+  stage: deploy
+  image: alpine:3.22
+  before_script:
+    - apk add --no-cache openssh-client sshpass python3
+  script:
+    - |
+      set -eu
+      case "$CI_ENVIRONMENT_NAME" in
+        sit) host=${DEVIP:?DEVIP is required} ;;
+        prod) host=${PRODIP:?PRODIP is required} ;;
+        *) exit 1 ;;
+      esac
+      : "${USER:?SSH USER is required}" "${PASSWORD:?SSH PASSWORD is required}" "${PORT:?SSH PORT is required}"
+      AGENT_IMAGE="$CI_REGISTRY_IMAGE/agent:$CI_COMMIT_SHA-$CI_PIPELINE_IID"
+      container="tongji-student-agent-$CI_ENVIRONMENT_NAME"
+      for value in "$host" "$USER" "$AGENT_IMAGE" "$CI_REGISTRY" "$CI_REGISTRY_USER"; do
+        case "$value" in ''|-*|*[!a-zA-Z0-9_./:@+-]*) echo 'Invalid deployment argument' >&2; exit 1 ;; esac
+      done
+      case "$PORT" in ''|*[!0-9]*) echo 'Invalid SSH port' >&2; exit 1 ;; esac
+      [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || exit 1
+      umask 077
+      bundle=$(mktemp -d)
+      remote_tmp=''
+      export SSHPASS="$PASSWORD"
+      remote() {
+        sshpass -e ssh -p "$PORT" -o ConnectTimeout=15 \
+          -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$bundle/known_hosts" "$USER@$host" "$@"
+      }
+      cleanup() {
+        if [ -n "$remote_tmp" ]; then remote "rm -rf '$remote_tmp'" || true; fi
+        rm -rf "$bundle"
+      }
+      trap cleanup EXIT
+      # Quote values as POSIX shell literals, preserving PEM newlines and literal $ characters.
+      # The remote shell exports them; docker receives only variable NAMES on its command line.
+      python3 - "$bundle" <<'PYENV'
+      import os
+      from pathlib import Path
+      import shlex
+      import sys
+
+      keys = """
+      APP_PORT
+      CORS_ALLOW_ORIGINS
+      MODEL_PROVIDER
+      LITE_MODEL
+      PRO_MODEL
+      MAX_MODEL
+      OPENROUTER_API_KEY
+      OPENROUTER_BASE_URL
+      ARK_API_KEY
+      ARK_BASE_URL_CN
+      VOLC_API_KEY
+      ARK_KNOWLEDGE_ENABLED
+      ARK_KNOWLEDGE_COLLECTION
+      ARK_KNOWLEDGE_PROJECT
+      ARK_KNOWLEDGE_RESOURCE_ID
+      ARK_KNOWLEDGE_LIMIT
+      ARK_KNOWLEDGE_DOMAIN
+      MCP_SERVER_URL
+      MCP_TIMEOUT
+      POSTGRES_DSN
+      REDIS_URL
+      SESSION_ANONYMOUS_TTL
+      SESSION_ANONYMOUS_MAX_MESSAGES
+      SESSION_HISTORY_MAX_MESSAGES
+      TAVILY_ENABLED
+      TAVILY_API_KEY
+      SANDBOX_ENABLED
+      COZELOOP_ENABLED
+      COZELOOP_WORKSPACE_ID
+      COZELOOP_JWT_OAUTH_CLIENT_ID
+      COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID
+      COZELOOP_JWT_OAUTH_PRIVATE_KEY
+      TONGJI_LOGIN_CLIENT_ID
+      TONGJI_LOGIN_CLIENT_SECRET
+      TONGJI_MCP_CLIENT_ID
+      TONGJI_MCP_CLIENT_SECRET
+      TONGJI_OPEN_PLATFORM_REDIRECT_URI
+      TONGJI_OPEN_PLATFORM_STATE_SECRET
+      TONGJI_OPEN_PLATFORM_AUTHORIZATION_ENDPOINT
+      TONGJI_OPEN_PLATFORM_TOKEN_ENDPOINT
+      TONGJI_OPEN_PLATFORM_API_BASE_URL
+      TONGJI_OPEN_PLATFORM_TIMEOUT_SECONDS
+      FUNC_TIMEOUT
+      ARK_BASE_URL
+      """.split()
+      values = {key: os.environ[key] for key in keys if key in os.environ}
+      suffix = {"sit": "SIT", "prod": "PROD"}[os.environ["CI_ENVIRONMENT_NAME"]]
+      for key in ("POSTGRES_DSN", "REDIS_URL", "MCP_SERVER_URL"):
+          source = key + "_" + suffix
+          if not os.environ.get(source):
+              sys.exit(source + " is required")
+          values[key] = os.environ[source]
+      required = ("APP_PORT", "LITE_MODEL", "MCP_SERVER_URL", "MCP_TIMEOUT",
+                  "TONGJI_LOGIN_CLIENT_ID", "TONGJI_LOGIN_CLIENT_SECRET",
+                  "TONGJI_MCP_CLIENT_ID", "TONGJI_MCP_CLIENT_SECRET",
+                  "TONGJI_OPEN_PLATFORM_REDIRECT_URI", "TONGJI_OPEN_PLATFORM_STATE_SECRET")
+      for key in required:
+          if not values.get(key):
+              sys.exit(key + " is required")
+      port = values["APP_PORT"]
+      if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+          sys.exit("APP_PORT must be a TCP port (1-65535)")
+      values["APP_PORT"] = str(int(port))
+      for key, schemes in (("POSTGRES_DSN", ("postgres://", "postgresql://")),
+                           ("REDIS_URL", ("redis://", "rediss://"))):
+          if not values[key].startswith(schemes) or any(c in values[key] for c in "\r\n"):
+              sys.exit(key + " has an invalid connection URL")
+      provider = values.get("MODEL_PROVIDER") or "ark"
+      if provider not in ("ark", "openrouter"):
+          sys.exit("MODEL_PROVIDER must be ark or openrouter")
+      credential = "ARK_API_KEY" if provider == "ark" else "OPENROUTER_API_KEY"
+      if not values.get(credential):
+          sys.exit(credential + " is required for " + provider)
+      # Support a GitLab File variable for multiline PEM, as well as a regular Variable.
+      pem_key = "COZELOOP_JWT_OAUTH_PRIVATE_KEY"
+      pem = values.get(pem_key, "")
+      if pem.startswith("/") and "\n" not in pem and Path(pem).is_file():
+          values[pem_key] = Path(pem).read_text()
+      bundle = Path(sys.argv[1])
+      (bundle / "runtime.sh").write_text("".join(
+          "export " + key + "=" + shlex.quote(value) + "\n" for key, value in values.items()))
+      (bundle / "runtime.keys").write_text("".join(key + "\n" for key in values))
+      PYENV
+      printf '%s' "$CI_REGISTRY_PASSWORD" > "$bundle/registry-password"
+      candidate=$(remote 'umask 077; mktemp -d /tmp/tongji-agent.XXXXXXXX')
+      case "$candidate" in /tmp/tongji-agent.*) ;; *) exit 1 ;; esac
+      case "$candidate" in *[!a-zA-Z0-9_./-]*) exit 1 ;; esac
+      remote_tmp=$candidate
+      tar -C "$bundle" -cf "$bundle/payload.tar" runtime.sh runtime.keys registry-password
+      remote "tar -xf - -C '$remote_tmp'" < "$bundle/payload.tar"
+      remote "sh -s -- '$AGENT_IMAGE' '$container' '$remote_tmp' '$CI_REGISTRY' '$CI_REGISTRY_USER'" <<'REMOTE'
+      set -eu
+      image=$1
+      container=$2
+      temp=$3
+      registry=$4
+      registry_user=$5
+      export DOCKER_CONFIG="$temp/docker"
+      trap 'rm -rf "$temp"' EXIT
+      docker login --username "$registry_user" --password-stdin "$registry" < "$temp/registry-password"
+      docker pull "$image"
+      . "$temp/runtime.sh"
+      set --
+      while IFS= read -r key; do
+        set -- "$@" --env "$key"
+      done < "$temp/runtime.keys"
+      # Keep the previous container until the replacement passes its health check.
+      # A leftover backup indicates an interrupted deployment; preserve it for recovery.
+      if docker container inspect "$container-previous" >/dev/null 2>&1; then
+        echo 'Previous backup container exists; restore or remove it before retrying.' >&2
+        exit 1
+      fi
+      previous=false
+      if docker container inspect "$container" >/dev/null 2>&1; then
+        docker stop --time 45 "$container"
+        docker rename "$container" "$container-previous"
+        previous=true
+      fi
+      healthy=false
+      if docker run -d --name "$container" --restart unless-stopped --init \
+        "$@" -p "$APP_PORT:$APP_PORT" --shm-size=256m \
+        --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "$image"; then
+        attempt=0
+        while [ "$attempt" -lt 60 ]; do
+          status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || true)
+          case "$status" in healthy) healthy=true; break ;; unhealthy) break ;; esac
+          attempt=$((attempt + 1))
+          sleep 3
+        done
+      fi
+      if [ "$healthy" = true ]; then
+        if [ "$previous" = true ]; then docker rm "$container-previous"; fi
+        echo 'Agent deployment healthy.'
+      else
+        docker rm -f "$container" >/dev/null 2>&1 || true
+        if [ "$previous" = true ]; then
+          docker rename "$container-previous" "$container"
+          docker start "$container"
+        fi
+        echo 'Agent deployment failed; previous container restored if available.' >&2
+        exit 1
+      fi
+      REMOTE
+
+deploy_sit:
+  extends: .deploy
+  environment:
+    name: sit
+  resource_group: agent-sit
+
+deploy_prod:
+  extends: .deploy
+  environment:
+    name: prod
+  resource_group: agent-prod
+  when: manual
+  allow_failure: false
