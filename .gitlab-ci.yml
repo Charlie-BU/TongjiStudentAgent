@@ -3,6 +3,9 @@ stages:
   - build
   - deploy
 
+variables:
+  GOPROXY: "https://goproxy.cn,direct"
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
@@ -12,6 +15,7 @@ test:
   stage: test
   image: golang:1.25.10-bookworm
   script:
+    - go mod download
     - go test ./...
 
 build:
@@ -19,7 +23,7 @@ build:
   image: docker:27-cli
   script:
     - export AGENT_IMAGE="$CI_REGISTRY_IMAGE/agent:$CI_COMMIT_SHA-$CI_PIPELINE_IID"
-    - docker build --pull -t "$AGENT_IMAGE" .
+    - docker build --pull --build-arg GOPROXY="$GOPROXY" -t "$AGENT_IMAGE" .
     - printf '%s' "$CI_REGISTRY_PASSWORD" | docker login --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker push "$AGENT_IMAGE"
 

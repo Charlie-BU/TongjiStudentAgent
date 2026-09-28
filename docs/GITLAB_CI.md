@@ -84,3 +84,9 @@ PEM 在 CI 中进行 shell 安全引用，经 SSH 临时文件传送后导出；
 - Docker 健康检查请求 `/v1/ping`。流水线等待新容器健康，失败时恢复原容器；成功后删除旧容器。容器回退不会撤销数据库结构变化。
 - 保留非 root 用户与 Chromium，分配 `256m` 共享内存，配置容器重启和日志轮转。
 - GitLab 生产按钮首次执行前，确认 `POSTGRES_DSN_PROD`、`REDIS_URL_PROD` 以及 `MCP_SERVER_URL_PROD` 已配置，并确认共用的回调地址和 CORS 白名单适用于生产。
+
+## Go 依赖下载
+
+测试和 Docker 构建统一使用 `GOPROXY=https://goproxy.cn,direct`，保留 Go 默认 checksum 校验。无需新增 GitLab 变量；需要内部代理时可覆盖 CI 变量 `GOPROXY`。代理只用于构建，不注入运行容器。
+
+`proxy.golang.org ... i/o timeout` 表示依赖下载失败，尚未开始部署。请推送修复后的新提交；重试旧流水线仍会使用旧配置。
