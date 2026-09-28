@@ -31,7 +31,18 @@ build:
   stage: deploy
   image: alpine:3.22
   before_script:
-    - apk add --no-cache openssh-client sshpass python3
+    - |
+      set -eu
+      sed -E -i 's#https?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+      attempt=1
+      until timeout 180 apk add --no-cache openssh-client sshpass python3; do
+        if [ "$attempt" -ge 3 ]; then
+          echo 'Failed to install deployment tools after 3 attempts.' >&2
+          exit 1
+        fi
+        attempt=$((attempt + 1))
+        sleep 5
+      done
   script:
     - |
       set -eu
