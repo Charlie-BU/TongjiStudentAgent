@@ -194,6 +194,8 @@ build:
         --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "$image"; then
         attempt=0
         while [ "$attempt" -lt 60 ]; do
+          state=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)
+          case "$state" in exited|dead|restarting) break ;; esac
           status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || true)
           case "$status" in healthy) healthy=true; break ;; unhealthy) break ;; esac
           attempt=$((attempt + 1))
@@ -204,7 +206,16 @@ build:
         if [ "$previous" = true ]; then docker rm "$container-previous"; fi
         echo 'Agent deployment healthy.'
       else
-        docker rm -f "$container" >/dev/null 2>&1 || true
+        # Preserve startup logs on the server; do not expose runtime secrets in CI.
+        if docker container inspect "$container" >/dev/null 2>&1; then
+          docker inspect --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restarts={{.RestartCount}}' "$container" || true
+          docker inspect --format '{{if .State.Health}}health={{.State.Health.Status}}{{range .State.Health.Log}}{{println}}{{.End}} exit={{.ExitCode}} {{.Output}}{{end}}{{end}}' "$container" || true
+          failed="$container-failed-$(date +%s)"
+          docker update --restart=no "$container" >/dev/null
+          docker stop --time 10 "$container" >/dev/null
+          docker rename "$container" "$failed"
+          echo "Startup logs retained on deployment host: docker logs --tail 200 $failed"
+        fi
         if [ "$previous" = true ]; then
           docker rename "$container-previous" "$container"
           docker start "$container"

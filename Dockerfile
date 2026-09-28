@@ -41,7 +41,7 @@ ENV HOME=/home/agent \
     XDG_CACHE_HOME=/home/agent/.cache
 
 HEALTHCHECK --interval=5s --timeout=4s --start-period=60s --retries=12 \
-  CMD curl --fail --silent --max-time 3 "http://127.0.0.1:${APP_PORT:-8080}/v1/ping" > /dev/null || exit 1
+  CMD curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:${APP_PORT:-8080}/v1/ping" > /dev/null || exit 1
 
 USER 65532:65532
 CMD ["/app/tongji-student-agent"]
