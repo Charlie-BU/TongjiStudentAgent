@@ -90,3 +90,9 @@ PEM 在 CI 中进行 shell 安全引用，经 SSH 临时文件传送后导出；
 测试和 Docker 构建统一使用 `GOPROXY=https://goproxy.cn,direct`，保留 Go 默认 checksum 校验。无需新增 GitLab 变量；需要内部代理时可覆盖 CI 变量 `GOPROXY`。代理只用于构建，不注入运行容器。
 
 `proxy.golang.org ... i/o timeout` 表示依赖下载失败，尚未开始部署。请推送修复后的新提交；重试旧流水线仍会使用旧配置。
+
+## 系统依赖下载
+
+Docker runtime 安装 Chromium、中文字体等依赖时使用清华 Debian / Debian Security 镜像。基础镜像尚未安装 CA 证书，使用 HTTP 引导，保留 Debian 签名和哈希校验。安全更新镜像可能有同步延迟。APT 网络超时 30 秒，失败重试 2 次；更新及安装整体限制为 900 秒。无需新增 GitLab 变量。
+
+修改只影响新提交的流水线，不会改变正在运行的构建。可取消旧 build 后推送修复。

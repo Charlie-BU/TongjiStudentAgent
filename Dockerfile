@@ -12,12 +12,16 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/tongji-student-age
 
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      curl \
-      chromium \
-      fonts-noto-cjk \
+# Bootstrap without CA certificates; Debian signature and hash checks remain enabled.
+RUN sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g; s|http://security.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      'Acquire::Retries "2";' \
+      'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'APT::Update::Error-Mode "any";' \
+      > /etc/apt/apt.conf.d/99ci-network \
+ && timeout 900 sh -ec 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl chromium fonts-noto-cjk' \
  && chromium --version \
  && rm -rf /var/lib/apt/lists/*
 
