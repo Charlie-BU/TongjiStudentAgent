@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	cozeloopcallback "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino/callbacks"
@@ -39,7 +40,8 @@ func Init(ctx context.Context, registerShutdownHook RegisterShutdownHook) error 
 		return fmt.Errorf("COZELOOP_WORKSPACE_ID, COZELOOP_JWT_OAUTH_CLIENT_ID, COZELOOP_JWT_OAUTH_PUBLIC_KEY_ID, and COZELOOP_JWT_OAUTH_PRIVATE_KEY must be set when COZELOOP_ENABLED is enabled")
 	}
 
-	newClient, err := cozeloopsdk.NewClient()
+	// The SDK defaults to 3s, which is too short for cold OAuth/PromptHub requests.
+	newClient, err := cozeloopsdk.NewClient(cozeloopsdk.WithTimeout(30 * time.Second))
 	if err != nil {
 		return fmt.Errorf("create Cozeloop client: %w", err)
 	}
