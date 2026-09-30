@@ -225,6 +225,63 @@ build:
           docker update --restart=no "$container" >/dev/null
           docker stop --time 10 "$container" >/dev/null
           docker rename "$container" "$failed"
+          # Analyze logs on the host. Only fixed diagnostic labels leave the server.
+          if docker logs --timestamps --tail 300 "$failed" > "$temp/startup.log" 2>&1; then
+            echo '--- Startup diagnostic categories (no raw log content) ---'
+            matched=false
+            while IFS='	' read -r pattern label; do
+              if grep -Eqi -- "$pattern" "$temp/startup.log"; then
+                printf '%s\n' "$label"
+                matched=true
+              fi
+            done <<'DIAGNOSTICS'
+      panic:	PROCESS_PANIC: application startup panicked.
+      error initializing Cozeloop integration	COZELOOP_INIT: check COZELOOP credentials and PEM private-key format.
+      load system prompt	PROMPTHUB_LOAD: CozeLoop system prompt retrieval failed.
+      system prompt.*message	PROMPTHUB_CONTENT: prompt has no usable system message.
+      initialize chat model	MODEL_INIT: check MODEL_PROVIDER, LITE_MODEL and provider credentials.
+      initialize (pro|max) model	MODEL_TIER_INIT: optional model tier configuration failed.
+      initialize knowledge client	KNOWLEDGE_INIT: check knowledge feature flag, API key and resource configuration.
+      initialize Tongji Open Platform client	TONGJI_CONFIG: Tongji login configuration is invalid.
+      build skill catalog	SKILL_CATALOG: embedded skills could not be loaded.
+      initialize Tavily client	TAVILY_INIT: check Tavily feature flag and API key.
+      initialize remote mcp client	MCP_INIT: MCP connection or protocol initialization failed; check MCP_SERVER_URL_SIT/PROD.
+      convert mcp tools	MCP_TOOLS: MCP tool discovery or required tool validation failed.
+      initialize PostgreSQL session store	POSTGRES_CONNECT: PostgreSQL configuration or connection failed.
+      initialize PostgreSQL session schema	POSTGRES_SCHEMA: database schema initialization failed.
+      initialize Redis session store	REDIS_CONNECT: Redis configuration or connection failed.
+      read session configuration	SESSION_CONFIG: session configuration is invalid.
+      create agent runtime	AGENT_RUNTIME: agent runtime creation failed.
+      invalid CORS configuration	CORS_CONFIG: CORS_ALLOW_ORIGINS must be a valid JSON origin array.
+      bind: address already in use	LISTEN_CONFLICT: application listen address is already occupied.
+      connection refused	NETWORK_REFUSED: a dependency refused the TCP connection.
+      no such host	DNS_FAILURE: a dependency hostname could not be resolved.
+      i/o timeout	NETWORK_TIMEOUT: dependency network operation timed out.
+      context deadline exceeded	DEADLINE_EXCEEDED: a dependency request exceeded its deadline.
+      no route to host	NETWORK_ROUTE: no network route to a dependency.
+      x509:	TLS_CERTIFICATE: dependency TLS certificate validation failed.
+      WRONGPASS	REDIS_AUTH: Redis rejected credentials.
+      NOAUTH	REDIS_NOAUTH: Redis requires authentication.
+      password authentication failed	POSTGRES_AUTH: PostgreSQL rejected credentials.
+      no pg_hba.conf entry	POSTGRES_ACCESS: PostgreSQL access rules rejected this client.
+      permission denied	PERMISSION_DENIED: a resource permission check failed.
+      invalid.*private key	PRIVATE_KEY_INVALID: check PEM format and real newlines.
+      failed to parse.*key	PRIVATE_KEY_PARSE: private key parsing failed.
+      401 Unauthorized	UPSTREAM_401: an upstream service rejected authentication.
+      403 Forbidden	UPSTREAM_403: an upstream service denied access.
+      Chromium unavailable	BROWSER_FALLBACK: browser extraction disabled; this warning alone does not terminate startup.
+      Cozeloop integration initialized	COZELOOP_READY: CozeLoop client initialization completed.
+      Cozeloop integration is disabled	COZELOOP_DISABLED: CozeLoop is disabled.
+      end of initializeClient run	DEPENDENCIES_READY: dependency initialization completed; examine HTTP startup next.
+      DIAGNOSTICS
+            if [ "$matched" = false ]; then
+              echo 'NO_KNOWN_SIGNATURE: startup logs do not match known failure categories.'
+            fi
+            echo '--- End startup diagnostic categories ---'
+            rm -f "$temp/startup.log"
+          else
+            echo 'STARTUP_LOG_UNAVAILABLE: Docker could not read startup logs.'
+          fi
           echo "Startup logs retained on deployment host: docker logs --tail 200 $failed"
         fi
         if [ "$previous" = true ]; then
