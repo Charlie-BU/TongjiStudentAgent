@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -192,7 +193,7 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			defer t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
 			result, err := invokable.InvokableRun(platformauth.WithAccessToken(context.Background(), "test-access-token"), `{}`)
 			So(err, ShouldBeNil)
-			So(result, ShouldContainSubstring, toolStatusExecutionUnavailable)
+			So(result, ShouldEqual, "TONGJI_MCP_CLIENT_ID and TONGJI_MCP_CLIENT_SECRET are required")
 			So(receivedTokens, ShouldBeEmpty)
 		})
 
@@ -206,42 +207,57 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			defer t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
 			value, err := luckinTools[0].(tool.InvokableTool).InvokableRun(ctx, `{}`)
 			So(err, ShouldBeNil)
-			So(value, ShouldContainSubstring, `"valid":false`)
-			So(value, ShouldContainSubstring, "upstream_unavailable")
+			So(value, ShouldEqual, "TONGJI_MCP_CLIENT_ID and TONGJI_MCP_CLIENT_SECRET are required")
 			So(receivedUsers, ShouldResemble, []string{"student-a"})
 			So(receivedTokens, ShouldResemble, []string{"service-token"})
 		})
 
-		Convey("应将 MCP 业务错误收敛为稳定结果", func() {
+		Convey("应保留 MCP 业务错误的原始状态和诊断内容", func() {
 			requestContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
 			result, invokeErr := invokable.InvokableRun(requestContext, `{"scenario":"unauthorized"}`)
 			unknownResult, unknownInvokeErr := invokable.InvokableRun(requestContext, `{"scenario":"unknown_error"}`)
 
 			So(invokeErr, ShouldBeNil)
-			So(result, ShouldContainSubstring, toolStatusUnauthorized)
-			So(result, ShouldNotContainSubstring, "raw upstream authorization detail")
+			So(result, ShouldContainSubstring, "unauthorized")
+			So(result, ShouldContainSubstring, "raw upstream authorization detail")
 			So(unknownInvokeErr, ShouldBeNil)
-			So(unknownResult, ShouldContainSubstring, toolStatusExecutionUnavailable)
-			So(unknownResult, ShouldNotContainSubstring, "raw upstream failure detail")
+			So(unknownResult, ShouldContainSubstring, "unexpected")
+			So(unknownResult, ShouldContainSubstring, "raw upstream failure detail")
 		})
 	})
 }
 
-func TestRequestScopedToolNormalizesTransportError(t *testing.T) {
-	Convey("请求级 MCP Tool 传输错误", t, func() {
-		wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
-			return "", testTimeoutError{}
-		}}}
-
-		Convey("应返回稳定超时结果且不暴露原始错误", func() {
-			requestContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
-			result, err := wrappedTool.InvokableRun(requestContext, `{}`)
-
-			So(err, ShouldBeNil)
-			So(result, ShouldContainSubstring, toolStatusUpstreamTimeout)
-			So(result, ShouldNotContainSubstring, "test timeout detail")
+func TestRequestScopedToolPreservesInvocationErrors(t *testing.T) {
+	for _, invocationError := range []error{
+		testTimeoutError{},
+		errors.New("request failed with status 403: invalid_service_credential"),
+		fmt.Errorf("MCP request: %w", errors.New("connection refused")),
+	} {
+		t.Run(invocationError.Error(), func(t *testing.T) {
+			wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+				return "", invocationError
+			}}}
+			result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
+			if err != nil || result != invocationError.Error() {
+				t.Fatalf("got (%q, %v), want original error text %q", result, err, invocationError.Error())
+			}
 		})
-	})
+	}
+}
+
+func TestRequestScopedToolPropagatesCancellation(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			invocationError := fmt.Errorf("MCP request: %w", cause)
+			wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+				return "", invocationError
+			}}}
+			result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
+			if result != "" || !errors.Is(err, cause) {
+				t.Fatalf("got (%q, %v), want propagated cancellation %v", result, err, cause)
+			}
+		})
+	}
 }
 
 type testInvokableTool struct {

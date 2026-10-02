@@ -11,7 +11,6 @@ import (
 	einoext "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/components/tool"
 	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // EinoTools 将 MCP Client 暴露的工具转换为 Eino 工具。
@@ -25,11 +24,6 @@ func EinoTools(ctx context.Context, cli *mcpclient.Client, toolNames ...string) 
 	tools, err := einoext.GetTools(ctx, &einoext.Config{
 		Cli:          cli,
 		ToolNameList: toolNames,
-		// 已收到 MCP 结果（包括 isError）时按工具名归一；未取得结果的调用错误
-		// 由 requestScopedTool 处理，避免将瑞幸授权/订单错误改写为校园服务错误。
-		ToolCallResultHandler: func(_ context.Context, name string, result *mcp.CallToolResult) (*mcp.CallToolResult, error) {
-			return normalizeNamedMCPToolResult(name, result), nil
-		},
 	})
 	if err != nil {
 		return nil, err

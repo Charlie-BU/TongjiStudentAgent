@@ -12,32 +12,6 @@ import (
 	"testing"
 )
 
-func TestLuckinErrorsPreserveSafeRecovery(t *testing.T) {
-	for _, test := range []struct{ name, input, want string }{
-		{"luckin.auth.check", `{"status":"upstream_unavailable"}`, "暂时无法检查"},
-		{"luckin.auth.login", `{"status":"unauthorized","message":"瑞幸登录未成功，请核对手机号和验证码后重试。"}`, "核对手机号和验证码"},
-		{"luckin.order.create", `{"status":"upstream_unavailable","message":"瑞幸订单操作结果未确认，请先核实订单状态，不要直接重复创建或取消订单。"}`, "不要直接重复"},
-		{"luckin.order.create", `{"status":"unknown","message":"PRIVATE_TOKEN"}`, "不要直接重复"},
-		{"luckin.shop.search", `{"status":"unauthorized","message":"PRIVATE_TOKEN"}`, "瑞幸授权"},
-	} {
-		result := protocol.NewToolResultText(test.input)
-		result.IsError = true
-		got := normalizeNamedMCPToolResult(test.name, result)
-		value, _ := toolResultText(got.Content[0])
-		if !strings.Contains(value, test.want) || strings.Contains(value, "PRIVATE_TOKEN") || strings.Contains(value, "校园") {
-			t.Fatalf("%s: %s", test.name, value)
-		}
-	}
-	for _, name := range []string{"luckin.order.create", "luckin.order.cancel"} {
-		if !strings.Contains(namedToolFailureJSON(name, toolStatusUpstreamTimeout), "不要直接重复") {
-			t.Fatal(name)
-		}
-	}
-	if !strings.Contains(namedToolFailureJSON("luckin.auth.check", toolStatusUpstreamTimeout), "upstream_timeout") {
-		t.Fatal("check must fail closed")
-	}
-}
-
 func TestLuckinAllowlistCanBeDiscoveredAndInvoked(t *testing.T) {
 	ctx := modelmeta.WithSession(context.Background(), "ses_fixture_a")
 	srv := server.NewMCPServer("luckin-integration", "1")
@@ -84,24 +58,6 @@ func TestLuckinAllowlistCanBeDiscoveredAndInvoked(t *testing.T) {
 				t.Fatal(value)
 			}
 		} else if !strings.Contains(value, "1234567890123456789") {
-			t.Fatal(value)
-		}
-	}
-}
-
-func TestCheckErrorsDoNotBecomeLoginRequired(t *testing.T) {
-	for code := range luckinCheckMessages {
-		response := protocol.NewToolResultText(`{"status":"` + code + `","message":"PRIVATE_TOKEN"}`)
-		response.IsError = true
-		result := normalizeNamedMCPToolResult("luckin.auth.check", response)
-		value, _ := toolResultText(result.Content[0])
-		if !strings.Contains(value, code) || strings.Contains(value, "PRIVATE_TOKEN") || !strings.Contains(value, `"valid":false`) {
-			t.Fatal(value)
-		}
-	}
-	for _, response := range []*protocol.CallToolResult{nil, protocol.NewToolResultText(`{"valid":"true"}`), protocol.NewToolResultText(`{}`)} {
-		value, _ := toolResultText(normalizeNamedMCPToolResult("luckin.auth.check", response).Content[0])
-		if !strings.Contains(value, "upstream_unavailable") {
 			t.Fatal(value)
 		}
 	}

@@ -672,7 +672,7 @@ console.log(historyPayload.messages);
 | `assistant.delta`     | `text`                                              | 最终自然语言回答的增量文本。                           |
 | `tool.call.started`   | `call_id`, `tool`, `display_name`                   | 模型已选择该工具，调用即将执行。                       |
 | `tool.call.completed` | `call_id`, `tool`, `duration_ms`                    | Agent 已收到工具结果；不代表上游业务一定成功。         |
-| `tool.call.failed`    | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收稳定错误结果。     |
+| `tool.call.failed`    | `call_id`, `tool`, `duration_ms`, `code`, `message` | 调用执行失败；Agent 会终止本轮或接收错误内容并继续处理。 |
 | `task_plan.updated`   | `action`, `revision`, `tasks`                       | 当前会话任务计划已更新；前端应以完整快照刷新进度面板。 |
 | `run.completed`       | `duration_ms`                                       | Run 成功结束。                                         |
 | `run.failed`          | `code`, `message`, `reason?`, `status_code?`        | Run 无法完成；若可识别则附带原始原因和 HTTP 状态码。   |
@@ -699,6 +699,8 @@ console.log(historyPayload.messages);
 
 每轮 run 使用本次 HTTP `Authorization: Bearer <用户 token>` 查询 basic-info，解析的用户 ID 保存在本轮上下文。MCP 用户身份头统一为 `X-User-Id`，不兼容旧名称。同济用户调用任何 MCP 工具时均注入同济服务 Token，获取失败立即返回错误，不发起工具请求、不透传用户 Token。瑞幸在 MCP 侧只要求用户 ID，同济服务 Token 可选；匿名会话直接使用用户标识调用。匿名会话使用 `anonymous_<sessionID>` 作为用户标识，同一会话复用本地瑞幸凭据，新会话独立。MCP 在登录保存时根据是否携带同济 Token 记录 `is_from_tongji`；该标志不参与瑞幸鉴权。任何 MCP 请求携带同济 Token 时，HTTP 入口都会先校验；无效或身份服务不可用则提前返回 403，不执行瑞幸工具。
 
+MCP 调用结果保留原始 content、structuredContent 和错误内容，不再通过错误码或文案白名单重写。服务凭据获取失败、HTTP 错误、网络异常以及 SDK 包装的 MCP isError 结果，以原始异常文本作为工具结果传给下游模型，由模型处理后续步骤。用户取消和整轮上下文超时仍向上传播，终止本轮；异常透传不会触发自动重试。
+
 登录凭据使用 `TONGJI_LOGIN_CLIENT_ID` / `TONGJI_LOGIN_CLIENT_SECRET`；MCP 服务凭据使用 `TONGJI_MCP_CLIENT_ID` / `TONGJI_MCP_CLIENT_SECRET`。旧的 `TONGJI_OPEN_PLATFORM_CLIENT_ID` / `TONGJI_OPEN_PLATFORM_CLIENT_SECRET` 不再读取。服务 token 通过 `/v1/token` 的 `client_credentials` 表单申请，按最多 7200 秒缓存在进程内，并在每次使用前通过 basic-info 检查服务身份（00001 / 李建中 / 教职工）。身份校验在缓存锁外并发执行；检查失败或到期后合并刷新并覆盖缓存，等待刷新的请求可独立取消，旧校验结果不会覆盖新缓存；刷新失败不调用 MCP，也不回退使用用户 token。多进程各自维护缓存，进程重启后重新申请。Agent 与 MCP Server 需配套部署，服务凭据不得写入模型上下文、响应或日志。
 
 ## 路由一览
@@ -720,4 +722,4 @@ console.log(historyPayload.messages);
 - A2A 架构和原字节内部 MCP Client 已移除。
 - Hertz 已替换为开源 `github.com/cloudwego/hertz`。
 
-瑞幸接入包含 11 个 MCP tools、skill 流程指引和业务错误归一，匿名及同济用户均可使用。凭据由 MCP 保存至本地 SQLite；Agent 自身的 PostgreSQL/Redis 会话存储配置保持不变。
+瑞幸接入包含 11 个 MCP tools 和 skill 流程指引，匿名及同济用户均可使用。凭据由 MCP 保存至本地 SQLite；Agent 自身的 PostgreSQL/Redis 会话存储配置保持不变。
