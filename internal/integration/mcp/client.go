@@ -7,10 +7,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -22,7 +20,6 @@ const (
 // RemoteConfig 描述远程 MCP Client 的连接配置。
 type RemoteConfig struct {
 	ServerURL string
-	Timeout   time.Duration
 }
 
 // RemoteConfigFromEnv 从环境变量读取远程 MCP 连接配置。
@@ -36,16 +33,7 @@ func RemoteConfigFromEnv() (RemoteConfig, error) {
 		return RemoteConfig{}, fmt.Errorf("MCP_SERVER_URL must be an absolute http or https URL")
 	}
 
-	timeoutValue := strings.TrimSpace(os.Getenv("MCP_TIMEOUT"))
-	if timeoutValue == "" {
-		return RemoteConfig{}, fmt.Errorf("MCP_TIMEOUT is required")
-	}
-	timeout, err := time.ParseDuration(timeoutValue)
-	if err != nil || timeout <= 0 {
-		return RemoteConfig{}, fmt.Errorf("MCP_TIMEOUT must be a positive duration")
-	}
-
-	return RemoteConfig{ServerURL: serverURL, Timeout: timeout}, nil
+	return RemoteConfig{ServerURL: serverURL}, nil
 }
 
 // NewRemoteClientFromEnv 从环境变量创建并初始化远程 MCP Client。
@@ -59,10 +47,7 @@ func NewRemoteClientFromEnv(ctx context.Context) (*mcpclient.Client, error) {
 
 // NewRemoteClient 创建、启动并初始化远程 Streamable HTTP MCP Client。
 func NewRemoteClient(ctx context.Context, config RemoteConfig) (*mcpclient.Client, error) {
-	client, err := mcpclient.NewStreamableHttpClient(
-		config.ServerURL,
-		transport.WithHTTPTimeout(config.Timeout),
-	)
+	client, err := mcpclient.NewStreamableHttpClient(config.ServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("create remote MCP client: %w", err)
 	}

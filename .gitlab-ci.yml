@@ -99,7 +99,6 @@ build:
       ARK_KNOWLEDGE_LIMIT
       ARK_KNOWLEDGE_DOMAIN
       MCP_SERVER_URL
-      MCP_TIMEOUT
       POSTGRES_DSN
       REDIS_URL
       SESSION_ANONYMOUS_TTL
@@ -133,7 +132,7 @@ build:
           if not os.environ.get(source):
               sys.exit(source + " is required")
           values[key] = os.environ[source]
-      required = ("APP_PORT", "LITE_MODEL", "MCP_SERVER_URL", "MCP_TIMEOUT",
+      required = ("APP_PORT", "LITE_MODEL", "MCP_SERVER_URL",
                   "TONGJI_LOGIN_CLIENT_ID", "TONGJI_LOGIN_CLIENT_SECRET",
                   "TONGJI_MCP_CLIENT_ID", "TONGJI_MCP_CLIENT_SECRET",
                   "TONGJI_OPEN_PLATFORM_REDIRECT_URI", "TONGJI_OPEN_PLATFORM_STATE_SECRET")

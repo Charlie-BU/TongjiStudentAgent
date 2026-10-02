@@ -57,7 +57,9 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Cozeloop
 - 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`MCP_TIMEOUT`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_LOGIN_CLIENT_ID`、`TONGJI_LOGIN_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
+启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_LOGIN_CLIENT_ID`、`TONGJI_LOGIN_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
+
+Agent 不额外设置 MCP HTTP 客户端超时；调用取消或已有 deadline 由请求上下文传递。MCP 服务端的单次上游 HTTP 请求默认超时为 20 秒。
 
 模型分为三个 tier，由 `LITE_MODEL`、`PRO_MODEL`、`MAX_MODEL` 分别配置，通过请求的 `model_tier` 选择。lite 必填，pro/max 可留空。启动时为已配置的 tier 创建独立 Runtime；修改模型配置后需重启。三档共享 `MODEL_PROVIDER`：省略或设为 `ark` 时使用现有 Ark Responses API；设为 `openrouter` 时使用 OpenRouter Responses API。
 

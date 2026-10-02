@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	"github.com/cloudwego/eino/components/tool"
@@ -24,29 +23,20 @@ func TestRemoteConfigFromEnv(t *testing.T) {
 	Convey("远程 MCP 连接配置", t, func() {
 		Convey("合法环境变量应生成连接配置", func() {
 			t.Setenv("MCP_SERVER_URL", "https://mcp.example.test/mcp")
-			t.Setenv("MCP_TIMEOUT", "12s")
 
 			config, err := RemoteConfigFromEnv()
 
 			So(err, ShouldBeNil)
 			So(config.ServerURL, ShouldEqual, "https://mcp.example.test/mcp")
-			So(config.Timeout, ShouldEqual, 12*time.Second)
 		})
 
 		Convey("缺失或非法环境变量应被拒绝", func() {
-			for _, test := range []struct {
-				serverURL string
-				timeout   string
-			}{
-				{serverURL: "", timeout: "12s"},
-				{serverURL: "localhost:3000/mcp", timeout: "12s"},
-				{serverURL: "ftp://mcp.example.test/mcp", timeout: "12s"},
-				{serverURL: "https://mcp.example.test/mcp", timeout: ""},
-				{serverURL: "https://mcp.example.test/mcp", timeout: "invalid"},
-				{serverURL: "https://mcp.example.test/mcp", timeout: "0s"},
+			for _, serverURL := range []string{
+				"",
+				"localhost:3000/mcp",
+				"ftp://mcp.example.test/mcp",
 			} {
-				t.Setenv("MCP_SERVER_URL", test.serverURL)
-				t.Setenv("MCP_TIMEOUT", test.timeout)
+				t.Setenv("MCP_SERVER_URL", serverURL)
 
 				_, err := RemoteConfigFromEnv()
 
@@ -64,7 +54,7 @@ func TestNewRemoteClientInitializationFailure(t *testing.T) {
 		defer server.Close()
 
 		Convey("应关闭失败连接并返回初始化错误", func() {
-			client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: server.URL, Timeout: time.Second})
+			client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: server.URL})
 
 			So(client, ShouldBeNil)
 			So(err, ShouldNotBeNil)
@@ -285,7 +275,7 @@ func (testTimeoutError) Temporary() bool {
 // newTestRemoteClient 创建连接到离线 MCP 测试服务的 Client。
 func newTestRemoteClient(t *testing.T, serverURL string) *mcpclient.Client {
 	t.Helper()
-	client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: serverURL, Timeout: time.Second})
+	client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: serverURL})
 	if err != nil {
 		t.Fatalf("create remote MCP client: %v", err)
 	}
