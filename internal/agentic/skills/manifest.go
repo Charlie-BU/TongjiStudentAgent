@@ -30,7 +30,7 @@ var manifests = map[string]Manifest{
 	},
 	skillallowlist.LuckinCoffeeSkill: {
 		ID:          skillallowlist.LuckinCoffeeSkill,
-		Description: "处理瑞幸登录、验证码、查店选品、自取下单、查单取餐或取消订单时必须先加载 luckin-coffee，继续已有流程也适用。任何 luckin.* 调用前遵循本 Skill：先 check，true 才进入业务；无错误且 valid=false 才询问手机号、发送验证码、询问验证码并登录，成功后再次 check。检查报错按提示处理，不触发短信登录。login 与 check 必须串行，不跳过订单确认与预览，不盲目重试下单。纯饮品知识问答不触发。",
+		Description: "处理瑞幸登录、验证码、查店选品、自取下单、查单取餐或取消订单时必须先加载 luckin-coffee，继续已有流程也适用。所有用户均可使用，用户标识由 Agent 请求头自动提供。任何 luckin.* 调用前遵循本 Skill：先 check，true 才进入业务；无错误且 valid=false 才询问手机号、发送验证码、询问验证码并登录，成功后再次 check。检查报错按提示处理，不触发短信登录。login 与 check 必须串行，不跳过订单确认与预览，不盲目重试下单。纯饮品知识问答不触发。",
 	},
 	skillallowlist.TongjiCampusToolsSkill: {
 		ID:          skillallowlist.TongjiCampusToolsSkill,

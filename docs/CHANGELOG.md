@@ -1,3 +1,52 @@
+## CHANGELOG - 2026-10-02 11:36 - 统一 MCP 用户身份头并支持匿名会话使用瑞幸
+
+### 撰写时间
+
+- 2026-10-02 11:36（Asia/Shanghai）
+
+### Base Commit
+
+- `78c6781d7da693635f13d31887c3759305403582`（沿用历史记录格式，取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：相对 `HEAD`（`965c17daf5c34a9afa433dce9797be5046f7c46f`）的当前未提交改动，涵盖 MCP 请求包装、瑞幸错误归一、Skill、README 及配套测试。MCP 仓的 SQLite 存储与鉴权实现不属于本仓新增实现。
+
+### 背景与改动目标
+
+对齐配套 MCP 的统一用户身份契约，使匿名用户能够在当前会话内使用瑞幸功能，并继续通过可信请求上下文提供身份，避免由模型填写用户 ID。
+
+### 改动概览
+
+- 将远程 MCP 用户身份头由 `X-Tongji-User-Id` 改为 `X-User-Id`，不再发送旧头。
+- 已登录用户使用上下文中的真实用户 ID，调用任何 MCP 工具时仍获取并注入同济服务 Token；获取失败时返回归一错误，不发起工具调用。
+- 匿名请求根据上下文中的 sessionID 注入 `anonymous_<sessionID>`，不携带同济服务 Token；同一会话身份稳定，不同会话使用独立身份。
+- 瑞幸登录检查改为识别 `user_id_required`，同步业务错误公开文案白名单，移除旧同济身份错误文案。
+- 更新瑞幸 Skill、目录摘要和 README，说明匿名用户可用、凭据按用户标识保存、匿名新会话需要重新登录，以及检查错误不得触发短信登录。
+- 扩展测试，覆盖 11 个瑞幸工具的匿名请求头、匿名身份稳定与隔离，以及已登录用户服务 Token 获取失败时阻止调用。
+
+### 关键链路解析（含上下游）
+
+- 聊天执行将 sessionID 写入上下文，并在执行模型前读取和校验会话；请求包装器从本轮上下文选择已登录用户身份或匿名会话身份。
+- 配套 MCP 按 `X-User-Id` 读取和保存瑞幸凭据；匿名用户可在同一会话复用登录状态，新会话身份独立。
+- 携带同济服务 Token 时，MCP 仍先校验该 Token；服务凭据异常不能通过再次发送瑞幸短信解决。登录、复查及业务调用仍遵循 Skill 的串行和确认要求。
+
+### 改动结果与业务影响
+
+- 瑞幸功能可供匿名及同济登录用户使用，Agent 的 PostgreSQL/Redis 会话存储配置不变。
+- 新旧用户身份头不兼容，Agent 与 MCP 需配套部署。匿名瑞幸身份依赖原会话 ID，不能跨新会话复用。
+
+### 审阅与验证
+
+- 本轮未发现需要修复的新问题；已核对请求头、会话上下文传递及瑞幸错误码与当前 MCP 实现的一致性。
+- 已执行 `go test -count=1 ./internal/integration/mcp ./internal/agentic/skills ./internal/agentic/systemtools/load_skill ./internal/application/chat`，4 个包全部通过。
+- 测试使用本地模拟服务，未调用真实瑞幸、同济或模型接口，未执行全仓测试；不将测试通过视为真实短信登录和下单链路已完成联调。
+- MCP 仓此前已豁免的问题不在本次 Agent 改动中修复，本记录不将其描述为已解决。
+
+### 建议 Commit Message（git-cz）
+
+- `feat(agent): unify MCP user identity and enable anonymous Luckin sessions`
+
 ## CHANGELOG - 2026-09-23 20:08 - 新增校园工具 Skill 与每轮调用前置指引
 
 ### 撰写时间

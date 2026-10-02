@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Charlie-BU/TongjiStudent/internal/agentic/modelmeta"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	einoext "github.com/cloudwego/eino-ext/components/tool/mcp"
@@ -14,7 +15,7 @@ import (
 )
 
 const tongjiAccessTokenHeader = "X-Tongji-Access-Token"
-const tongjiUserIDHeader = "X-Tongji-User-Id"
+const userIDHeader = "X-User-Id"
 
 // requestScopedTool 为可复用的 Eino Tool 添加请求级凭据注入和传输失败归一。
 // 不保存用户凭据，不检查 Skill，也不编排瑞幸登录或业务调用顺序。
@@ -28,10 +29,9 @@ func (t *requestScopedTool) Info(ctx context.Context) (*schema.ToolInfo, error) 
 	return t.delegate.Info(ctx)
 }
 
-// InvokableRun 使用当前请求上下文中的校园访问凭据调用底层 MCP Tool。
+// InvokableRun 为同济用户注入服务凭据，为匿名会话注入用户标识；身份校验由 MCP 执行。
 func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON string, options ...tool.Option) (string, error) {
 	headers := map[string]string{}
-	// 只有在用户已登录（context 中存在 userId）时才注入
 	if userID, loggedIn := platformauth.UserIDFromContext(ctx); loggedIn {
 		accessToken, err := tongjiapi.MCPAccessToken(ctx)
 		if err != nil {
@@ -40,8 +40,11 @@ func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON st
 			}
 			return namedToolFailureJSON(t.name, toolStatusExecutionUnavailable), nil
 		}
+		headers[userIDHeader] = userID
 		headers[tongjiAccessTokenHeader] = accessToken
-		headers[tongjiUserIDHeader] = userID
+	} else if sessionID := modelmeta.SessionID(ctx); sessionID != "" {
+		// 匿名身份由已校验的会话确定，不接受模型参数提供的用户 ID。
+		headers[userIDHeader] = "anonymous_" + sessionID
 	}
 	options = append(options, einoext.WithCustomHeaders(headers))
 	result, err := t.delegate.InvokableRun(ctx, argumentsInJSON, options...)

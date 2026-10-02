@@ -105,7 +105,7 @@ func TestRequestScopedMCPTool(t *testing.T) {
 		mcpServer.AddTool(githubmcp.NewTool(testMCPToolName), func(_ context.Context, request githubmcp.CallToolRequest) (*githubmcp.CallToolResult, error) {
 			receivedTokensMu.Lock()
 			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
-			receivedUsers = append(receivedUsers, request.Header.Get(tongjiUserIDHeader))
+			receivedUsers = append(receivedUsers, request.Header.Get(userIDHeader))
 			receivedTokensMu.Unlock()
 			switch request.GetArguments()["scenario"] {
 			case "unauthorized":
@@ -120,6 +120,14 @@ func TestRequestScopedMCPTool(t *testing.T) {
 				}, nil
 			}
 			return githubmcp.NewToolResultText("score result"), nil
+		})
+
+		mcpServer.AddTool(githubmcp.NewTool("luckin.auth.check"), func(_ context.Context, request githubmcp.CallToolRequest) (*githubmcp.CallToolResult, error) {
+			receivedTokensMu.Lock()
+			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
+			receivedUsers = append(receivedUsers, request.Header.Get(userIDHeader))
+			receivedTokensMu.Unlock()
+			return githubmcp.NewToolResultText(`{"valid":true}`), nil
 		})
 		testServer := server.NewTestStreamableHTTPServer(mcpServer)
 		defer testServer.Close()
@@ -196,6 +204,22 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(result, ShouldContainSubstring, toolStatusExecutionUnavailable)
 			So(receivedTokens, ShouldBeEmpty)
+		})
+
+		Convey("同济用户的瑞幸调用携带服务 Token，获取失败时不发起工具请求", func() {
+			luckinTools, err := EinoTools(context.Background(), client, "luckin.auth.check")
+			So(err, ShouldBeNil)
+			ctx := platformauth.WithAccessToken(context.Background(), "test-access-token")
+			_, err = luckinTools[0].(tool.InvokableTool).InvokableRun(ctx, `{}`)
+			So(err, ShouldBeNil)
+			t.Setenv("TONGJI_MCP_CLIENT_SECRET", "")
+			defer t.Setenv("TONGJI_MCP_CLIENT_SECRET", "secret")
+			value, err := luckinTools[0].(tool.InvokableTool).InvokableRun(ctx, `{}`)
+			So(err, ShouldBeNil)
+			So(value, ShouldContainSubstring, `"valid":false`)
+			So(value, ShouldContainSubstring, "upstream_unavailable")
+			So(receivedUsers, ShouldResemble, []string{"student-a"})
+			So(receivedTokens, ShouldResemble, []string{"service-token"})
 		})
 
 		Convey("应将 MCP 业务错误收敛为稳定结果", func() {

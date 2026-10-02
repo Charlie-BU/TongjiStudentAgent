@@ -7,8 +7,7 @@ import (
 
 // 按已知错误码重建公开提示，不透传远端原始 message，也不将检查失败误报为未登录。
 var luckinCheckMessages = map[string]string{
-	"platform_unauthorized":        "无法识别当前同济用户，请先完成或更新同济授权，无需重新登录瑞幸。",
-	"platform_unavailable":         "同济身份服务暂时不可用，暂时无法检查瑞幸登录，请稍后重试。",
+	"user_id_required":             "缺少有效的 X-User-Id，请通过调用方提供用户身份。",
 	"upstream_timeout":             "瑞幸登录检查超时，请稍后重试；当前不能判断 Token 是否有效。",
 	"rate_limited":                 "瑞幸登录检查过于频繁，请稍后重试，不要重新发送验证码。",
 	"upstream_unavailable":         "瑞幸服务暂时不可用或响应异常，暂时无法检查登录状态，请稍后重试。",
