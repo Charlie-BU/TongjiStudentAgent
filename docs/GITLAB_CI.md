@@ -50,6 +50,7 @@
 | `ARK_KNOWLEDGE_PROJECT` | 知识库项目 |
 | `ARK_KNOWLEDGE_RESOURCE_ID` | 知识库资源 ID，启用时与 COLLECTION 至少配置一项 |
 | `ARK_KNOWLEDGE_LIMIT` / `ARK_KNOWLEDGE_DOMAIN` | 检索条数与知识库服务域名 |
+| `TONGJI_STUDENT_MCP_API_KEY` | 必填，设为 Masked/Hidden；用于 MCP 初始化、工具发现和未登录调用，须加入对应 MCP 的 `ALLOWED_API_KEYS`。不同环境可通过 GitLab 环境作用域配置不同值 |
 | `MCP_SERVER_URL_SIT` / `MCP_SERVER_URL_PROD` | 必填，`MCP_SERVER_URL_SIT` 填 `http://<DEVIP实际值>:3100/mcp`，`MCP_SERVER_URL_PROD` 填 `http://<PRODIP实际值>:3100/mcp`；不要填写容器的 localhost |
 | `TAVILY_ENABLED` / `TAVILY_API_KEY` | 搜索开关与凭据，启用时需凭据 |
 | `SANDBOX_ENABLED` | 当前按 `.env` 设置，通常 `false` |

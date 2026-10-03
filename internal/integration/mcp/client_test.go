@@ -19,8 +19,10 @@ import (
 )
 
 const testMCPToolName = "tongji.bachelor.score"
+const testMCPAPIKey = "test-mcp-api-key-for-anonymous-users"
 
 func TestRemoteConfigFromEnv(t *testing.T) {
+	t.Setenv("TONGJI_STUDENT_MCP_API_KEY", testMCPAPIKey)
 	Convey("远程 MCP 连接配置", t, func() {
 		Convey("合法环境变量应生成连接配置", func() {
 			t.Setenv("MCP_SERVER_URL", "https://mcp.example.test/mcp")
@@ -29,6 +31,7 @@ func TestRemoteConfigFromEnv(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(config.ServerURL, ShouldEqual, "https://mcp.example.test/mcp")
+			So(config.APIKey, ShouldEqual, testMCPAPIKey)
 		})
 
 		Convey("缺失或非法环境变量应被拒绝", func() {
@@ -55,12 +58,70 @@ func TestNewRemoteClientInitializationFailure(t *testing.T) {
 		defer server.Close()
 
 		Convey("应关闭失败连接并返回初始化错误", func() {
-			client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: server.URL})
+			client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: server.URL, APIKey: testMCPAPIKey})
 
 			So(client, ShouldBeNil)
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "initialize remote MCP client")
 		})
+	})
+}
+
+func TestMCPAPIKeyConfiguration(t *testing.T) {
+	Convey("MCP API Key 配置", t, func() {
+		t.Setenv("MCP_SERVER_URL", "https://mcp.example.test/mcp")
+		for _, apiKey := range []string{"", "  ", "key with space", "key\r\nheader", "密钥"} {
+			Convey(fmt.Sprintf("拒绝非法 Key %q，且不发起未登录调用", apiKey), func() {
+				t.Setenv("TONGJI_STUDENT_MCP_API_KEY", apiKey)
+				_, err := RemoteConfigFromEnv()
+				So(err, ShouldNotBeNil)
+				invoked := false
+				wrapped := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+					invoked = true
+					return "", nil
+				}}}
+				result, err := wrapped.InvokableRun(context.Background(), `{}`)
+				So(err, ShouldBeNil)
+				So(invoked, ShouldBeFalse)
+				So(result, ShouldContainSubstring, "TONGJI_STUDENT_MCP_API_KEY")
+			})
+		}
+		Convey("合法 Key 应去除首尾空白", func() {
+			t.Setenv("TONGJI_STUDENT_MCP_API_KEY", "  "+testMCPAPIKey+"  ")
+			config, err := RemoteConfigFromEnv()
+			So(err, ShouldBeNil)
+			So(config.APIKey, ShouldEqual, testMCPAPIKey)
+		})
+	})
+}
+
+func TestNewRemoteClientAuthenticatesInitializationAndDiscovery(t *testing.T) {
+	Convey("MCP 初始化和工具发现均携带 API Key", t, func() {
+		srv := server.NewMCPServer("authenticated-mcp", "1")
+		srv.AddTool(githubmcp.NewTool("luckin.auth.check"), func(context.Context, githubmcp.CallToolRequest) (*githubmcp.CallToolResult, error) {
+			return githubmcp.NewToolResultText(`{"valid":false}`), nil
+		})
+		handler := server.NewStreamableHTTPServer(srv)
+		var mu sync.Mutex
+		requests := 0
+		httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+testMCPAPIKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			mu.Lock()
+			requests++
+			mu.Unlock()
+			handler.ServeHTTP(w, r)
+		}))
+		defer httpServer.Close()
+		client := newTestRemoteClient(t, httpServer.URL)
+		defer client.Close()
+		_, err := EinoTools(context.Background(), client, "luckin.auth.check")
+		So(err, ShouldBeNil)
+		mu.Lock()
+		defer mu.Unlock()
+		So(requests, ShouldBeGreaterThanOrEqualTo, 2)
 	})
 }
 
@@ -91,12 +152,14 @@ func TestRequestScopedMCPTool(t *testing.T) {
 	Convey("请求级 MCP Tool 包装器", t, func() {
 		var receivedTokens []string
 		var receivedUsers []string
+		var receivedBearers []string
 		var receivedTokensMu sync.Mutex
 		mcpServer := server.NewMCPServer("test-mcp-server", "1.0.0")
 		mcpServer.AddTool(githubmcp.NewTool(testMCPToolName), func(_ context.Context, request githubmcp.CallToolRequest) (*githubmcp.CallToolResult, error) {
 			receivedTokensMu.Lock()
 			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
 			receivedUsers = append(receivedUsers, request.Header.Get(userIDHeader))
+			receivedBearers = append(receivedBearers, request.Header.Get("Authorization"))
 			receivedTokensMu.Unlock()
 			switch request.GetArguments()["scenario"] {
 			case "unauthorized":
@@ -117,6 +180,7 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			receivedTokensMu.Lock()
 			receivedTokens = append(receivedTokens, request.Header.Get(tongjiAccessTokenHeader))
 			receivedUsers = append(receivedUsers, request.Header.Get(userIDHeader))
+			receivedBearers = append(receivedBearers, request.Header.Get("Authorization"))
 			receivedTokensMu.Unlock()
 			return githubmcp.NewToolResultText(`{"valid":true}`), nil
 		})
@@ -131,13 +195,15 @@ func TestRequestScopedMCPTool(t *testing.T) {
 		invokable, ok := tools[0].(tool.InvokableTool)
 		So(ok, ShouldBeTrue)
 
-		Convey("缺失凭据时应继续发起 MCP 请求并透传空凭据", func() {
+		Convey("未登录时应携带环境变量中的 API Key，且不发送同济身份头", func() {
 			result, invokeErr := invokable.InvokableRun(context.Background(), `{}`)
 
 			So(invokeErr, ShouldBeNil)
 			So(result, ShouldContainSubstring, "score result")
 			receivedTokensMu.Lock()
 			So(receivedTokens, ShouldResemble, []string{""})
+			So(receivedUsers, ShouldResemble, []string{""})
+			So(receivedBearers, ShouldResemble, []string{"Bearer " + testMCPAPIKey})
 			receivedTokensMu.Unlock()
 		})
 
@@ -185,7 +251,21 @@ func TestRequestScopedMCPTool(t *testing.T) {
 			receivedTokensMu.Lock()
 			So(receivedTokens, ShouldResemble, []string{"service-token", "service-token"})
 			So(receivedUsers, ShouldResemble, []string{"student-a", "student-b"})
+			So(receivedBearers, ShouldResemble, []string{"", ""})
 			receivedTokensMu.Unlock()
+		})
+
+		Convey("同一客户端交替处理未登录和已登录调用时凭据不得串用", func() {
+			loggedInContext := platformauth.WithAccessToken(context.Background(), "test-access-token")
+			for _, ctx := range []context.Context{context.Background(), loggedInContext, context.Background()} {
+				_, err := invokable.InvokableRun(ctx, `{}`)
+				So(err, ShouldBeNil)
+			}
+			receivedTokensMu.Lock()
+			defer receivedTokensMu.Unlock()
+			So(receivedTokens, ShouldResemble, []string{"", "service-token", ""})
+			So(receivedUsers, ShouldResemble, []string{"", "student-a", ""})
+			So(receivedBearers, ShouldResemble, []string{"Bearer " + testMCPAPIKey, "", "Bearer " + testMCPAPIKey})
 		})
 
 		Convey("服务凭据获取失败不得下传用户 token 或发起工具请求", func() {
@@ -228,36 +308,40 @@ func TestRequestScopedMCPTool(t *testing.T) {
 }
 
 func TestRequestScopedToolPreservesInvocationErrors(t *testing.T) {
-	for _, invocationError := range []error{
-		testTimeoutError{},
-		errors.New("request failed with status 403: invalid_service_credential"),
-		fmt.Errorf("MCP request: %w", errors.New("connection refused")),
-	} {
-		t.Run(invocationError.Error(), func(t *testing.T) {
-			wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
-				return "", invocationError
-			}}}
-			result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
-			if err != nil || result != invocationError.Error() {
-				t.Fatalf("got (%q, %v), want original error text %q", result, err, invocationError.Error())
-			}
-		})
-	}
+	Convey("MCP 调用错误保留原始文本", t, func() {
+		t.Setenv("TONGJI_STUDENT_MCP_API_KEY", testMCPAPIKey)
+		for _, invocationError := range []error{
+			testTimeoutError{},
+			errors.New("request failed with status 403: invalid_service_credential"),
+			fmt.Errorf("MCP request: %w", errors.New("connection refused")),
+		} {
+			Convey(invocationError.Error(), func() {
+				wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+					return "", invocationError
+				}}}
+				result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
+				So(err, ShouldBeNil)
+				So(result, ShouldEqual, invocationError.Error())
+			})
+		}
+	})
 }
 
 func TestRequestScopedToolPropagatesCancellation(t *testing.T) {
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
-		t.Run(cause.Error(), func(t *testing.T) {
-			invocationError := fmt.Errorf("MCP request: %w", cause)
-			wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
-				return "", invocationError
-			}}}
-			result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
-			if result != "" || !errors.Is(err, cause) {
-				t.Fatalf("got (%q, %v), want propagated cancellation %v", result, err, cause)
-			}
-		})
-	}
+	Convey("MCP 调用取消和超时继续向上传播", t, func() {
+		t.Setenv("TONGJI_STUDENT_MCP_API_KEY", testMCPAPIKey)
+		for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+			Convey(cause.Error(), func() {
+				invocationError := fmt.Errorf("MCP request: %w", cause)
+				wrappedTool := &requestScopedTool{delegate: testInvokableTool{run: func(context.Context, string, ...tool.Option) (string, error) {
+					return "", invocationError
+				}}}
+				result, err := wrappedTool.InvokableRun(context.Background(), `{}`)
+				So(result, ShouldBeEmpty)
+				So(errors.Is(err, cause), ShouldBeTrue)
+			})
+		}
+	})
 }
 
 type testInvokableTool struct {
@@ -291,7 +375,8 @@ func (testTimeoutError) Temporary() bool {
 // newTestRemoteClient 创建连接到离线 MCP 测试服务的 Client。
 func newTestRemoteClient(t *testing.T, serverURL string) *mcpclient.Client {
 	t.Helper()
-	client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: serverURL})
+	t.Setenv("TONGJI_STUDENT_MCP_API_KEY", testMCPAPIKey)
+	client, err := NewRemoteClient(context.Background(), RemoteConfig{ServerURL: serverURL, APIKey: testMCPAPIKey})
 	if err != nil {
 		t.Fatalf("create remote MCP client: %v", err)
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Charlie-BU/TongjiStudent/internal/agentic/modelmeta"
 	"github.com/Charlie-BU/TongjiStudent/internal/integration/tongjiapi"
 	platformauth "github.com/Charlie-BU/TongjiStudent/internal/platform/auth"
 	einoext "github.com/cloudwego/eino-ext/components/tool/mcp"
@@ -28,7 +27,7 @@ func (t *requestScopedTool) Info(ctx context.Context) (*schema.ToolInfo, error) 
 	return t.delegate.Info(ctx)
 }
 
-// InvokableRun 为同济用户注入服务凭据，为匿名会话注入用户标识；身份校验由 MCP 执行。
+// InvokableRun 为同济用户注入服务凭据，为未登录用户注入 API Key；身份校验由 MCP 执行。
 func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON string, options ...tool.Option) (string, error) {
 	headers := map[string]string{}
 	if userID, loggedIn := platformauth.UserIDFromContext(ctx); loggedIn {
@@ -41,9 +40,12 @@ func (t *requestScopedTool) InvokableRun(ctx context.Context, argumentsInJSON st
 		}
 		headers[userIDHeader] = userID
 		headers[tongjiAccessTokenHeader] = accessToken
-	} else if sessionID := modelmeta.SessionID(ctx); sessionID != "" {
-		// 匿名身份由已校验的会话确定，不接受模型参数提供的用户 ID。
-		headers[userIDHeader] = "anonymous_" + sessionID
+	} else {
+		apiKey, err := mcpAPIKeyFromEnv()
+		if err != nil {
+			return err.Error(), nil
+		}
+		headers["Authorization"] = "Bearer " + apiKey
 	}
 	options = append(options, einoext.WithCustomHeaders(headers))
 	result, err := t.delegate.InvokableRun(ctx, argumentsInJSON, options...)

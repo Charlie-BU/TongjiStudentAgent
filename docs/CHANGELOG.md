@@ -1,3 +1,80 @@
+## CHANGELOG - 2026-10-03 22:11 - 未登录 MCP 调用使用配置的 API Key
+
+### 撰写时间
+
+- 2026-10-03 22:11（Asia/Shanghai）
+
+### Base Commit
+
+- `2b7c534a9d6a823daa932b7450cdedb02ce00383`（按 skill 约定取 `HEAD~1`，仅作基线元数据）。
+
+### Compare Scope
+
+- `working_tree_only`：相对 `HEAD`（`231de913c2caffe7de993b3ed3fb147d3477e6b0`）的当前未提交改动。仅记录 Agent 的 API Key 接入、配置、文档及测试；不混入上次提交的 MCP 原始结果透传改动，也不包含 MCP Server 的鉴权实现。
+
+### 背景与改动目标
+
+MCP 统一鉴权后，未登录请求需要合法 Bearer 凭证。Agent 原先只发送 `anonymous_<sessionID>` 用户标识，初始化与工具发现也未携带认证凭证，因此无法完成受保护的 MCP 请求。本次按明确的接入方案，从环境变量 `TONGJI_STUDENT_MCP_API_KEY` 读取 API Key，并用于初始化、工具发现和未登录工具调用。
+
+### 改动概览
+
+- `internal/integration/mcp/client.go` 为 `RemoteConfig` 增加 `APIKey`，读取环境变量时去除首尾空白，并拒绝空值、内部空白和非 ASCII 字符；错误信息不包含密钥内容。通过请求上下文判断是否已登录，为未登录 HTTP 请求添加 Bearer 头。
+- `request_scoped_tool.go` 将未登录分支改为发送 `Authorization: Bearer <API Key>`，不再生成匿名 `X-User-Id`。缺少有效配置时返回明确的配置错误，不执行底层工具调用。
+- 已登录分支继续使用上下文中解析的用户 ID 和同济服务 Token；获取服务凭据失败时不调用工具，也不回退使用 API Key。
+- `.env.example`、README、开发说明及 GitLab 配置文档加入新变量。部署流水线将其作为必填配置导出到容器；不同环境可通过 GitLab 环境作用域分别设置。
+- 瑞幸 Skill 删除“匿名新会话必定需要重新登录”的旧假设，始终通过登录检查判断状态。相关测试使用 GoConvey 场景，覆盖请求头与拒绝分支。
+
+### 关键链路解析（含上下游）
+
+- 上游依赖：启动入口通过 `NewRemoteClientFromEnv` 读取连接地址和 API Key，初始化远程客户端后通过 `EinoTools` 发现 allowlist 工具。部署侧必须设置 `TONGJI_STUDENT_MCP_API_KEY`，并将相同值加入对应 MCP 的 `ALLOWED_API_KEYS`。
+- 当前改动：复用客户端按请求上下文选择认证方式。未登录调用使用 API Key；已登录调用从 `platformauth.UserIDFromContext` 获取可信身份，再从 `tongjiapi.MCPAccessToken` 获取服务凭据。客户端初始化和工具发现也携带 API Key，避免在业务调用前就被 MCP 拒绝。
+- 下游影响：MCP 入口按 Bearer 凭据生成内部用户身份；校园个人工具仍由 MCP 的同济身份策略约束。Agent 的会话存储、工具 allowlist、原始结果与错误透传、取消及 deadline 传播行为保持原有语义。
+
+### 改动结果与业务影响
+
+- 未登录用户具备调用不要求同济身份工具的认证路径，无需在 Agent 内完成 MCP OAuth 授权。
+- 所有使用同一 API Key 的匿名会话共享 MCP 身份及对应瑞幸登录状态，不再按 Agent 会话隔离。这是本次指定接入方式与 MCP 凭据身份设计的直接结果。
+- 新配置为启动必填项；部署时必须同步配置 Agent 和 MCP，缺失配置会阻止启动。Key 变更后应更新两侧配置并重启 Agent，使客户端初始化凭据与工具调用凭据一致。
+
+### 审阅与验证
+
+#### Core Check
+
+- Reasonableness: PASS；改动覆盖未登录调用及启动前置请求。
+- New Issues Introduced: NO；未发现需要修复的高置信度新问题。
+- Dependency Impact: SAFE；部署导出、配置示例、Skill 与调用测试已同步。
+
+#### Findings
+
+- 无 OPEN 或 WAIVED finding。共享匿名身份按本次明确的业务方案记录；未将未改动的历史问题纳入本次审查。
+
+#### Testing
+
+| Command / Check | Result | Scope / Notes |
+| --- | --- | --- |
+| `go test ./...` | PASS | 全仓单元测试，部分未改动包复用缓存 |
+| `go test -race ./internal/integration/mcp` | PASS | 复用 MCP 客户端和调用测试，无竞态报告 |
+| `go vet ./internal/integration/mcp ./internal/application/chat` | PASS | MCP 适配与直接调用方 |
+| CI YAML、内嵌 Python 与 shell 语法检查 | PASS | 部署配置语法 |
+| `git diff --check` | PASS | 差异空白检查 |
+
+Test Spec Review: PASS。审查了 MCP 包全部现有测试及共享客户端辅助函数；覆盖合法、空白与非法 Key，初始化及工具发现请求头，11 个瑞幸工具，跨匿名会话的配置 Key，以及同一客户端未登录／已登录／未登录交替调用。已保留服务凭据失败、原始 HTTP／业务错误及取消传播的回归验证。测试使用本机模拟服务和合成凭据，不调用真实同济、瑞幸、模型或知识库服务。
+
+#### Summary
+
+- Decision: PASS。
+- CRITICAL / HIGH / MEDIUM / LOW：OPEN 均为 0，WAIVED 均为 0。
+- Compared Scope: `working_tree_only`；真实比较范围为 `HEAD` 与当前工作区。
+
+### 风险与待办
+
+- 本轮未部署，也未使用真实 API Key 进行远程联调；发布前需配置两侧匹配的 Key，并确认实际 MCP 服务端采用约定的 Bearer 鉴权和内部身份规则。
+- 已验证的是 Agent 请求行为和离线回归，不将其表述为真实瑞幸短信登录、下单或生产发布已完成。
+
+### 建议 Commit Message（git-cz）
+
+- `fix(mcp): authenticate anonymous calls with configured API key`
+
 ## CHANGELOG - 2026-10-02 11:36 - 统一 MCP 用户身份头并支持匿名会话使用瑞幸
 
 ### 撰写时间

@@ -57,7 +57,7 @@ TongjiStudent 是一个面向同济大学校园场景的 Agent 服务基架。�
 - Cozeloop
 - 同济开放平台 OAuth 2.0 及可选端点覆盖项
 
-启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_LOGIN_CLIENT_ID`、`TONGJI_LOGIN_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
+启动至少需要补齐以下变量：`LITE_MODEL`、所选模型供应商凭据、`MCP_SERVER_URL`、`TONGJI_STUDENT_MCP_API_KEY`、`POSTGRES_DSN`、`REDIS_URL`、`TONGJI_LOGIN_CLIENT_ID`、`TONGJI_LOGIN_CLIENT_SECRET`、`TONGJI_OPEN_PLATFORM_REDIRECT_URI` 和 `TONGJI_OPEN_PLATFORM_STATE_SECRET`。服务启动时会校验模型本地配置并连接会话存储和远程 MCP；OpenRouter 模型可用性需要通过真实请求验证。
 
 Agent 不额外设置 MCP HTTP 客户端超时；调用取消或已有 deadline 由请求上下文传递。MCP 服务端的单次上游 HTTP 请求默认超时为 20 秒。
 
@@ -697,7 +697,9 @@ console.log(historyPayload.messages);
   `system.load_skill`、`system.manage_task_plan`，以及在启用 Ark 知识库时额外注册的 `system.search_knowledge`。
 - 远程 MCP Tool：
 
-每轮 run 使用本次 HTTP `Authorization: Bearer <用户 token>` 查询 basic-info，解析的用户 ID 保存在本轮上下文。MCP 用户身份头统一为 `X-User-Id`，不兼容旧名称。同济用户调用任何 MCP 工具时均注入同济服务 Token，获取失败立即返回错误，不发起工具请求、不透传用户 Token。瑞幸在 MCP 侧只要求用户 ID，同济服务 Token 可选；匿名会话直接使用用户标识调用。匿名会话使用 `anonymous_<sessionID>` 作为用户标识，同一会话复用本地瑞幸凭据，新会话独立。MCP 在登录保存时根据是否携带同济 Token 记录 `is_from_tongji`；该标志不参与瑞幸鉴权。任何 MCP 请求携带同济 Token 时，HTTP 入口都会先校验；无效或身份服务不可用则提前返回 403，不执行瑞幸工具。
+每轮 run 使用本次 HTTP `Authorization: Bearer <用户 token>` 查询 basic-info，解析的用户 ID 保存在本轮上下文。同济用户调用任何 MCP 工具时均注入 `X-User-Id` 和同济服务 Token；获取服务 Token 失败时立即返回错误，不发起工具请求、不透传用户 Token。
+
+未登录用户调用 MCP 时，从环境变量 `TONGJI_STUDENT_MCP_API_KEY` 读取凭据，以 `Authorization: Bearer <API Key>` 发送，不再发送匿名 `X-User-Id`。MCP 初始化与工具发现也使用此 API Key，必须将相同值加入 MCP 服务端的 `ALLOWED_API_KEYS`。缺少或格式错误的 Key 会阻止启动；未登录工具调用缺少有效配置时也不会发起请求。MCP 从 Bearer 凭据构造内部用户身份，因此使用同一 API Key 的匿名会话共享 MCP 身份及其瑞幸登录状态，不再按 Agent 会话隔离。校园个人工具仍要求同济身份，由 MCP 的工具鉴权策略决定是否允许执行。
 
 MCP 调用结果保留原始 content、structuredContent 和错误内容，不再通过错误码或文案白名单重写。服务凭据获取失败、HTTP 错误、网络异常以及 SDK 包装的 MCP isError 结果，以原始异常文本作为工具结果传给下游模型，由模型处理后续步骤。用户取消和整轮上下文超时仍向上传播，终止本轮；异常透传不会触发自动重试。
 
